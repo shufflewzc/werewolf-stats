@@ -1,0 +1,36 @@
+[
+  {
+    "team_id": "crimson-moon",
+    "name": "赤月战队",
+    "short_name": "赤月",
+    "logo": "assets/teams/crimson-moon.png",
+    "active": true,
+    "founded_on": "2026-01-01",
+    "members": [
+      "p001",
+      "p002",
+      "p003",
+      "p004",
+      "p005",
+      "p006"
+    ],
+    "notes": "以白天压制力和快节奏推进为特色。"
+  },
+  {
+    "team_id": "silver-lantern",
+    "name": "银灯战队",
+    "short_name": "银灯",
+    "logo": "assets/teams/silver-lantern.png",
+    "active": true,
+    "founded_on": "2026-01-01",
+    "members": [
+      "p007",
+      "p008",
+      "p009",
+      "p010",
+      "p011",
+      "p012"
+    ],
+    "notes": "以控场和残局纪律性见长。"
+  }
+]

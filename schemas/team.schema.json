@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/team.schema.json",
+  "title": "Werewolf Team",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "team_id",
+    "name",
+    "short_name",
+    "logo",
+    "active",
+    "founded_on",
+    "members",
+    "notes"
+  ],
+  "properties": {
+    "team_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "short_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "logo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "active": {
+      "type": "boolean"
+    },
+    "founded_on": {
+      "type": "string",
+      "format": "date"
+    },
+    "members": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

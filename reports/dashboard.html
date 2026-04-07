@@ -1,0 +1,1290 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>狼人杀数据看板</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css">
+    <style>
+      :root {
+        --bg: #f3f5ef;
+        --surface: rgba(255, 255, 255, 0.9);
+        --ink: #1d2a22;
+        --muted: #5d6b61;
+        --accent: #9e2a2b;
+        --accent-dark: #5c1a1b;
+        --line: rgba(34, 48, 40, 0.08);
+      }
+
+      body {
+        min-height: 100vh;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(158, 42, 43, 0.16), transparent 32%),
+          radial-gradient(circle at top right, rgba(33, 84, 58, 0.12), transparent 28%),
+          linear-gradient(180deg, #f7f3eb 0%, var(--bg) 100%);
+      }
+
+      .dashboard-shell {
+        max-width: 1320px;
+      }
+
+      .hero {
+        position: relative;
+        overflow: hidden;
+        background: linear-gradient(135deg, rgba(27, 35, 30, 0.96), rgba(74, 27, 28, 0.93));
+        color: #fff7f2;
+        border-radius: 28px;
+      }
+
+      .hero::after {
+        content: "";
+        position: absolute;
+        inset: auto -10% -30% auto;
+        width: 260px;
+        height: 260px;
+        background: radial-gradient(circle, rgba(255, 255, 255, 0.16), transparent 68%);
+      }
+
+      .eyebrow {
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+        font-size: 0.72rem;
+        color: rgba(255, 248, 243, 0.72);
+      }
+
+      .hero h1 {
+        font-size: clamp(2rem, 5vw, 4.2rem);
+        line-height: 0.95;
+        letter-spacing: -0.04em;
+      }
+
+      .hero-copy {
+        max-width: 36rem;
+        color: rgba(255, 248, 243, 0.82);
+      }
+
+      .glass-panel {
+        background: rgba(255, 250, 247, 0.12);
+        border: 1px solid rgba(255, 248, 243, 0.16);
+        border-radius: 20px;
+        backdrop-filter: blur(8px);
+      }
+
+      .stat-card,
+      .player-card,
+      .team-card,
+      .match-card,
+      .table-panel,
+      .detail-panel {
+        background: var(--surface);
+        border-radius: 24px;
+      }
+
+      .player-card {
+        transition: transform 0.18s ease, box-shadow 0.18s ease;
+      }
+
+      .player-card:hover,
+      .player-card:focus-visible {
+        transform: translateY(-4px);
+        box-shadow: 0 1rem 2rem rgba(29, 42, 34, 0.12) !important;
+      }
+
+      .player-trigger {
+        cursor: pointer;
+      }
+
+      .open-hint {
+        color: var(--accent-dark);
+        font-size: 0.9rem;
+        font-weight: 600;
+      }
+
+      .stat-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.12em;
+        color: var(--muted);
+      }
+
+      .stat-value {
+        margin-top: 0.4rem;
+        font-size: clamp(1.7rem, 4vw, 2.5rem);
+        line-height: 1;
+        font-weight: 700;
+      }
+
+      .stat-detail {
+        margin-top: 0.5rem;
+        color: var(--muted);
+        font-size: 0.94rem;
+      }
+
+      .rank-pill {
+        min-width: 4.4rem;
+        padding: 0.4rem 0.75rem;
+        border-radius: 999px;
+        background: linear-gradient(135deg, var(--accent), var(--accent-dark));
+        color: white;
+        text-align: center;
+        font-weight: 700;
+      }
+
+      .metric-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem 1.25rem;
+      }
+
+      .metric-grid span {
+        display: block;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        color: var(--muted);
+      }
+
+      .metric-grid strong {
+        font-size: 1.2rem;
+      }
+
+      .scoreboard {
+        display: grid;
+        gap: 0.85rem;
+      }
+
+      .score-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.9rem 1rem;
+        background: rgba(29, 42, 34, 0.04);
+        border-radius: 16px;
+      }
+
+      .score-row strong {
+        font-size: 1.2rem;
+      }
+
+      .section-title {
+        font-size: clamp(1.35rem, 3vw, 2rem);
+        letter-spacing: -0.03em;
+      }
+
+      .section-copy {
+        color: var(--muted);
+        max-width: 38rem;
+      }
+
+      .table {
+        --bs-table-bg: transparent;
+        --bs-table-border-color: var(--line);
+        margin-bottom: 0;
+      }
+
+      .table thead th {
+        white-space: nowrap;
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: var(--muted);
+      }
+
+      .player-row:hover {
+        background: rgba(158, 42, 43, 0.05);
+      }
+
+      .detail-overlay {
+        position: fixed;
+        inset: 0;
+        display: none;
+        align-items: center;
+        justify-content: center;
+        padding: 1rem;
+        background: rgba(16, 22, 19, 0.56);
+        z-index: 1050;
+      }
+
+      .detail-overlay.is-open {
+        display: flex;
+      }
+
+      .detail-shell {
+        width: min(1100px, 100%);
+        max-height: min(92vh, 980px);
+        overflow: auto;
+        border-radius: 28px;
+        box-shadow: 0 1.5rem 3rem rgba(18, 22, 19, 0.2);
+      }
+
+      .detail-hero {
+        background: linear-gradient(135deg, rgba(27, 35, 30, 0.98), rgba(74, 27, 28, 0.93));
+        color: #fff7f2;
+        border-radius: 28px 28px 0 0;
+      }
+
+      .avatar-chip {
+        width: 84px;
+        height: 84px;
+        border-radius: 50%;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.14);
+        border: 1px solid rgba(255, 255, 255, 0.14);
+        font-size: 2rem;
+        font-weight: 700;
+      }
+
+      .close-button {
+        border: 0;
+        border-radius: 999px;
+        width: 2.75rem;
+        height: 2.75rem;
+        background: rgba(255, 255, 255, 0.16);
+        color: white;
+        font-size: 1.25rem;
+      }
+
+      .detail-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+      }
+
+      .detail-metric {
+        padding: 1rem;
+        border-radius: 18px;
+        background: rgba(29, 42, 34, 0.04);
+      }
+
+      .detail-metric span {
+        display: block;
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .detail-metric strong {
+        display: block;
+        margin-top: 0.35rem;
+        font-size: 1.35rem;
+      }
+
+      .history-card {
+        padding: 1rem;
+        border-radius: 18px;
+        background: rgba(29, 42, 34, 0.04);
+      }
+
+      .history-meta {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .role-badges {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.5rem;
+      }
+
+      .role-badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        padding: 0.45rem 0.7rem;
+        border-radius: 999px;
+        background: rgba(29, 42, 34, 0.07);
+        color: var(--ink);
+        font-size: 0.9rem;
+      }
+
+      .footer-note {
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+
+      @media (max-width: 767.98px) {
+        .hero {
+          border-radius: 22px;
+        }
+
+        .metric-grid,
+        .detail-grid {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .table-panel,
+        .detail-shell,
+        .detail-hero {
+          border-radius: 20px;
+        }
+
+        .detail-shell {
+          max-height: 94vh;
+        }
+      }
+
+      @media (max-width: 575.98px) {
+        .detail-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .avatar-chip {
+          width: 72px;
+          height: 72px;
+          font-size: 1.7rem;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container-fluid px-3 px-md-4 px-xl-5 py-4 py-lg-5">
+      <div class="dashboard-shell mx-auto">
+        <section class="hero p-4 p-md-5 shadow-lg mb-4 mb-lg-5">
+          <div class="row g-4 align-items-end">
+            <div class="col-12 col-xl-7">
+              <div class="eyebrow mb-3">狼人杀赛事数据看板</div>
+              <h1 class="mb-3">像职业联赛一样看<br>狼人杀战队数据</h1>
+              <p class="hero-copy mb-4">
+                这是一页式、响应式的赛事数据面板。当前榜首队员是 重山，
+                战队表现第一是 赤月战队，手机和电脑都能顺畅浏览。
+              </p>
+              <div class="d-flex flex-wrap gap-2">
+                <span class="badge rounded-pill text-bg-light px-3 py-2">响应式仪表盘</span>
+                <span class="badge rounded-pill text-bg-light px-3 py-2">生成时间：2026-04-07 17:11:42 中国时间</span>
+              </div>
+            </div>
+            <div class="col-12 col-xl-5">
+              <div class="glass-panel p-4">
+                <div class="eyebrow mb-2">当前领跑</div>
+                <div class="d-flex justify-content-between gap-3 mb-3">
+                  <div>
+                    <div class="small text-white-50">队员榜首</div>
+                    <div class="fs-4 fw-semibold">重山</div>
+                  </div>
+                  <div class="text-end">
+                    <div class="small text-white-50">战队榜首</div>
+                    <div class="fs-4 fw-semibold">赤月战队</div>
+                  </div>
+                </div>
+                <div class="small text-white-50">
+                  数据来自本仓库中的战队、队员与赛事记录文件，统计口径包含胜率、站边率、得分率、场均得分和存活率。
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="mb-4 mb-lg-5">
+          <div class="row g-3 g-lg-4">
+            
+    <div class="col-6 col-xl-3">
+      <div class="card stat-card h-100 border-0 shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">战队数量</div>
+          <div class="stat-value">2</div>
+          <div class="stat-detail">当前已录入战队</div>
+        </div>
+      </div>
+    </div>
+    
+
+    <div class="col-6 col-xl-3">
+      <div class="card stat-card h-100 border-0 shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">队员数量</div>
+          <div class="stat-value">12</div>
+          <div class="stat-detail">全部可统计队员</div>
+        </div>
+      </div>
+    </div>
+    
+
+    <div class="col-6 col-xl-3">
+      <div class="card stat-card h-100 border-0 shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">对局数量</div>
+          <div class="stat-value">2</div>
+          <div class="stat-detail">标准化赛事记录</div>
+        </div>
+      </div>
+    </div>
+    
+
+    <div class="col-6 col-xl-3">
+      <div class="card stat-card h-100 border-0 shadow-sm">
+        <div class="card-body">
+          <div class="stat-label">当前榜首</div>
+          <div class="stat-value">重山</div>
+          <div class="stat-detail">赤月战队</div>
+        </div>
+      </div>
+    </div>
+    
+          </div>
+        </section>
+
+        <section class="mb-4 mb-lg-5">
+          <div class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-3 mb-lg-4">
+            <div>
+              <h2 class="section-title mb-2">队员榜前列</h2>
+              <p class="section-copy mb-0">按得分率、胜率、站边率和场均得分综合排序，先看最有明星相的队员。</p>
+            </div>
+          </div>
+          <div class="row g-3 g-lg-4">
+            
+        <div class="col-12 col-md-6 col-xl-4">
+          <button type="button" class="card player-card player-trigger h-100 border-0 shadow-sm text-start w-100" data-player-id="p005">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">第 1 名</div>
+                  <h3 class="h5 mb-1">重山</h3>
+                  <div class="text-secondary small">赤月战队</div>
+                </div>
+                <div class="rank-pill">第1名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>85.0%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>8.50</strong>
+                </div>
+              </div>
+              <div class="open-hint mt-3">点击查看队员详情</div>
+            </div>
+          </button>
+        </div>
+        
+
+        <div class="col-12 col-md-6 col-xl-4">
+          <button type="button" class="card player-card player-trigger h-100 border-0 shadow-sm text-start w-100" data-player-id="p002">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">第 2 名</div>
+                  <h3 class="h5 mb-1">北辰</h3>
+                  <div class="text-secondary small">赤月战队</div>
+                </div>
+                <div class="rank-pill">第2名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>82.5%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>8.25</strong>
+                </div>
+              </div>
+              <div class="open-hint mt-3">点击查看队员详情</div>
+            </div>
+          </button>
+        </div>
+        
+
+        <div class="col-12 col-md-6 col-xl-4">
+          <button type="button" class="card player-card player-trigger h-100 border-0 shadow-sm text-start w-100" data-player-id="p006">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">第 3 名</div>
+                  <h3 class="h5 mb-1">青岚</h3>
+                  <div class="text-secondary small">赤月战队</div>
+                </div>
+                <div class="rank-pill">第3名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>72.5%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>7.25</strong>
+                </div>
+              </div>
+              <div class="open-hint mt-3">点击查看队员详情</div>
+            </div>
+          </button>
+        </div>
+        
+
+        <div class="col-12 col-md-6 col-xl-4">
+          <button type="button" class="card player-card player-trigger h-100 border-0 shadow-sm text-start w-100" data-player-id="p003">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">第 4 名</div>
+                  <h3 class="h5 mb-1">天衡</h3>
+                  <div class="text-secondary small">赤月战队</div>
+                </div>
+                <div class="rank-pill">第4名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>50.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>50.0%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>57.5%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>5.75</strong>
+                </div>
+              </div>
+              <div class="open-hint mt-3">点击查看队员详情</div>
+            </div>
+          </button>
+        </div>
+        
+
+        <div class="col-12 col-md-6 col-xl-4">
+          <button type="button" class="card player-card player-trigger h-100 border-0 shadow-sm text-start w-100" data-player-id="p001">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">第 5 名</div>
+                  <h3 class="h5 mb-1">星尘</h3>
+                  <div class="text-secondary small">赤月战队</div>
+                </div>
+                <div class="rank-pill">第5名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>50.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>50.0%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>57.5%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>5.75</strong>
+                </div>
+              </div>
+              <div class="open-hint mt-3">点击查看队员详情</div>
+            </div>
+          </button>
+        </div>
+        
+
+        <div class="col-12 col-md-6 col-xl-4">
+          <button type="button" class="card player-card player-trigger h-100 border-0 shadow-sm text-start w-100" data-player-id="p010">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">第 6 名</div>
+                  <h3 class="h5 mb-1">回声</h3>
+                  <div class="text-secondary small">银灯战队</div>
+                </div>
+                <div class="rank-pill">第6名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>50.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>100.0%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>55.0%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>5.50</strong>
+                </div>
+              </div>
+              <div class="open-hint mt-3">点击查看队员详情</div>
+            </div>
+          </button>
+        </div>
+        
+          </div>
+        </section>
+
+        <section class="mb-4 mb-lg-5">
+          <div class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-3 mb-lg-4">
+            <div>
+              <h2 class="section-title mb-2">战队概览</h2>
+              <p class="section-copy mb-0">战队汇总按全部队员出场表现聚合，更适合展示整体训练和赛季状态。</p>
+            </div>
+          </div>
+          <div class="row g-3 g-lg-4">
+            
+        <div class="col-12 col-lg-6">
+          <div class="card team-card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">战队第 1 名</div>
+                  <h3 class="h5 mb-1">赤月战队</h3>
+                  <div class="text-secondary small">6 名队员</div>
+                </div>
+                <div class="rank-pill">第1名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>66.7%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>63.6%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>63.7%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>6.38</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+
+        <div class="col-12 col-lg-6">
+          <div class="card team-card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="d-flex align-items-start justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">战队第 2 名</div>
+                  <h3 class="h5 mb-1">银灯战队</h3>
+                  <div class="text-secondary small">6 名队员</div>
+                </div>
+                <div class="rank-pill">第2名</div>
+              </div>
+              <div class="metric-grid mt-4">
+                <div>
+                  <span>胜率</span>
+                  <strong>25.0%</strong>
+                </div>
+                <div>
+                  <span>站边率</span>
+                  <strong>54.5%</strong>
+                </div>
+                <div>
+                  <span>得分率</span>
+                  <strong>40.8%</strong>
+                </div>
+                <div>
+                  <span>场均得分</span>
+                  <strong>4.08</strong>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+          </div>
+        </section>
+
+        <section class="mb-4 mb-lg-5">
+          <div class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-3 mb-lg-4">
+            <div>
+              <h2 class="section-title mb-2">最近对局</h2>
+              <p class="section-copy mb-0">最近对局会显示胜利阵营和各战队本局累计得分，方便快速回顾走势。</p>
+            </div>
+          </div>
+          <div class="row g-3 g-lg-4">
+            
+        <div class="col-12 col-lg-6">
+          <div class="card match-card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">2026-04-01 · 第 1 轮 第 2 局</div>
+                  <h3 class="h5 mb-1">2026春季联赛</h3>
+                  <div class="text-secondary small">常规赛 · 一号桌 · 经典十二人局 · 74 分钟</div>
+                </div>
+                <span class="badge rounded-pill text-bg-dark">胜利阵营：狼人阵营</span>
+              </div>
+              <div class="scoreboard mt-4">
+                <div class="score-row"><span>赤月战队</span><strong>35.5</strong></div><div class="score-row"><span>银灯战队</span><strong>19.5</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+
+        <div class="col-12 col-lg-6">
+          <div class="card match-card h-100 border-0 shadow-sm">
+            <div class="card-body">
+              <div class="d-flex flex-wrap align-items-center justify-content-between gap-3">
+                <div>
+                  <div class="eyebrow">2026-04-01 · 第 1 轮 第 1 局</div>
+                  <h3 class="h5 mb-1">2026春季联赛</h3>
+                  <div class="text-secondary small">常规赛 · 一号桌 · 经典十二人局 · 68 分钟</div>
+                </div>
+                <span class="badge rounded-pill text-bg-dark">胜利阵营：好人阵营</span>
+              </div>
+              <div class="scoreboard mt-4">
+                <div class="score-row"><span>赤月战队</span><strong>41.0</strong></div><div class="score-row"><span>银灯战队</span><strong>29.5</strong></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        
+          </div>
+        </section>
+
+        <section class="mb-4 mb-lg-5">
+          <div class="table-panel p-3 p-lg-4 shadow-sm">
+            <div class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-3">
+              <div>
+                <h2 class="section-title mb-2">完整队员排行榜</h2>
+                <p class="section-copy mb-0">点击任意队员卡片或表格行，可以查看个人详情、最近对局和角色分布。</p>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table align-middle">
+                <thead>
+                  <tr>
+                    <th>排名</th>
+                    <th>队员</th>
+                    <th>战队</th>
+                    <th>出场</th>
+                    <th>战绩</th>
+                    <th>胜率</th>
+                    <th>站边率</th>
+                    <th>得分率</th>
+                    <th>场均得分</th>
+                    <th>存活率</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  
+        <tr class="player-row player-trigger" data-player-id="p005" tabindex="0" role="button">
+          <td>1</td>
+          <td>
+            <div class="fw-semibold">重山</div>
+          </td>
+          <td>赤月战队</td>
+          <td>2</td>
+          <td>2-0-0</td>
+          <td>100.0%</td>
+          <td>100.0%</td>
+          <td>85.0%</td>
+          <td>8.50</td>
+          <td>100.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p002" tabindex="0" role="button">
+          <td>2</td>
+          <td>
+            <div class="fw-semibold">北辰</div>
+          </td>
+          <td>赤月战队</td>
+          <td>2</td>
+          <td>2-0-0</td>
+          <td>100.0%</td>
+          <td>100.0%</td>
+          <td>82.5%</td>
+          <td>8.25</td>
+          <td>100.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p006" tabindex="0" role="button">
+          <td>3</td>
+          <td>
+            <div class="fw-semibold">青岚</div>
+          </td>
+          <td>赤月战队</td>
+          <td>2</td>
+          <td>2-0-0</td>
+          <td>100.0%</td>
+          <td>100.0%</td>
+          <td>72.5%</td>
+          <td>7.25</td>
+          <td>100.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p003" tabindex="0" role="button">
+          <td>4</td>
+          <td>
+            <div class="fw-semibold">天衡</div>
+          </td>
+          <td>赤月战队</td>
+          <td>2</td>
+          <td>1-1-0</td>
+          <td>50.0%</td>
+          <td>50.0%</td>
+          <td>57.5%</td>
+          <td>5.75</td>
+          <td>0.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p001" tabindex="0" role="button">
+          <td>5</td>
+          <td>
+            <div class="fw-semibold">星尘</div>
+          </td>
+          <td>赤月战队</td>
+          <td>2</td>
+          <td>1-1-0</td>
+          <td>50.0%</td>
+          <td>50.0%</td>
+          <td>57.5%</td>
+          <td>5.75</td>
+          <td>0.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p010" tabindex="0" role="button">
+          <td>6</td>
+          <td>
+            <div class="fw-semibold">回声</div>
+          </td>
+          <td>银灯战队</td>
+          <td>2</td>
+          <td>1-1-0</td>
+          <td>50.0%</td>
+          <td>100.0%</td>
+          <td>55.0%</td>
+          <td>5.50</td>
+          <td>100.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p009" tabindex="0" role="button">
+          <td>7</td>
+          <td>
+            <div class="fw-semibold">飞羽</div>
+          </td>
+          <td>银灯战队</td>
+          <td>2</td>
+          <td>1-1-0</td>
+          <td>50.0%</td>
+          <td>100.0%</td>
+          <td>55.0%</td>
+          <td>5.50</td>
+          <td>0.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p008" tabindex="0" role="button">
+          <td>8</td>
+          <td>
+            <div class="fw-semibold">曜石</div>
+          </td>
+          <td>银灯战队</td>
+          <td>2</td>
+          <td>1-1-0</td>
+          <td>50.0%</td>
+          <td>50.0%</td>
+          <td>55.0%</td>
+          <td>5.50</td>
+          <td>50.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p007" tabindex="0" role="button">
+          <td>9</td>
+          <td>
+            <div class="fw-semibold">清歌</div>
+          </td>
+          <td>银灯战队</td>
+          <td>2</td>
+          <td>0-2-0</td>
+          <td>0.0%</td>
+          <td>0.0%</td>
+          <td>32.5%</td>
+          <td>3.25</td>
+          <td>0.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p004" tabindex="0" role="button">
+          <td>10</td>
+          <td>
+            <div class="fw-semibold">流火</div>
+          </td>
+          <td>赤月战队</td>
+          <td>2</td>
+          <td>0-2-0</td>
+          <td>0.0%</td>
+          <td>0.0%</td>
+          <td>27.5%</td>
+          <td>2.75</td>
+          <td>0.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p011" tabindex="0" role="button">
+          <td>11</td>
+          <td>
+            <div class="fw-semibold">月白</div>
+          </td>
+          <td>银灯战队</td>
+          <td>2</td>
+          <td>0-2-0</td>
+          <td>0.0%</td>
+          <td>0.0%</td>
+          <td>25.0%</td>
+          <td>2.50</td>
+          <td>0.0%</td>
+        </tr>
+        
+
+        <tr class="player-row player-trigger" data-player-id="p012" tabindex="0" role="button">
+          <td>12</td>
+          <td>
+            <div class="fw-semibold">长夜</div>
+          </td>
+          <td>银灯战队</td>
+          <td>2</td>
+          <td>0-2-0</td>
+          <td>0.0%</td>
+          <td>100.0%</td>
+          <td>22.5%</td>
+          <td>2.25</td>
+          <td>0.0%</td>
+        </tr>
+        
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section class="mb-4">
+          <div class="table-panel p-3 p-lg-4 shadow-sm">
+            <div class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-3">
+              <div>
+                <h2 class="section-title mb-2">战队汇总表</h2>
+                <p class="section-copy mb-0">如果你后面要补战绩榜、季后赛图或单角色榜，这张表可以继续作为主页概览层。</p>
+              </div>
+            </div>
+            <div class="table-responsive">
+              <table class="table align-middle">
+                <thead>
+                  <tr>
+                    <th>排名</th>
+                    <th>战队</th>
+                    <th>队员数</th>
+                    <th>对局场次</th>
+                    <th>队员出场</th>
+                    <th>胜率</th>
+                    <th>站边率</th>
+                    <th>得分率</th>
+                    <th>场均得分</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  
+        <tr>
+          <td>1</td>
+          <td>赤月战队</td>
+          <td>6</td>
+          <td>2</td>
+          <td>12</td>
+          <td>66.7%</td>
+          <td>63.6%</td>
+          <td>63.7%</td>
+          <td>6.38</td>
+        </tr>
+        
+
+        <tr>
+          <td>2</td>
+          <td>银灯战队</td>
+          <td>6</td>
+          <td>2</td>
+          <td>12</td>
+          <td>25.0%</td>
+          <td>54.5%</td>
+          <td>40.8%</td>
+          <td>4.08</td>
+        </tr>
+        
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <footer class="pt-2 pb-4">
+          <div class="footer-note">
+            当前页面为响应式中文仪表盘，支持点击队员查看个人数据，适合电脑和手机浏览。
+          </div>
+        </footer>
+      </div>
+    </div>
+
+    <div class="detail-overlay" id="队员详情层" aria-hidden="true">
+      <div class="detail-shell detail-panel">
+        <div class="detail-hero p-4 p-md-5">
+          <div class="d-flex align-items-start justify-content-between gap-3">
+            <div class="d-flex align-items-center gap-3">
+              <div class="avatar-chip" id="详情头像">星</div>
+              <div>
+                <div class="eyebrow mb-2" id="详情排名">第 1 名</div>
+                <h2 class="h3 mb-1" id="详情姓名">队员姓名</h2>
+                <div class="text-white-50" id="详情战队">所属战队</div>
+              </div>
+            </div>
+            <button type="button" class="close-button" id="详情关闭按钮" aria-label="关闭详情">×</button>
+          </div>
+        </div>
+        <div class="p-3 p-md-4 p-xl-5">
+          <div class="row g-3 g-lg-4">
+            <div class="col-12 col-xl-7">
+              <div class="detail-grid">
+                <div class="detail-metric">
+                  <span>战绩</span>
+                  <strong id="详情战绩">0-0-0</strong>
+                </div>
+                <div class="detail-metric">
+                  <span>场均得分</span>
+                  <strong id="详情场均得分">0.00</strong>
+                </div>
+                <div class="detail-metric">
+                  <span>胜率</span>
+                  <strong id="详情胜率">0.0%</strong>
+                </div>
+                <div class="detail-metric">
+                  <span>站边率</span>
+                  <strong id="详情站边率">0.0%</strong>
+                </div>
+                <div class="detail-metric">
+                  <span>得分率</span>
+                  <strong id="详情得分率">0.0%</strong>
+                </div>
+                <div class="detail-metric">
+                  <span>存活率</span>
+                  <strong id="详情存活率">0.0%</strong>
+                </div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-5">
+              <div class="detail-panel p-3 p-lg-4 h-100">
+                <div class="eyebrow mb-2 text-secondary">队员资料</div>
+                <div class="mb-2"><strong>别名：</strong><span id="详情别名">无</span></div>
+                <div class="mb-2"><strong>入库日期：</strong><span id="详情入库日期">-</span></div>
+                <div class="mb-2"><strong>照片路径：</strong><span id="详情照片路径">-</span></div>
+                <div class="mb-0"><strong>备注：</strong><span id="详情备注">-</span></div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <div class="detail-panel p-3 p-lg-4 h-100">
+                <div class="eyebrow mb-3 text-secondary">角色分布</div>
+                <div class="role-badges" id="详情角色分布"></div>
+              </div>
+            </div>
+            <div class="col-12 col-xl-8">
+              <div class="detail-panel p-3 p-lg-4 h-100">
+                <div class="eyebrow mb-3 text-secondary">累计数据</div>
+                <div class="detail-grid">
+                  <div class="detail-metric">
+                    <span>总得分</span>
+                    <strong id="详情总得分">0.00</strong>
+                  </div>
+                  <div class="detail-metric">
+                    <span>总满分</span>
+                    <strong id="详情总满分">0.00</strong>
+                  </div>
+                  <div class="detail-metric">
+                    <span>正确站边</span>
+                    <strong id="详情正确站边">0</strong>
+                  </div>
+                  <div class="detail-metric">
+                    <span>站边次数</span>
+                    <strong id="详情站边次数">0</strong>
+                  </div>
+                  <div class="detail-metric">
+                    <span>存活局数</span>
+                    <strong id="详情存活局数">0</strong>
+                  </div>
+                  <div class="detail-metric">
+                    <span>总出场</span>
+                    <strong id="详情总出场">0</strong>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="col-12">
+              <div class="detail-panel p-3 p-lg-4">
+                <div class="d-flex align-items-center justify-content-between gap-3 mb-3">
+                  <div class="eyebrow text-secondary">最近对局</div>
+                  <div class="small text-secondary">按最新比赛在前展示</div>
+                </div>
+                <div class="row g-3" id="详情对局历史"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const 队员详情数据 = {"p001": {"player_id": "p001", "display_name": "星尘", "team_name": "赤月战队", "rank": 5, "aliases": ["阿星"], "joined_on": "2026-01-05", "photo": "assets/players/p001.jpg", "notes": "队内核心发言位。", "record": "1-1-0", "games_played": 2, "wins": 1, "losses": 1, "draws": 0, "win_rate": "50.0%", "stance_rate": "50.0%", "score_rate": "57.5%", "survival_rate": "0.0%", "average_points": "5.75", "points_total": "11.50", "points_cap": "20.00", "correct_stances": 1, "stance_calls": 2, "survivals": 0, "roles": [{"role": "村民", "games": 1}, {"role": "预言家", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 3.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "错误", "notes": "没能把桌面节奏拉回来。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "预言家", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "出局", "points_earned": 8.5, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "开局身份判断清晰。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "30.0%", "average_points": "3.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "85.0%", "average_points": "8.50"}]}, "p002": {"player_id": "p002", "display_name": "北辰", "team_name": "赤月战队", "rank": 2, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p002.jpg", "notes": "以后程稳定判断见长。", "record": "2-0-0", "games_played": 2, "wins": 2, "losses": 0, "draws": 0, "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "82.5%", "survival_rate": "100.0%", "average_points": "8.25", "points_total": "16.50", "points_cap": "20.00", "correct_stances": 2, "stance_calls": 2, "survivals": 2, "roles": [{"role": "女巫", "games": 1}, {"role": "狼人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 8.5, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "正确", "notes": "残局收束非常干净。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "女巫", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 8.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "资源使用稳定。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "85.0%", "average_points": "8.50"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "80.0%", "average_points": "8.00"}]}, "p003": {"player_id": "p003", "display_name": "天衡", "team_name": "赤月战队", "rank": 4, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p003.jpg", "notes": "偏辅助型的灵活选手。", "record": "1-1-0", "games_played": 2, "wins": 1, "losses": 1, "draws": 0, "win_rate": "50.0%", "stance_rate": "50.0%", "score_rate": "57.5%", "survival_rate": "0.0%", "average_points": "5.75", "points_total": "11.50", "points_cap": "20.00", "correct_stances": 1, "stance_calls": 2, "survivals": 0, "roles": [{"role": "村民", "games": 1}, {"role": "猎人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "猎人", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 4.5, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "正确", "notes": "读对了局势，但没能赢下。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "出局", "points_earned": 7.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "错误", "notes": "虽然站边失误，但阵营取胜。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "100.0%", "score_rate": "45.0%", "average_points": "4.50"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "0.0%", "score_rate": "70.0%", "average_points": "7.00"}]}, "p004": {"player_id": "p004", "display_name": "流火", "team_name": "赤月战队", "rank": 10, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p004.jpg", "notes": "节奏偏激进。", "record": "0-2-0", "games_played": 2, "wins": 0, "losses": 2, "draws": 0, "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "27.5%", "survival_rate": "0.0%", "average_points": "2.75", "points_total": "5.50", "points_cap": "20.00", "correct_stances": 0, "stance_calls": 2, "survivals": 0, "roles": [{"role": "村民", "games": 1}, {"role": "狼人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 2.5, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "错误", "notes": "前期分票后没稳住局面。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 3.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "错误", "notes": "狼队尚未稳定就被压出。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "25.0%", "average_points": "2.50"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "30.0%", "average_points": "3.00"}]}, "p005": {"player_id": "p005", "display_name": "重山", "team_name": "赤月战队", "rank": 1, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p005.jpg", "notes": "防守基本功扎实。", "record": "2-0-0", "games_played": 2, "wins": 2, "losses": 0, "draws": 0, "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "85.0%", "survival_rate": "100.0%", "average_points": "8.50", "points_total": "17.00", "points_cap": "20.00", "correct_stances": 2, "stance_calls": 2, "survivals": 2, "roles": [{"role": "守卫", "games": 1}, {"role": "狼人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 9.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "正确", "notes": "本轮最强终结表现。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "守卫", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 8.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "守住了重要信息位。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "90.0%", "average_points": "9.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "80.0%", "average_points": "8.00"}]}, "p006": {"player_id": "p006", "display_name": "青岚", "team_name": "赤月战队", "rank": 3, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p006.jpg", "notes": "上限很高的摇摆位。", "record": "2-0-0", "games_played": 2, "wins": 2, "losses": 0, "draws": 0, "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "72.5%", "survival_rate": "100.0%", "average_points": "7.25", "points_total": "14.50", "points_cap": "20.00", "correct_stances": 1, "stance_calls": 1, "survivals": 2, "roles": [{"role": "村民", "games": 1}, {"role": "狼人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 8.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "正确", "notes": "为终结位提供了稳定支撑。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 6.5, "points_available": 10.0, "stance_pick_label": "未站边", "stance_correct_label": "错误", "notes": "存在感不高但表现稳定。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "80.0%", "average_points": "8.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "赤月战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "0.0%", "score_rate": "65.0%", "average_points": "6.50"}]}, "p007": {"player_id": "p007", "display_name": "清歌", "team_name": "银灯战队", "rank": 9, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p007.jpg", "notes": "控场能力很强。", "record": "0-2-0", "games_played": 2, "wins": 0, "losses": 2, "draws": 0, "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "32.5%", "survival_rate": "0.0%", "average_points": "3.25", "points_total": "6.50", "points_cap": "20.00", "correct_stances": 0, "stance_calls": 2, "survivals": 0, "roles": [{"role": "狼人", "games": 1}, {"role": "预言家", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "预言家", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 4.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "错误", "notes": "信息优势建立得太短。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 2.5, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "错误", "notes": "前期没能拿到节奏。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "40.0%", "average_points": "4.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "25.0%", "average_points": "2.50"}]}, "p008": {"player_id": "p008", "display_name": "曜石", "team_name": "银灯战队", "rank": 8, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p008.jpg", "notes": "中盘稳定器。", "record": "1-1-0", "games_played": 2, "wins": 1, "losses": 1, "draws": 0, "win_rate": "50.0%", "stance_rate": "50.0%", "score_rate": "55.0%", "survival_rate": "50.0%", "average_points": "5.50", "points_total": "11.00", "points_cap": "20.00", "correct_stances": 1, "stance_calls": 2, "survivals": 1, "roles": [{"role": "女巫", "games": 1}, {"role": "村民", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "女巫", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 3.5, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "错误", "notes": "资源被迫提前交掉。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 7.5, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "白天投票纪律出色。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "35.0%", "average_points": "3.50"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "75.0%", "average_points": "7.50"}]}, "p009": {"player_id": "p009", "display_name": "飞羽", "team_name": "银灯战队", "rank": 7, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p009.jpg", "notes": "对跳与对抗能力突出。", "record": "1-1-0", "games_played": 2, "wins": 1, "losses": 1, "draws": 0, "win_rate": "50.0%", "stance_rate": "100.0%", "score_rate": "55.0%", "survival_rate": "0.0%", "average_points": "5.50", "points_total": "11.00", "points_cap": "20.00", "correct_stances": 2, "stance_calls": 2, "survivals": 0, "roles": [{"role": "村民", "games": 1}, {"role": "猎人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 3.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "正确", "notes": "站对了边，但没形成影响力。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "猎人", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "出局", "points_earned": 8.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "关键出枪改变中盘走势。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "100.0%", "score_rate": "30.0%", "average_points": "3.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "80.0%", "average_points": "8.00"}]}, "p010": {"player_id": "p010", "display_name": "回声", "team_name": "银灯战队", "rank": 6, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p010.jpg", "notes": "经常负责队内沟通锚点。", "record": "1-1-0", "games_played": 2, "wins": 1, "losses": 1, "draws": 0, "win_rate": "50.0%", "stance_rate": "100.0%", "score_rate": "55.0%", "survival_rate": "100.0%", "average_points": "5.50", "points_total": "11.00", "points_cap": "20.00", "correct_stances": 2, "stance_calls": 2, "survivals": 2, "roles": [{"role": "守卫", "games": 1}, {"role": "村民", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "守卫", "camp_label": "好人阵营", "result_label": "负", "survived_label": "存活", "points_earned": 4.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "正确", "notes": "正确站边来得太晚。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "胜", "survived_label": "存活", "points_earned": 7.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "后半程控票表现不错。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "100.0%", "score_rate": "40.0%", "average_points": "4.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "1-0-0", "win_rate": "100.0%", "stance_rate": "100.0%", "score_rate": "70.0%", "average_points": "7.00"}]}, "p011": {"player_id": "p011", "display_name": "月白", "team_name": "银灯战队", "rank": 11, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p011.jpg", "notes": "波动大但爆发力强。", "record": "0-2-0", "games_played": 2, "wins": 0, "losses": 2, "draws": 0, "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "25.0%", "survival_rate": "0.0%", "average_points": "2.50", "points_total": "5.00", "points_cap": "20.00", "correct_stances": 0, "stance_calls": 2, "survivals": 0, "roles": [{"role": "村民", "games": 1}, {"role": "狼人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 3.0, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "错误", "notes": "舆论压力没有转化成票型。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 2.0, "points_available": 10.0, "stance_pick_label": "站狼人", "stance_correct_label": "错误", "notes": "前期被点后没有翻身。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "30.0%", "average_points": "3.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "20.0%", "average_points": "2.00"}]}, "p012": {"player_id": "p012", "display_name": "长夜", "team_name": "银灯战队", "rank": 12, "aliases": [], "joined_on": "2026-01-05", "photo": "assets/players/p012.jpg", "notes": "残局能力突出。", "record": "0-2-0", "games_played": 2, "wins": 0, "losses": 2, "draws": 0, "win_rate": "0.0%", "stance_rate": "100.0%", "score_rate": "22.5%", "survival_rate": "0.0%", "average_points": "2.25", "points_total": "4.50", "points_cap": "20.00", "correct_stances": 1, "stance_calls": 1, "survivals": 0, "roles": [{"role": "村民", "games": 1}, {"role": "狼人", "games": 1}], "history": [{"match_id": "spring-2026-r1-g2", "competition_name": "LAL广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 2, "played_on": "2026-04-01", "table_label": "一号桌", "role": "村民", "camp_label": "好人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 2.0, "points_available": 10.0, "stance_pick_label": "未站边", "stance_correct_label": "错误", "notes": "整局没有形成有效站边。"}, {"match_id": "spring-2026-r1-g1", "competition_name": "京城大师赛广州公开赛", "season": "2026春季联赛", "stage_label": "常规赛", "round": 1, "game_no": 1, "played_on": "2026-04-01", "table_label": "一号桌", "role": "狼人", "camp_label": "狼人阵营", "result_label": "负", "survived_label": "出局", "points_earned": 2.5, "points_available": 10.0, "stance_pick_label": "站好人", "stance_correct_label": "正确", "notes": "公开站边正确，但阵营仍输掉比赛。"}], "competition_stats": [{"competition_name": "LAL广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "0.0%", "score_rate": "20.0%", "average_points": "2.00"}, {"competition_name": "京城大师赛广州公开赛", "team_name": "银灯战队", "games_played": 1, "record": "0-1-0", "win_rate": "0.0%", "stance_rate": "100.0%", "score_rate": "25.0%", "average_points": "2.50"}]}};
+      const 详情层 = document.getElementById("队员详情层");
+      const 详情关闭按钮 = document.getElementById("详情关闭按钮");
+
+      function 设置文本(id, value) {
+        const 节点 = document.getElementById(id);
+        if (节点) {
+          节点.textContent = value;
+        }
+      }
+
+      function 渲染角色分布(角色列表) {
+        const 容器 = document.getElementById("详情角色分布");
+        容器.innerHTML = "";
+        if (!角色列表.length) {
+          容器.innerHTML = '<span class="text-secondary">暂无角色数据</span>';
+          return;
+        }
+        for (const 项 of 角色列表) {
+          const 标签 = document.createElement("span");
+          标签.className = "role-badge";
+          标签.textContent = `${项.role} · ${项.games}局`;
+          容器.appendChild(标签);
+        }
+      }
+
+      function 渲染对局历史(历史列表) {
+        const 容器 = document.getElementById("详情对局历史");
+        容器.innerHTML = "";
+        if (!历史列表.length) {
+          容器.innerHTML = '<div class="col-12 text-secondary">暂无对局历史</div>';
+          return;
+        }
+        for (const 对局 of 历史列表) {
+          const 卡片 = document.createElement("div");
+          卡片.className = "col-12 col-lg-6";
+          卡片.innerHTML = `
+            <div class="history-card h-100">
+              <div class="d-flex align-items-start justify-content-between gap-3 mb-2">
+                <div>
+                  <div class="fw-semibold">${对局.season}</div>
+                  <div class="history-meta">${对局.played_on} · ${对局.stage_label} · 第${对局.round}轮第${对局.game_no}局</div>
+                </div>
+                <span class="badge rounded-pill text-bg-dark">${对局.result_label}</span>
+              </div>
+              <div class="small mb-2">角色：${对局.role} · 阵营：${对局.camp_label} · ${对局.survived_label}</div>
+              <div class="small mb-2">站边：${对局.stance_pick_label} · 判断：${对局.stance_correct_label}</div>
+              <div class="small mb-2">得分：${对局.points_earned} / ${对局.points_available}</div>
+              <div class="small text-secondary">${对局.notes}</div>
+            </div>
+          `;
+          容器.appendChild(卡片);
+        }
+      }
+
+      function 打开队员详情(playerId) {
+        const 数据 = 队员详情数据[playerId];
+        if (!数据) {
+          return;
+        }
+        设置文本("详情头像", 数据.display_name.slice(0, 1));
+        设置文本("详情排名", `第 ${数据.rank} 名`);
+        设置文本("详情姓名", 数据.display_name);
+        设置文本("详情战队", 数据.team_name);
+        设置文本("详情战绩", 数据.record);
+        设置文本("详情场均得分", 数据.average_points);
+        设置文本("详情胜率", 数据.win_rate);
+        设置文本("详情站边率", 数据.stance_rate);
+        设置文本("详情得分率", 数据.score_rate);
+        设置文本("详情存活率", 数据.survival_rate);
+        设置文本("详情别名", 数据.aliases.length ? 数据.aliases.join("、") : "无");
+        设置文本("详情入库日期", 数据.joined_on);
+        设置文本("详情照片路径", 数据.photo);
+        设置文本("详情备注", 数据.notes || "无");
+        设置文本("详情总得分", 数据.points_total);
+        设置文本("详情总满分", 数据.points_cap);
+        设置文本("详情正确站边", String(数据.correct_stances));
+        设置文本("详情站边次数", String(数据.stance_calls));
+        设置文本("详情存活局数", String(数据.survivals));
+        设置文本("详情总出场", String(数据.games_played));
+        渲染角色分布(数据.roles);
+        渲染对局历史(数据.history);
+        详情层.classList.add("is-open");
+        详情层.setAttribute("aria-hidden", "false");
+        document.body.style.overflow = "hidden";
+      }
+
+      function 关闭队员详情() {
+        详情层.classList.remove("is-open");
+        详情层.setAttribute("aria-hidden", "true");
+        document.body.style.overflow = "";
+      }
+
+      document.querySelectorAll(".player-trigger").forEach((节点) => {
+        节点.addEventListener("click", () => {
+          打开队员详情(节点.dataset.playerId);
+        });
+        节点.addEventListener("keydown", (事件) => {
+          if (事件.key === "Enter" || 事件.key === " ") {
+            事件.preventDefault();
+            打开队员详情(节点.dataset.playerId);
+          }
+        });
+      });
+
+      详情关闭按钮.addEventListener("click", 关闭队员详情);
+      详情层.addEventListener("click", (事件) => {
+        if (事件.target === 详情层) {
+          关闭队员详情();
+        }
+      });
+
+      document.addEventListener("keydown", (事件) => {
+        if (事件.key === "Escape" && 详情层.classList.contains("is-open")) {
+          关闭队员详情();
+        }
+      });
+    </script>
+  </body>
+</html>

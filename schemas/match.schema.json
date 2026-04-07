@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/schemas/match.schema.json",
+  "title": "Werewolf Match",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "match_id",
+    "competition_name",
+    "season",
+    "stage",
+    "round",
+    "game_no",
+    "played_on",
+    "table_label",
+    "format",
+    "duration_minutes",
+    "winning_camp",
+    "players",
+    "notes"
+  ],
+  "properties": {
+    "match_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+    },
+    "competition_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "season": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stage": {
+      "type": "string",
+      "enum": [
+        "regular_season",
+        "playoffs",
+        "finals",
+        "showmatch"
+      ]
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "game_no": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "played_on": {
+      "type": "string",
+      "format": "date"
+    },
+    "table_label": {
+      "type": "string",
+      "minLength": 1
+    },
+    "format": {
+      "type": "string",
+      "minLength": 1
+    },
+    "duration_minutes": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "winning_camp": {
+      "type": "string",
+      "enum": [
+        "villagers",
+        "werewolves",
+        "third_party",
+        "draw"
+      ]
+    },
+    "players": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "player_id",
+          "team_id",
+          "seat",
+          "role",
+          "camp",
+          "survived",
+          "result",
+          "points_earned",
+          "points_available",
+          "stance_pick",
+          "stance_correct",
+          "notes"
+        ],
+        "properties": {
+          "player_id": {
+            "type": "string"
+          },
+          "team_id": {
+            "type": "string"
+          },
+          "seat": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "role": {
+            "type": "string",
+            "minLength": 1
+          },
+          "camp": {
+            "type": "string",
+            "enum": [
+              "villagers",
+              "werewolves",
+              "third_party"
+            ]
+          },
+          "survived": {
+            "type": "boolean"
+          },
+          "result": {
+            "type": "string",
+            "enum": [
+              "win",
+              "loss",
+              "draw"
+            ]
+          },
+          "points_earned": {
+            "type": "number",
+            "minimum": 0
+          },
+          "points_available": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "stance_pick": {
+            "type": "string",
+            "enum": [
+              "villagers",
+              "werewolves",
+              "third_party",
+              "none"
+            ]
+          },
+          "stance_correct": {
+            "type": "boolean"
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "string"
+    }
+  }
+}

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title>默认队员头像</title>
+  <desc>用于未上传照片时显示的默认队员头像</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#f7efe5" />
+      <stop offset="100%" stop-color="#d8b8a1" />
+    </linearGradient>
+    <linearGradient id="ring" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#9e2a2b" />
+      <stop offset="100%" stop-color="#5c1a1b" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="88" fill="url(#bg)" />
+  <circle cx="256" cy="178" r="102" fill="#fff7f2" />
+  <path d="M107 432c20-92 88-144 149-144s129 52 149 144" fill="#fff7f2" />
+  <circle cx="256" cy="256" r="214" fill="none" stroke="url(#ring)" stroke-width="18" stroke-opacity="0.72" />
+  <text x="256" y="470" text-anchor="middle" font-size="44" font-family="PingFang SC, Microsoft YaHei, sans-serif" fill="#5c1a1b">队员头像</text>
+</svg>

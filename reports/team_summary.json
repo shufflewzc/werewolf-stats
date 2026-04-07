@@ -1,0 +1,63 @@
+{
+  "generated_at": "2026-04-07T17:11:42+08:00",
+  "summary": [
+    {
+      "team_id": "crimson-moon",
+      "name": "赤月战队",
+      "short_name": "赤月",
+      "logo": "assets/teams/crimson-moon.png",
+      "player_count": 6,
+      "matches_represented": 2,
+      "player_appearances": 12,
+      "wins": 8,
+      "losses": 4,
+      "draws": 0,
+      "stance_calls": 11,
+      "correct_stances": 7,
+      "points_earned_total": 76.5,
+      "points_available_total": 120.0,
+      "represented_player_ids": [
+        "p001",
+        "p002",
+        "p003",
+        "p004",
+        "p005",
+        "p006"
+      ],
+      "win_rate": 0.6667,
+      "stance_rate": 0.6364,
+      "score_rate": 0.6375,
+      "average_points": 6.38,
+      "rank": 1
+    },
+    {
+      "team_id": "silver-lantern",
+      "name": "银灯战队",
+      "short_name": "银灯",
+      "logo": "assets/teams/silver-lantern.png",
+      "player_count": 6,
+      "matches_represented": 2,
+      "player_appearances": 12,
+      "wins": 3,
+      "losses": 9,
+      "draws": 0,
+      "stance_calls": 11,
+      "correct_stances": 6,
+      "points_earned_total": 49.0,
+      "points_available_total": 120.0,
+      "represented_player_ids": [
+        "p007",
+        "p008",
+        "p009",
+        "p010",
+        "p011",
+        "p012"
+      ],
+      "win_rate": 0.25,
+      "stance_rate": 0.5455,
+      "score_rate": 0.4083,
+      "average_points": 4.08,
+      "rank": 2
+    }
+  ]
+}

@@ -255,6 +255,20 @@ def get_profile_page(
         </section>
         """
 
+    guild_management_section = ""
+    if guild_management_cards:
+        guild_management_section = f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">我的门派管理</h2>
+              <p class="section-copy mb-0">这里只放门派管理入口；对外门派页默认展示当前正在进行的赛季战队。</p>
+            </div>
+          </div>
+          <div class="row g-3">{''.join(guild_management_cards)}</div>
+        </section>
+        """
+
     management_center_html = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -266,11 +280,7 @@ def get_profile_page(
       <div class="d-flex flex-wrap gap-2">{''.join(shortcut_links)}</div>
     </section>
     {guild_create_panel}
-    {(
-      f'<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">我的门派管理</h2><p class="section-copy mb-0">这里只放门派管理入口；对外门派页默认展示当前正在进行的赛季战队。</p></div></div><div class="row g-3">{''.join(guild_management_cards)}</div></section>'
-      if guild_management_cards
-      else ''
-    )}
+    {guild_management_section}
     """
     body += management_center_html
 

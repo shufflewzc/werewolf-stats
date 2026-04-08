@@ -26,6 +26,7 @@ get_team_for_player = legacy.get_team_for_player
 get_team_scope = legacy.get_team_scope
 get_team_season_status = legacy.get_team_season_status
 get_user_bound_player_ids = legacy.get_user_bound_player_ids
+get_user_badge_label = legacy.get_user_badge_label
 get_user_by_player_id = legacy.get_user_by_player_id
 get_user_player = legacy.get_user_player
 get_user_team_identities = legacy.get_user_team_identities
@@ -38,6 +39,7 @@ load_validated_data = legacy.load_validated_data
 parse_team_scope_value = legacy.parse_team_scope_value
 redirect = legacy.redirect
 remove_member_from_team = legacy.remove_member_from_team
+remove_user_player_binding = legacy.remove_user_player_binding
 revoke_user_sessions = legacy.revoke_user_sessions
 save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
@@ -65,6 +67,141 @@ def get_team_member_removal_error(
     if user_has_match_history(data, member_player_id):
         return "该队员已经有历史比赛记录，不能直接删除，请改用转会。"
     return ""
+
+
+def get_team_membership_change_error(
+    data: dict[str, Any],
+    team: dict[str, Any] | None,
+    action_label: str,
+) -> str:
+    if not team:
+        return f"没有找到要{action_label}的战队。"
+    if get_team_season_status(data, team) != "ongoing":
+        return f"当前战队所属赛季已结束，不能再{action_label}。"
+    return ""
+
+
+def issue_fresh_team_center_session(
+    start_response,
+    username: str,
+):
+    revoke_user_sessions(username)
+    token = secrets.token_urlsafe(24)
+    SESSIONS[token] = username
+    return redirect(
+        start_response,
+        "/team-center",
+        headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax")],
+    )
+
+
+def can_manage_current_team_members(
+    current_user: dict[str, Any] | None,
+    current_player: dict[str, Any] | None,
+    current_team: dict[str, Any] | None,
+) -> bool:
+    return bool(
+        current_team
+        and (
+            user_has_permission(current_user, "team_manage")
+            or (current_player and is_team_captain(current_team, current_player))
+        )
+    )
+
+
+def handle_switch_primary_identity_action(
+    ctx: RequestContext,
+    start_response,
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    current_user: dict[str, Any],
+):
+    username = current_user["username"]
+    selected_player_id = form_value(ctx.form, "player_id").strip()
+    if not selected_player_id:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="没有找到要切换的赛季身份。"),
+        )
+    if selected_player_id not in get_user_bound_player_ids(current_user):
+        return start_response_html(
+            start_response,
+            "403 Forbidden",
+            layout("没有权限", '<div class="alert alert-danger">你只能切换到自己已绑定的赛季身份。</div>', ctx),
+        )
+    users = set_user_primary_player_id(users, username, selected_player_id)
+    errors = save_repository_state(data, users)
+    if errors:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="切换当前管理身份失败：" + "；".join(errors[:3])),
+        )
+    return issue_fresh_team_center_session(start_response, username)
+
+
+def handle_cancel_request_action(
+    ctx: RequestContext,
+    start_response,
+    current_request: dict[str, Any] | None,
+    requests: list[dict[str, Any]],
+    username: str,
+):
+    if not current_request:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="当前没有可取消的申请。"),
+        )
+    requests = [item for item in requests if item["username"] != username]
+    save_membership_requests(requests)
+    return start_response_html(
+        start_response,
+        "200 OK",
+        get_team_center_page(ctx, alert="申请已取消。"),
+    )
+
+
+def handle_leave_team_action(
+    ctx: RequestContext,
+    start_response,
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    current_request: dict[str, Any] | None,
+    current_player: dict[str, Any] | None,
+    current_team: dict[str, Any] | None,
+    username: str,
+):
+    if not current_player or not current_team:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="当前账号没有可退出的战队。"),
+        )
+    if current_request:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="你当前有待处理申请，请先取消申请或等待审核后再退出战队。"),
+        )
+    if user_has_match_history(data, current_player["player_id"]):
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="已有比赛记录时不能直接退出战队，请改用转会申请。"),
+        )
+    remove_member_from_team(current_team, current_player["player_id"])
+    data["players"] = [item for item in data["players"] if item["player_id"] != current_player["player_id"]]
+    users = remove_user_player_binding(users, username, current_player["player_id"])
+    errors = save_repository_state(data, users)
+    if errors:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert="退出战队失败：" + "；".join(errors[:3])),
+        )
+    return issue_fresh_team_center_session(start_response, username)
 
 def get_team_center_page(
     ctx: RequestContext,
@@ -377,7 +514,7 @@ def get_team_center_page(
                         <tr>
                           <td>{escape(member['display_name'])}</td>
                           <td>{escape(member_id)}</td>
-                          <td>{escape(owner_user['username']) if owner_user else '未绑定账号'}</td>
+                          <td>{escape(get_user_badge_label(owner_user))}</td>
                           <td>{role_badge}</td>
                           <td>{escape(member.get('joined_on') or '未知')}</td>
                           <td>{action_html}</td>
@@ -545,34 +682,12 @@ def handle_team_center(ctx: RequestContext, start_response):
     valid_scope_values = {item["value"] for item in ongoing_scopes}
 
     if action == "switch_primary_identity":
-        selected_player_id = form_value(ctx.form, "player_id").strip()
-        if not selected_player_id:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="没有找到要切换的赛季身份。"),
-            )
-        if selected_player_id not in get_user_bound_player_ids(current_user):
-            return start_response_html(
-                start_response,
-                "403 Forbidden",
-                layout("没有权限", '<div class="alert alert-danger">你只能切换到自己已绑定的赛季身份。</div>', ctx),
-            )
-        users = set_user_primary_player_id(users, username, selected_player_id)
-        errors = save_repository_state(data, users)
-        if errors:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="切换当前管理身份失败：" + "；".join(errors[:3])),
-            )
-        revoke_user_sessions(username)
-        token = secrets.token_urlsafe(24)
-        SESSIONS[token] = username
-        return redirect(
+        return handle_switch_primary_identity_action(
+            ctx,
             start_response,
-            "/team-center",
-            headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax")],
+            data,
+            users,
+            current_user,
         )
 
     if action == "create_team":
@@ -771,65 +886,31 @@ def handle_team_center(ctx: RequestContext, start_response):
         )
 
     if action == "cancel_request":
-        if not current_request:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="当前没有可取消的申请。"),
-            )
-        requests = [item for item in requests if item["username"] != username]
-        save_membership_requests(requests)
-        return start_response_html(
+        return handle_cancel_request_action(
+            ctx,
             start_response,
-            "200 OK",
-            get_team_center_page(ctx, alert="申请已取消。"),
+            current_request,
+            requests,
+            username,
         )
 
     if action == "leave_team":
-        if not current_player or not current_team:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="当前账号没有可退出的战队。"),
-            )
-        if current_request:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="你当前有待处理申请，请先取消申请或等待审核后再退出战队。"),
-            )
-        if user_has_match_history(data, current_player["player_id"]):
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="已有比赛记录时不能直接退出战队，请改用转会申请。"),
-            )
-        remove_member_from_team(current_team, current_player["player_id"])
-        data["players"] = [item for item in data["players"] if item["player_id"] != current_player["player_id"]]
-        users = append_user_player_binding(users, username, None)
-        errors = save_repository_state(data, users)
-        if errors:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_team_center_page(ctx, alert="退出战队失败：" + "；".join(errors[:3])),
-            )
-        revoke_user_sessions(username)
-        token = secrets.token_urlsafe(24)
-        SESSIONS[token] = username
-        return redirect(
+        return handle_leave_team_action(
+            ctx,
             start_response,
-            "/team-center",
-            headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax")],
+            data,
+            users,
+            current_request,
+            current_player,
+            current_team,
+            username,
         )
 
     if action == "remove_team_member":
-        can_manage_current_team = bool(
-            current_team
-            and (
-                user_has_permission(current_user, "team_manage")
-                or (current_player and is_team_captain(current_team, current_player))
-            )
+        can_manage_current_team = can_manage_current_team_members(
+            current_user,
+            current_player,
+            current_team,
         )
         if not can_manage_current_team or not current_player or not current_team:
             return start_response_html(
@@ -864,7 +945,7 @@ def handle_team_center(ctx: RequestContext, start_response):
             item for item in data["players"] if item["player_id"] != member_player_id
         ]
         if owner_username:
-            users = append_user_player_binding(users, owner_username, None)
+            users = remove_user_player_binding(users, owner_username, member_player_id)
         errors = save_repository_state(data, users)
         if errors:
             return start_response_html(
@@ -886,12 +967,10 @@ def handle_team_center(ctx: RequestContext, start_response):
         )
 
     if action in {"approve_request", "reject_request"}:
-        can_manage_current_team = bool(
-            current_team
-            and (
-                user_has_permission(current_user, "team_manage")
-                or (current_player and is_team_captain(current_team, current_player))
-            )
+        can_manage_current_team = can_manage_current_team_members(
+            current_user,
+            current_player,
+            current_team,
         )
         if not can_manage_current_team or not current_player or not current_team:
             return start_response_html(
@@ -909,6 +988,13 @@ def handle_team_center(ctx: RequestContext, start_response):
                 start_response,
                 "200 OK",
                 get_team_center_page(ctx, alert="没有找到对应申请。"),
+            )
+        membership_error = get_team_membership_change_error(data, current_team, "审核成员申请")
+        if membership_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert=membership_error),
             )
         if action == "reject_request":
             requests = [item for item in requests if item["request_id"] != request_id]
@@ -929,6 +1015,14 @@ def handle_team_center(ctx: RequestContext, start_response):
         if request_item["request_type"] == "join":
             request_competition_name = str(request_item.get("scope_competition_name") or "").strip()
             request_season_name = str(request_item.get("scope_season_name") or "").strip()
+            if (request_competition_name, request_season_name) != get_team_scope(current_team):
+                requests = [item for item in requests if item["request_id"] != request_id]
+                save_membership_requests(requests)
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_team_center_page(ctx, alert="该申请所属赛事赛季与当前战队不一致，申请已移除。"),
+                )
             if user_has_team_identity_in_scope(
                 data,
                 requester,
@@ -969,6 +1063,22 @@ def handle_team_center(ctx: RequestContext, start_response):
                     start_response,
                     "200 OK",
                     get_team_center_page(ctx, alert="转会申请对应的数据已失效，申请已移除。"),
+                )
+            if get_team_scope(source_team) != get_team_scope(current_team):
+                requests = [item for item in requests if item["request_id"] != request_id]
+                save_membership_requests(requests)
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_team_center_page(ctx, alert="转会申请对应的战队赛季范围已变化，申请已移除。"),
+                )
+            if transfer_player["team_id"] != source_team["team_id"]:
+                requests = [item for item in requests if item["request_id"] != request_id]
+                save_membership_requests(requests)
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_team_center_page(ctx, alert="转会申请对应的队员已不在原战队中，申请已移除。"),
                 )
             remove_member_from_team(source_team, transfer_player["player_id"])
             current_team["members"].append(transfer_player["player_id"])

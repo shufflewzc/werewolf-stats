@@ -98,6 +98,22 @@ def get_guilds_page(
     """
     return layout("门派", body, ctx, alert=alert)
 
+
+def get_guild_join_approval_error(
+    data: dict[str, Any],
+    team: dict[str, Any] | None,
+    guild_id: str,
+) -> str:
+    if not team:
+        return "申请对应的战队已经不存在。"
+    if get_team_season_status(data, team) != "ongoing":
+        return "当前战队所属赛季已结束，不能再审核入门派申请。"
+    current_guild_id = str(team.get("guild_id") or "").strip()
+    if current_guild_id and current_guild_id != guild_id:
+        return "该战队已经加入其他门派，不能重复通过旧申请。"
+    return ""
+
+
 def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
     data = load_validated_data()
     guild = get_guild_by_id(data, guild_id)
@@ -666,6 +682,13 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
                 start_response,
                 "200 OK",
                 get_guild_page(ctx, guild_id, alert="申请对应的战队已经不存在，记录已移除。"),
+            )
+        approval_error = get_guild_join_approval_error(data, team, guild_id)
+        if approval_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_guild_page(ctx, guild_id, alert=approval_error),
             )
         team["guild_id"] = guild_id
         errors = save_repository_state(data, users)

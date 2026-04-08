@@ -105,6 +105,8 @@ def create_schema(connection: sqlite3.Connection) -> None:
             manager_scope_keys_json TEXT NOT NULL DEFAULT '[]',
             permissions_json TEXT NOT NULL DEFAULT '[]',
             role TEXT NOT NULL DEFAULT 'member',
+            is_placeholder_account INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder_account IN (0, 1)),
+            placeholder_source_player_id TEXT,
             province_name TEXT NOT NULL DEFAULT '',
             region_name TEXT NOT NULL DEFAULT '',
             gender TEXT NOT NULL DEFAULT '',
@@ -275,6 +277,12 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         )
     if "province_name" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN province_name TEXT NOT NULL DEFAULT ''")
+    if "is_placeholder_account" not in user_columns:
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN is_placeholder_account INTEGER NOT NULL DEFAULT 0"
+        )
+    if "placeholder_source_player_id" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN placeholder_source_player_id TEXT")
     if "region_name" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN region_name TEXT NOT NULL DEFAULT ''")
     if "gender" not in user_columns:
@@ -486,9 +494,10 @@ def replace_repository_data(
                 INSERT INTO users (
                     username, display_name, password_salt, password_hash, active, player_id,
                     linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
+                    is_placeholder_account, placeholder_source_player_id,
                     province_name, region_name, gender, bio
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["username"],
@@ -501,6 +510,8 @@ def replace_repository_data(
                     json.dumps(user.get("manager_scope_keys", []), ensure_ascii=False),
                     json.dumps(user.get("permissions", []), ensure_ascii=False),
                     user.get("role") or ("admin" if user["username"] == "admin" else "member"),
+                    1 if user.get("is_placeholder_account") else 0,
+                    user.get("placeholder_source_player_id"),
                     user.get("province_name") or "",
                     user.get("region_name") or "",
                     user.get("gender") or "",
@@ -680,6 +691,7 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
             """
             SELECT username, display_name, password_salt, password_hash, active, player_id,
                    linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
+                   is_placeholder_account, placeholder_source_player_id,
                    province_name, region_name, gender, bio
             FROM users
             ORDER BY username
@@ -697,6 +709,8 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
                 "manager_scope_keys": json.loads(row["manager_scope_keys_json"] or "[]"),
                 "permissions": json.loads(row["permissions_json"] or "[]"),
                 "role": row["role"] or ("admin" if row["username"] == "admin" else "member"),
+                "is_placeholder_account": bool(row["is_placeholder_account"]),
+                "placeholder_source_player_id": row["placeholder_source_player_id"] or None,
                 "province_name": row["province_name"] or "",
                 "region_name": row["region_name"] or "",
                 "gender": row["gender"] or "",

@@ -111,7 +111,7 @@ PLAYER_UPLOAD_DIR = PLAYER_ASSETS_DIR / "uploads"
 TEAM_ASSETS_DIR = ASSETS_DIR / "teams"
 TEAM_UPLOAD_DIR = TEAM_ASSETS_DIR / "uploads"
 DEFAULT_PLAYER_PHOTO = "assets/players/default-player.svg"
-DEFAULT_TEAM_LOGO = "assets/teams/default-team.png"
+DEFAULT_TEAM_LOGO = "assets/teams/default-team.svg"
 SESSION_COOKIE = "werewolf_session"
 PORT = 8000
 SESSIONS: dict[str, str] = {}
@@ -1586,6 +1586,27 @@ def get_user_by_player_id(users: list[dict[str, Any]], player_id: str) -> dict[s
     return None
 
 
+def is_placeholder_user(user: dict[str, Any] | None) -> bool:
+    return bool(user and user.get("is_placeholder_account"))
+
+
+def get_user_badge_label(user: dict[str, Any] | None) -> str:
+    if not user:
+        return "未绑定账号"
+    if is_placeholder_user(user):
+        return f"{user['username']}（未注册账号）"
+    return user["username"]
+
+
+def get_user_display_name_label(user: dict[str, Any] | None) -> str:
+    if not user:
+        return "无"
+    base_label = str(user.get("display_name") or user["username"])
+    if is_placeholder_user(user):
+        return f"{base_label}（未注册）"
+    return base_label
+
+
 def ensure_player_asset_dirs() -> None:
     PLAYER_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -1721,6 +1742,33 @@ def build_placeholder_player(
     }
 
 
+def build_placeholder_username(player_id: str) -> str:
+    return f"placeholder__{player_id.strip().lower()}"
+
+
+def create_placeholder_user_for_player(player: dict[str, Any]) -> dict[str, Any]:
+    password_salt, password_hash = hash_password(secrets.token_urlsafe(24))
+    player_id = str(player.get("player_id") or "").strip()
+    return {
+        "username": build_placeholder_username(player_id),
+        "display_name": str(player.get("display_name") or player_id),
+        "password_salt": password_salt,
+        "password_hash": password_hash,
+        "active": False,
+        "player_id": player_id or None,
+        "linked_player_ids": [],
+        "manager_scope_keys": [],
+        "permissions": [],
+        "role": "member",
+        "is_placeholder_account": True,
+        "placeholder_source_player_id": player_id or None,
+        "province_name": DEFAULT_PROVINCE_NAME,
+        "region_name": DEFAULT_REGION_NAME,
+        "gender": "prefer_not_to_say",
+        "bio": "系统为未注册参赛选手自动创建的占位账号，待注册后可自动合并。",
+    }
+
+
 def ensure_placeholder_players_for_matches(
     data: dict[str, Any],
     matches: list[dict[str, Any]],
@@ -1752,6 +1800,63 @@ def ensure_placeholder_players_for_matches(
             existing_player_ids.add(player_id)
             created_player_ids.append(player_id)
     return created_player_ids
+
+
+def ensure_placeholder_users_for_player_ids(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    player_ids: list[str],
+) -> list[dict[str, Any]]:
+    player_lookup = {player["player_id"]: player for player in data["players"]}
+    owned_player_ids = {
+        player_id
+        for user in users
+        for player_id in get_user_bound_player_ids(user)
+    }
+    existing_usernames = {user["username"] for user in users}
+    next_users = list(users)
+    for player_id in player_ids:
+        normalized_player_id = str(player_id or "").strip()
+        if not normalized_player_id or normalized_player_id in owned_player_ids:
+            continue
+        player = player_lookup.get(normalized_player_id)
+        if not player:
+            continue
+        placeholder_username = build_placeholder_username(normalized_player_id)
+        if placeholder_username in existing_usernames:
+            continue
+        next_users.append(create_placeholder_user_for_player(player))
+        existing_usernames.add(placeholder_username)
+    return next_users
+
+
+def merge_placeholder_users_for_registration(
+    users: list[dict[str, Any]],
+    display_name: str,
+    new_user: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    normalized_display_name = display_name.strip()
+    if not normalized_display_name:
+        return [*users, new_user], []
+    matched_placeholder_users = [
+        user
+        for user in users
+        if is_placeholder_user(user)
+        and str(user.get("display_name") or "").strip() == normalized_display_name
+    ]
+    if len(matched_placeholder_users) != 1:
+        return [*users, new_user], []
+    placeholder_user = matched_placeholder_users[0]
+    merged_player_ids = get_user_bound_player_ids(placeholder_user)
+    merged_user = {
+        **new_user,
+        "player_id": merged_player_ids[0] if merged_player_ids else new_user.get("player_id"),
+        "linked_player_ids": merged_player_ids[1:] if len(merged_player_ids) > 1 else [],
+    }
+    remaining_users = [
+        user for user in users if user["username"] != placeholder_user["username"]
+    ]
+    return [*remaining_users, merged_user], merged_player_ids
 
 
 def append_alert_query(path: str, alert: str) -> str:
@@ -1954,7 +2059,7 @@ def build_player_binding_candidates(
     for player in data["players"]:
         player_id = player["player_id"]
         owner = get_user_by_player_id(users, player_id)
-        if owner and owner["username"] != target_user["username"]:
+        if owner and not is_placeholder_user(owner) and owner["username"] != target_user["username"]:
             continue
         scope_labels = get_player_binding_scope_labels(data, player_id)
         competition_names = sorted({item.split(" / ", 1)[0] for item in scope_labels})
@@ -1986,6 +2091,7 @@ def build_player_binding_candidates(
                 "scope_labels": "、".join(scope_labels) or "未命名赛季",
                 "already_bound": player_id in target_bound_ids,
                 "owner_username": owner["username"] if owner else "",
+                "owner_is_placeholder": is_placeholder_user(owner),
             }
         )
     candidates.sort(
@@ -4857,8 +4963,8 @@ def get_player_edit_page(
           <div class="panel h-100 shadow-sm p-3">
             <div class="mb-2"><strong>队员编号：</strong>{escape(player['player_id'])}</div>
             <div class="mb-2"><strong>所属战队：</strong>{escape(player['team_id'])}</div>
-            <div class="mb-2"><strong>绑定账号：</strong>{escape(owner_user['username']) if owner_user else '未绑定账号'}</div>
-            <div class="mb-0"><strong>账号显示名称：</strong>{escape(owner_user.get('display_name') or owner_user['username']) if owner_user else '无'}</div>
+            <div class="mb-2"><strong>绑定账号：</strong>{escape(get_user_badge_label(owner_user))}</div>
+            <div class="mb-0"><strong>账号显示名称：</strong>{escape(get_user_display_name_label(owner_user))}</div>
           </div>
         </div>
         <div class="col-12 col-lg-6 d-flex justify-content-lg-end align-items-start">
@@ -5200,10 +5306,9 @@ def append_user_player_binding(
     for user in users:
         if user["username"] == username:
             normalized_player_id = str(player_id or "").strip()
+            existing_bound_ids = get_user_bound_player_ids(user)
             linked_player_ids = [
-                item
-                for item in get_user_bound_player_ids(user)
-                if item != normalized_player_id
+                item for item in existing_bound_ids if item != normalized_player_id
             ]
             updated_users.append(
                 {
@@ -5214,6 +5319,33 @@ def append_user_player_binding(
             )
         else:
             updated_users.append(user)
+    return updated_users
+
+
+def remove_user_player_binding(
+    users: list[dict[str, Any]],
+    username: str,
+    player_id: str | None,
+) -> list[dict[str, Any]]:
+    normalized_player_id = str(player_id or "").strip()
+    updated_users = []
+    for user in users:
+        if user["username"] != username:
+            updated_users.append(user)
+            continue
+        remaining_ids = [
+            item
+            for item in get_user_bound_player_ids(user)
+            if item and item != normalized_player_id
+        ]
+        next_primary = remaining_ids[0] if remaining_ids else None
+        updated_users.append(
+            {
+                **user,
+                "player_id": next_primary,
+                "linked_player_ids": remaining_ids[1:] if remaining_ids else [],
+            }
+        )
     return updated_users
 
 
@@ -5427,6 +5559,7 @@ def save_matches_with_placeholders(
     normalized_matches, _ = canonicalize_match_ids(matches)
     data["matches"] = normalized_matches
     created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
+    users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
     errors = save_repository_state(data, users)
     return errors, created_player_ids
 
@@ -5749,29 +5882,39 @@ def handle_register(ctx: RequestContext, start_response):
         province_name,
         region_name,
     )
-    users.append(
-        {
-            "username": username,
-            "display_name": display_name,
-            "password_salt": password_salt,
-            "password_hash": password_hash,
-            "active": True,
-            "player_id": None,
-            "linked_player_ids": [],
-            "manager_scope_keys": [],
-            "permissions": [],
-            "role": "member",
-            "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
-            "region_name": normalized_region or "广州市",
-            "gender": normalize_user_gender(gender) or "prefer_not_to_say",
-            "bio": bio,
-        }
+    new_user = {
+        "username": username,
+        "display_name": display_name,
+        "password_salt": password_salt,
+        "password_hash": password_hash,
+        "active": True,
+        "player_id": None,
+        "linked_player_ids": [],
+        "manager_scope_keys": [],
+        "permissions": [],
+        "role": "member",
+        "is_placeholder_account": False,
+        "placeholder_source_player_id": None,
+        "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
+        "region_name": normalized_region or "广州市",
+        "gender": normalize_user_gender(gender) or "prefer_not_to_say",
+        "bio": bio,
+    }
+    users, merged_player_ids = merge_placeholder_users_for_registration(
+        users,
+        display_name,
+        new_user,
     )
     save_users(users)
+    success_message = "注册成功，请使用新账号登录。"
+    if merged_player_ids:
+        success_message = (
+            f"注册成功，系统已自动合并 {len(merged_player_ids)} 个未注册参赛账号的数据，请使用新账号登录。"
+        )
     return start_response_html(
         start_response,
         "200 OK",
-        login_page(ctx, alert="注册成功，请使用新账号登录。"),
+        login_page(ctx, alert=success_message),
     )
 
 

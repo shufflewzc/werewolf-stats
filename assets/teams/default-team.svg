@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 240 240" role="img" aria-labelledby="title desc">
+  <title id="title">Default team logo</title>
+  <desc id="desc">A neutral shield logo used when a team has not uploaded its own badge.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#dcecff" />
+      <stop offset="100%" stop-color="#8fb4ff" />
+    </linearGradient>
+    <linearGradient id="shield" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1d4ed8" />
+      <stop offset="100%" stop-color="#0f766e" />
+    </linearGradient>
+  </defs>
+  <rect width="240" height="240" rx="48" fill="url(#bg)" />
+  <path d="M120 34l62 24v53c0 43-26 77-62 95-36-18-62-52-62-95V58l62-24z" fill="url(#shield)" />
+  <path d="M120 66l34 13v30c0 24-13 43-34 55-21-12-34-31-34-55V79l34-13z" fill="#eff6ff" opacity="0.95" />
+  <path d="M118 86h4c18 0 32 14 32 32v8h-16v-8c0-9-7-16-16-16h-4V86zm-32 32c0-18 14-32 32-32v16c-9 0-16 7-16 16v8H86v-8zm32 20h4c9 0 16 7 16 16v2h-20v-18zm-16 0h16v18H98v-2c0-9 7-16 16-16z" fill="#1d4ed8" />
+</svg>

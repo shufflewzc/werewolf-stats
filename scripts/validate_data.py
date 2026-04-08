@@ -7,14 +7,15 @@ import sys
 from datetime import date
 from typing import Any
 
-from sqlite_store import load_repository_data
+from sqlite_store import load_repository_data, load_users
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
-VALID_STAGES = {"regular_season", "playoffs", "finals", "showmatch"}
+MATCH_ID_PATTERN = re.compile(r"^[a-z0-9]{1,6}-[a-z0-9]{1,8}-\d{6}-\d{2}$")
+VALID_STAGES = {"placement", "regular_season", "playoffs", "finals", "showmatch"}
 VALID_CAMPS = {"villagers", "werewolves", "third_party"}
-VALID_WINNING_CAMPS = {*VALID_CAMPS, "draw"}
-VALID_RESULTS = {"win", "loss", "draw"}
-VALID_STANCE_PICKS = {*VALID_CAMPS, "none"}
+VALID_WINNING_CAMPS = {"villagers", "werewolves"}
+VALID_RESULTS = {"win", "loss"}
+VALID_STANCE_RESULTS = {"correct", "incorrect", "none"}
 
 
 def is_number(value: Any) -> bool:
@@ -71,6 +72,9 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
         "logo",
         "active",
         "founded_on",
+        "competition_name",
+        "season_name",
+        "guild_id",
         "captain_player_id",
         "members",
         "notes",
@@ -103,6 +107,19 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
             errors.append(f"{label}.active: expected boolean")
 
         errors.extend(validate_iso_date(team.get("founded_on"), f"{label}.founded_on"))
+        errors.extend(
+            validate_non_empty_string(
+                team.get("competition_name"), f"{label}.competition_name"
+            )
+        )
+        errors.extend(
+            validate_non_empty_string(team.get("season_name"), f"{label}.season_name")
+        )
+        guild_id = team.get("guild_id")
+        if not isinstance(guild_id, str):
+            errors.append(f"{label}.guild_id: expected string")
+        elif guild_id.strip():
+            errors.extend(validate_slug(guild_id, f"{label}.guild_id"))
 
         members = team.get("members")
         member_set: set[str] = set()
@@ -138,6 +155,76 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
             errors.append(f"{label}.notes: expected string")
 
     return errors, team_ids, team_members
+
+
+def validate_guilds(
+    guilds: Any,
+    usernames: set[str],
+) -> tuple[list[str], set[str]]:
+    errors: list[str] = []
+    guild_ids: set[str] = set()
+    if not isinstance(guilds, list):
+        return ["guilds: top-level value must be an array"], guild_ids
+
+    required_keys = {
+        "guild_id",
+        "name",
+        "short_name",
+        "logo",
+        "active",
+        "founded_on",
+        "leader_username",
+        "manager_usernames",
+        "notes",
+    }
+
+    for index, guild in enumerate(guilds):
+        label = f"guilds[{index}]"
+        if not isinstance(guild, dict):
+            errors.append(f"{label}: expected object")
+            continue
+
+        errors.extend(expect_keys(guild, required_keys, label))
+        guild_id = guild.get("guild_id")
+        errors.extend(validate_slug(guild_id, f"{label}.guild_id"))
+        if isinstance(guild_id, str) and SLUG_PATTERN.match(guild_id):
+            if guild_id in guild_ids:
+                errors.append(f"{label}.guild_id: duplicate guild_id {guild_id!r}")
+            else:
+                guild_ids.add(guild_id)
+        errors.extend(validate_non_empty_string(guild.get("name"), f"{label}.name"))
+        errors.extend(
+            validate_non_empty_string(guild.get("short_name"), f"{label}.short_name")
+        )
+        errors.extend(validate_non_empty_string(guild.get("logo"), f"{label}.logo"))
+        if not isinstance(guild.get("active"), bool):
+            errors.append(f"{label}.active: expected boolean")
+        errors.extend(validate_iso_date(guild.get("founded_on"), f"{label}.founded_on"))
+        leader_username = guild.get("leader_username")
+        if not isinstance(leader_username, str) or not leader_username.strip():
+            errors.append(f"{label}.leader_username: expected non-empty string")
+        elif leader_username not in usernames:
+            errors.append(f"{label}.leader_username: unknown username {leader_username!r}")
+        manager_usernames = guild.get("manager_usernames")
+        if not isinstance(manager_usernames, list):
+            errors.append(f"{label}.manager_usernames: expected array")
+        else:
+            seen_usernames: set[str] = set()
+            for manager_index, username in enumerate(manager_usernames):
+                manager_label = f"{label}.manager_usernames[{manager_index}]"
+                if not isinstance(username, str) or not username.strip():
+                    errors.append(f"{manager_label}: expected non-empty string")
+                    continue
+                if username not in usernames:
+                    errors.append(f"{manager_label}: unknown username {username!r}")
+                elif username in seen_usernames:
+                    errors.append(f"{manager_label}: duplicate username {username!r}")
+                else:
+                    seen_usernames.add(username)
+        if not isinstance(guild.get("notes"), str):
+            errors.append(f"{label}.notes: expected string")
+
+    return errors, guild_ids
 
 
 def validate_players(
@@ -237,8 +324,6 @@ def validate_rosters(
 
 
 def expected_result(winning_camp: str, participant_camp: str) -> str:
-    if winning_camp == "draw":
-        return "draw"
     if participant_camp == winning_camp:
         return "win"
     return "loss"
@@ -263,6 +348,9 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "format",
         "duration_minutes",
         "winning_camp",
+        "mvp_player_id",
+        "svp_player_id",
+        "scapegoat_player_id",
         "players",
         "notes",
     }
@@ -272,12 +360,9 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "seat",
         "role",
         "camp",
-        "survived",
         "result",
         "points_earned",
-        "points_available",
-        "stance_pick",
-        "stance_correct",
+        "stance_result",
         "notes",
     }
 
@@ -292,6 +377,10 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         match_id = match.get("match_id")
         errors.extend(validate_slug(match_id, f"{label}.match_id"))
         if isinstance(match_id, str) and SLUG_PATTERN.match(match_id):
+            if not MATCH_ID_PATTERN.match(match_id):
+                errors.append(
+                    f"{label}.match_id: expected format citycode-seasoncode-yymmdd-xx"
+                )
             if match_id in match_ids:
                 errors.append(f"{label}.match_id: duplicate match_id {match_id!r}")
             else:
@@ -335,6 +424,8 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             errors.append(f"{label}.duration_minutes: must be >= 1")
 
         participants = match.get("players")
+        participant_ids_in_match: set[str] = set()
+        participant_camps_by_id: dict[str, str] = {}
         if not isinstance(participants, list):
             errors.append(f"{label}.players: expected array")
         elif not participants:
@@ -366,6 +457,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                         )
                     else:
                         seen_players.add(participant_id)
+                        participant_ids_in_match.add(participant_id)
 
                 participant_team_id = participant.get("team_id")
                 errors.extend(validate_slug(participant_team_id, f"{participant_label}.team_id"))
@@ -393,9 +485,8 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                     errors.append(
                         f"{participant_label}.camp: expected one of {sorted(VALID_CAMPS)}"
                     )
-
-                if not isinstance(participant.get("survived"), bool):
-                    errors.append(f"{participant_label}.survived: expected boolean")
+                elif isinstance(participant_id, str) and participant_id in participant_ids_in_match:
+                    participant_camps_by_id[participant_id] = camp
 
                 result = participant.get("result")
                 if result not in VALID_RESULTS:
@@ -420,32 +511,62 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                 elif points_earned < 0:
                     errors.append(f"{participant_label}.points_earned: must be >= 0")
 
-                points_available = participant.get("points_available")
-                if not is_number(points_available):
-                    errors.append(f"{participant_label}.points_available: expected number")
-                elif points_available <= 0:
-                    errors.append(f"{participant_label}.points_available: must be > 0")
-                elif is_number(points_earned) and points_earned > points_available:
+                stance_result = participant.get("stance_result")
+                if stance_result not in VALID_STANCE_RESULTS:
                     errors.append(
-                        f"{participant_label}.points_earned: cannot exceed points_available"
-                    )
-
-                stance_pick = participant.get("stance_pick")
-                if stance_pick not in VALID_STANCE_PICKS:
-                    errors.append(
-                        f"{participant_label}.stance_pick: expected one of {sorted(VALID_STANCE_PICKS)}"
-                    )
-
-                stance_correct = participant.get("stance_correct")
-                if not isinstance(stance_correct, bool):
-                    errors.append(f"{participant_label}.stance_correct: expected boolean")
-                elif stance_pick == "none" and stance_correct:
-                    errors.append(
-                        f"{participant_label}.stance_correct: cannot be true when stance_pick is 'none'"
+                        f"{participant_label}.stance_result: expected one of {sorted(VALID_STANCE_RESULTS)}"
                     )
 
                 if not isinstance(participant.get("notes"), str):
                     errors.append(f"{participant_label}.notes: expected string")
+
+        mvp_player_id = match.get("mvp_player_id")
+        errors.extend(validate_slug(mvp_player_id, f"{label}.mvp_player_id"))
+        if isinstance(mvp_player_id, str) and mvp_player_id not in participant_ids_in_match:
+            errors.append(
+                f"{label}.mvp_player_id: expected one of this match's participant IDs"
+            )
+
+        svp_player_id = match.get("svp_player_id")
+        errors.extend(validate_slug(svp_player_id, f"{label}.svp_player_id"))
+        if isinstance(svp_player_id, str) and svp_player_id not in participant_ids_in_match:
+            errors.append(
+                f"{label}.svp_player_id: expected one of this match's participant IDs"
+            )
+        if (
+            isinstance(mvp_player_id, str)
+            and isinstance(svp_player_id, str)
+            and mvp_player_id
+            and svp_player_id
+            and mvp_player_id == svp_player_id
+        ):
+            errors.append(f"{label}: mvp_player_id and svp_player_id must be different")
+
+        scapegoat_player_id = match.get("scapegoat_player_id")
+        if winning_camp == "villagers":
+            if not isinstance(scapegoat_player_id, str):
+                errors.append(f"{label}.scapegoat_player_id: expected string")
+            elif scapegoat_player_id.strip():
+                errors.append(f"{label}.scapegoat_player_id: must be empty when villagers win")
+        else:
+            errors.extend(
+                validate_slug(scapegoat_player_id, f"{label}.scapegoat_player_id")
+            )
+            if (
+                isinstance(scapegoat_player_id, str)
+                and scapegoat_player_id not in participant_ids_in_match
+            ):
+                errors.append(
+                    f"{label}.scapegoat_player_id: expected one of this match's participant IDs"
+                )
+            elif (
+                isinstance(scapegoat_player_id, str)
+                and scapegoat_player_id in participant_camps_by_id
+                and participant_camps_by_id[scapegoat_player_id] == winning_camp
+            ):
+                errors.append(
+                    f"{label}.scapegoat_player_id: must come from the losing camp"
+                )
 
         if not isinstance(match.get("notes"), str):
             errors.append(f"{label}.notes: expected string")
@@ -456,19 +577,39 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
 def validate_repository() -> tuple[list[str], dict[str, Any]]:
     try:
         data = load_repository_data()
+        users = load_users()
+        guilds = data.get("guilds", [])
         teams = data["teams"]
         players = data["players"]
         matches = data["matches"]
     except Exception as exc:
         return [str(exc)], {}
 
+    usernames = {user["username"] for user in users if isinstance(user, dict) and user.get("username")}
+    guild_errors, guild_ids = validate_guilds(guilds, usernames)
     team_errors, team_ids, team_members = validate_teams(teams)
     player_errors, player_ids, player_teams = validate_players(players, team_ids)
     roster_errors = validate_rosters(team_members, player_ids, player_teams)
     match_errors = validate_matches(matches, team_ids, player_ids)
+    team_guild_errors = []
+    for team in teams:
+        guild_id = str(team.get("guild_id") or "").strip()
+        team_id = str(team.get("team_id") or "").strip() or "unknown"
+        if guild_id and guild_id not in guild_ids:
+            team_guild_errors.append(
+                f"teams[{team_id}].guild_id: unknown guild_id {guild_id!r}"
+            )
 
-    errors = [*team_errors, *player_errors, *roster_errors, *match_errors]
+    errors = [
+        *guild_errors,
+        *team_errors,
+        *player_errors,
+        *roster_errors,
+        *match_errors,
+        *team_guild_errors,
+    ]
     data = {
+        "guilds": guilds,
         "teams": teams,
         "players": players,
         "matches": matches,
@@ -486,6 +627,7 @@ def main() -> int:
         return 1
 
     print("Validation passed.")
+    print(f"Guilds: {len(data.get('guilds', []))}")
     print(f"Teams: {len(data['teams'])}")
     print(f"Players: {len(data['players'])}")
     print(f"Matches: {len(data['matches'])}")

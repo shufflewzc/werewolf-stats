@@ -26,6 +26,7 @@ CAMP_TO_CHINESE = {
     "draw": "平局",
 }
 STAGE_TO_CHINESE = {
+    "placement": "定级赛",
     "regular_season": "常规赛",
     "playoffs": "季后赛",
     "finals": "总决赛",
@@ -37,10 +38,12 @@ RESULT_TO_CHINESE = {
     "draw": "平",
 }
 STANCE_TO_CHINESE = {
+    "correct": "站对边",
+    "incorrect": "站错边",
+    "none": "未填写",
     "villagers": "站好人",
     "werewolves": "站狼人",
     "third_party": "站第三方",
-    "none": "未站边",
 }
 
 
@@ -76,6 +79,16 @@ def to_chinese_result(value: str) -> str:
 
 def to_chinese_stance(value: str) -> str:
     return STANCE_TO_CHINESE.get(value, value)
+
+
+def normalize_stance_result(entry: dict[str, Any]) -> str:
+    value = str(entry.get("stance_result") or "").strip()
+    if value in {"correct", "incorrect", "none"}:
+        return value
+    legacy_pick = str(entry.get("stance_pick") or "none").strip()
+    if not legacy_pick or legacy_pick == "none":
+        return "none"
+    return "correct" if entry.get("stance_correct") else "incorrect"
 
 
 def china_timestamp() -> str:
@@ -114,16 +127,40 @@ def list_competitions(data: dict[str, Any]) -> list[str]:
     return competitions
 
 
+def list_seasons(data: dict[str, Any], competition_name: str | None = None) -> list[str]:
+    seasons: list[str] = []
+    seen: set[str] = set()
+
+    for match in sorted(data["matches"], key=match_sort_key, reverse=True):
+        if competition_name and get_match_competition_name(match) != competition_name:
+            continue
+        season = (match.get("season") or "").strip()
+        if season and season not in seen:
+            seen.add(season)
+            seasons.append(season)
+
+    return seasons
+
+
 def filter_matches(
-    data: dict[str, Any], competition_name: str | None = None
+    data: dict[str, Any],
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    if not competition_name:
-        return list(data["matches"])
-    return [
-        match
-        for match in data["matches"]
-        if get_match_competition_name(match) == competition_name
-    ]
+    matches = list(data["matches"])
+    if competition_name:
+        matches = [
+            match
+            for match in matches
+            if get_match_competition_name(match) == competition_name
+        ]
+    if season_name:
+        matches = [
+            match
+            for match in matches
+            if (match.get("season") or "").strip() == season_name
+        ]
+    return matches
 
 
 def resolve_player_team_context(
@@ -151,11 +188,13 @@ def resolve_player_team_context(
 
 
 def build_player_rows(
-    data: dict[str, Any], competition_name: str | None = None
+    data: dict[str, Any],
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> list[dict[str, Any]]:
     players = {player["player_id"]: player for player in data["players"]}
     teams = {team["team_id"]: team for team in data["teams"]}
-    matches = filter_matches(data, competition_name)
+    matches = filter_matches(data, competition_name, season_name)
     aggregates: dict[str, dict[str, Any]] = {}
 
     for player_id, player in players.items():
@@ -172,38 +211,45 @@ def build_player_rows(
             "games_played": 0,
             "wins": 0,
             "losses": 0,
-            "draws": 0,
-            "survivals": 0,
+            "villagers_games": 0,
+            "villagers_wins": 0,
+            "werewolves_games": 0,
+            "werewolves_wins": 0,
             "stance_calls": 0,
-            "correct_stances": 0,
+            "correct_stance_calls": 0,
+            "incorrect_stance_calls": 0,
             "points_earned_total": 0.0,
-            "points_available_total": 0.0,
         }
 
     for match in matches:
         for entry in match["players"]:
             row = aggregates[entry["player_id"]]
+            stance_result = normalize_stance_result(entry)
+            camp = str(entry.get("camp") or "").strip()
             row["games_played"] += 1
             row["wins"] += 1 if entry["result"] == "win" else 0
             row["losses"] += 1 if entry["result"] == "loss" else 0
-            row["draws"] += 1 if entry["result"] == "draw" else 0
-            row["survivals"] += 1 if entry["survived"] else 0
+            if camp == "villagers":
+                row["villagers_games"] += 1
+                row["villagers_wins"] += 1 if entry["result"] == "win" else 0
+            elif camp == "werewolves":
+                row["werewolves_games"] += 1
+                row["werewolves_wins"] += 1 if entry["result"] == "win" else 0
             row["points_earned_total"] += float(entry["points_earned"])
-            row["points_available_total"] += float(entry["points_available"])
-
-            if entry["stance_pick"] != "none":
+            if stance_result != "none":
                 row["stance_calls"] += 1
-                row["correct_stances"] += 1 if entry["stance_correct"] else 0
+                if stance_result == "correct":
+                    row["correct_stance_calls"] += 1
+                elif stance_result == "incorrect":
+                    row["incorrect_stance_calls"] += 1
 
     leaderboard: list[dict[str, Any]] = []
     for row in aggregates.values():
         games_played = row["games_played"]
         win_rate = safe_rate(row["wins"], games_played)
-        stance_rate = safe_rate(row["correct_stances"], row["stance_calls"])
-        score_rate = safe_rate(
-            row["points_earned_total"], row["points_available_total"]
-        )
-        survival_rate = safe_rate(row["survivals"], games_played)
+        villagers_win_rate = safe_rate(row["villagers_wins"], row["villagers_games"])
+        werewolves_win_rate = safe_rate(row["werewolves_wins"], row["werewolves_games"])
+        stance_rate = safe_rate(row["correct_stance_calls"], row["stance_calls"])
         average_points = (
             round(row["points_earned_total"] / games_played, 2) if games_played else 0.0
         )
@@ -212,19 +258,18 @@ def build_player_rows(
             {
                 **row,
                 "points_earned_total": round(row["points_earned_total"], 2),
-                "points_available_total": round(row["points_available_total"], 2),
                 "win_rate": win_rate,
+                "villagers_win_rate": villagers_win_rate,
+                "werewolves_win_rate": werewolves_win_rate,
                 "stance_rate": stance_rate,
-                "score_rate": score_rate,
                 "average_points": average_points,
-                "survival_rate": survival_rate,
-                "record": f"{row['wins']}-{row['losses']}-{row['draws']}",
+                "record": f"{row['wins']}-{row['losses']}",
             }
         )
 
     leaderboard.sort(
         key=lambda item: (
-            -item["score_rate"],
+            -item["points_earned_total"],
             -item["win_rate"],
             -item["stance_rate"],
             -item["average_points"],
@@ -239,10 +284,24 @@ def build_player_rows(
 
 
 def build_team_rows(
-    data: dict[str, Any], competition_name: str | None = None
+    data: dict[str, Any],
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> list[dict[str, Any]]:
-    teams = {team["team_id"]: team for team in data["teams"]}
-    matches = filter_matches(data, competition_name)
+    scoped_teams = [
+        team
+        for team in data["teams"]
+        if (
+            not competition_name
+            or (str(team.get("competition_name") or "").strip() == competition_name)
+        )
+        and (
+            not season_name
+            or (str(team.get("season_name") or "").strip() == season_name)
+        )
+    ]
+    teams = {team["team_id"]: team for team in (scoped_teams or data["teams"])}
+    matches = filter_matches(data, competition_name, season_name)
     aggregates: dict[str, dict[str, Any]] = {}
     represented_players: dict[str, set[str]] = {}
 
@@ -253,36 +312,43 @@ def build_team_rows(
             "name": team["name"],
             "short_name": team["short_name"],
             "logo": team["logo"],
+            "competition_name": team.get("competition_name", ""),
+            "season_name": team.get("season_name", ""),
+            "guild_id": team.get("guild_id", ""),
             "player_count": len(team["members"]),
             "matches_represented": 0,
             "player_appearances": 0,
             "wins": 0,
             "losses": 0,
-            "draws": 0,
             "stance_calls": 0,
-            "correct_stances": 0,
+            "correct_stance_calls": 0,
+            "incorrect_stance_calls": 0,
             "points_earned_total": 0.0,
-            "points_available_total": 0.0,
         }
 
     for match in matches:
         teams_in_match = set()
         for entry in match["players"]:
+            if entry["team_id"] not in aggregates:
+                continue
             row = aggregates[entry["team_id"]]
+            stance_result = normalize_stance_result(entry)
             row["player_appearances"] += 1
             represented_players[entry["team_id"]].add(entry["player_id"])
             row["wins"] += 1 if entry["result"] == "win" else 0
             row["losses"] += 1 if entry["result"] == "loss" else 0
-            row["draws"] += 1 if entry["result"] == "draw" else 0
             row["points_earned_total"] += float(entry["points_earned"])
-            row["points_available_total"] += float(entry["points_available"])
-            if entry["stance_pick"] != "none":
+            if stance_result != "none":
                 row["stance_calls"] += 1
-                row["correct_stances"] += 1 if entry["stance_correct"] else 0
+                if stance_result == "correct":
+                    row["correct_stance_calls"] += 1
+                elif stance_result == "incorrect":
+                    row["incorrect_stance_calls"] += 1
             teams_in_match.add(entry["team_id"])
 
         for team_id in teams_in_match:
-            aggregates[team_id]["matches_represented"] += 1
+            if team_id in aggregates:
+                aggregates[team_id]["matches_represented"] += 1
 
     summary: list[dict[str, Any]] = []
     for row in aggregates.values():
@@ -294,12 +360,8 @@ def build_team_rows(
                 "player_count": participating_count if participating_count else row["player_count"],
                 "represented_player_ids": sorted(represented_players[row["team_id"]]),
                 "points_earned_total": round(row["points_earned_total"], 2),
-                "points_available_total": round(row["points_available_total"], 2),
                 "win_rate": safe_rate(row["wins"], appearances),
-                "stance_rate": safe_rate(row["correct_stances"], row["stance_calls"]),
-                "score_rate": safe_rate(
-                    row["points_earned_total"], row["points_available_total"]
-                ),
+                "stance_rate": safe_rate(row["correct_stance_calls"], row["stance_calls"]),
                 "average_points": round(row["points_earned_total"] / appearances, 2)
                 if appearances
                 else 0.0,
@@ -308,7 +370,7 @@ def build_team_rows(
 
     summary.sort(
         key=lambda item: (
-            -item["score_rate"],
+            -item["points_earned_total"],
             -item["win_rate"],
             -item["stance_rate"],
             item["name"],
@@ -317,6 +379,23 @@ def build_team_rows(
 
     for index, row in enumerate(summary, start=1):
         row["rank"] = index
+
+    points_sorted = sorted(
+        summary,
+        key=lambda item: (
+            -item["points_earned_total"],
+            -item["matches_represented"],
+            -item["win_rate"],
+            item["name"],
+        ),
+    )
+    for index, row in enumerate(points_sorted, start=1):
+        row["points_rank"] = index
+        row["points_per_match"] = (
+            round(row["points_earned_total"] / row["matches_represented"], 2)
+            if row["matches_represented"]
+            else 0.0
+        )
 
     return summary
 
@@ -371,10 +450,11 @@ def build_player_details(
     data: dict[str, Any],
     player_rows: list[dict[str, Any]],
     competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> dict[str, dict[str, Any]]:
     player_lookup = {player["player_id"]: player for player in data["players"]}
     row_lookup = {row["player_id"]: row for row in player_rows}
-    matches = filter_matches(data, competition_name)
+    matches = filter_matches(data, competition_name, season_name)
     competition_rows = {
         name: {
             row["player_id"]: row
@@ -389,6 +469,7 @@ def build_player_details(
         row = row_lookup[player_id]
         history: list[dict[str, Any]] = []
         roles: dict[str, int] = {}
+        season_aggregates: dict[tuple[str, str], dict[str, Any]] = {}
 
         for match in sorted(
             matches,
@@ -398,11 +479,39 @@ def build_player_details(
             for entry in match["players"]:
                 if entry["player_id"] != player_id:
                     continue
+                scoped_competition_name = get_match_competition_name(match)
+                scoped_season_name = str(match.get("season") or "").strip() or "未命名赛季"
+                season_key = (scoped_competition_name, scoped_season_name)
+                season_row = season_aggregates.setdefault(
+                    season_key,
+                    {
+                        "competition_name": scoped_competition_name,
+                        "season_name": scoped_season_name,
+                        "games_played": 0,
+                        "wins": 0,
+                        "losses": 0,
+                        "villagers_games": 0,
+                        "villagers_wins": 0,
+                        "werewolves_games": 0,
+                        "werewolves_wins": 0,
+                        "points_total": 0.0,
+                    },
+                )
                 roles[entry["role"]] = roles.get(entry["role"], 0) + 1
+                season_row["games_played"] += 1
+                season_row["wins"] += 1 if entry["result"] == "win" else 0
+                season_row["losses"] += 1 if entry["result"] == "loss" else 0
+                if entry["camp"] == "villagers":
+                    season_row["villagers_games"] += 1
+                    season_row["villagers_wins"] += 1 if entry["result"] == "win" else 0
+                elif entry["camp"] == "werewolves":
+                    season_row["werewolves_games"] += 1
+                    season_row["werewolves_wins"] += 1 if entry["result"] == "win" else 0
+                season_row["points_total"] += float(entry["points_earned"])
                 history.append(
                     {
                         "match_id": match["match_id"],
-                        "competition_name": get_match_competition_name(match),
+                        "competition_name": scoped_competition_name,
                         "season": match["season"],
                         "stage_label": to_chinese_stage(match["stage"]),
                         "round": match["round"],
@@ -412,11 +521,10 @@ def build_player_details(
                         "role": entry["role"],
                         "camp_label": to_chinese_camp(entry["camp"]),
                         "result_label": to_chinese_result(entry["result"]),
-                        "survived_label": "存活" if entry["survived"] else "出局",
                         "points_earned": round(float(entry["points_earned"]), 2),
-                        "points_available": round(float(entry["points_available"]), 2),
-                        "stance_pick_label": to_chinese_stance(entry["stance_pick"]),
-                        "stance_correct_label": "正确" if entry["stance_correct"] else "错误",
+                        "stance_result_label": to_chinese_stance(
+                            normalize_stance_result(entry)
+                        ),
                         "notes": entry["notes"],
                     }
                 )
@@ -425,6 +533,30 @@ def build_player_details(
             {"role": role, "games": count}
             for role, count in sorted(roles.items(), key=lambda item: (-item[1], item[0]))
         ]
+        season_stats = []
+        for item in sorted(
+            season_aggregates.values(),
+            key=lambda value: (value["competition_name"], value["season_name"]),
+        ):
+            season_stats.append(
+                {
+                    "competition_name": item["competition_name"],
+                    "season_name": item["season_name"],
+                    "games_played": item["games_played"],
+                    "record": f"{item['wins']}-{item['losses']}",
+                    "overall_win_rate": format_pct(safe_rate(item["wins"], item["games_played"])),
+                    "villagers_win_rate": format_pct(
+                        safe_rate(item["villagers_wins"], item["villagers_games"])
+                    ),
+                    "werewolves_win_rate": format_pct(
+                        safe_rate(item["werewolves_wins"], item["werewolves_games"])
+                    ),
+                    "points_total": f"{item['points_total']:.2f}",
+                    "average_points": f"{(item['points_total'] / item['games_played']):.2f}"
+                    if item["games_played"]
+                    else "0.00",
+                }
+            )
         competition_stats = []
         for name in list_competitions(data):
             competition_row = competition_rows.get(name, {}).get(player_id)
@@ -438,7 +570,7 @@ def build_player_details(
                     "record": competition_row["record"],
                     "win_rate": format_pct(competition_row["win_rate"]),
                     "stance_rate": format_pct(competition_row["stance_rate"]),
-                    "score_rate": format_pct(competition_row["score_rate"]),
+                    "points_total": f"{competition_row['points_earned_total']:.2f}",
                     "average_points": f"{competition_row['average_points']:.2f}",
                 }
             )
@@ -456,18 +588,17 @@ def build_player_details(
             "games_played": row["games_played"],
             "wins": row["wins"],
             "losses": row["losses"],
-            "draws": row["draws"],
-            "win_rate": format_pct(row["win_rate"]),
+            "overall_win_rate": format_pct(row["win_rate"]),
+            "villagers_win_rate": format_pct(row["villagers_win_rate"]),
+            "werewolves_win_rate": format_pct(row["werewolves_win_rate"]),
             "stance_rate": format_pct(row["stance_rate"]),
-            "score_rate": format_pct(row["score_rate"]),
-            "survival_rate": format_pct(row["survival_rate"]),
             "average_points": f"{row['average_points']:.2f}",
             "points_total": f"{row['points_earned_total']:.2f}",
-            "points_cap": f"{row['points_available_total']:.2f}",
-            "correct_stances": row["correct_stances"],
+            "correct_stances": row["correct_stance_calls"],
+            "incorrect_stances": row["incorrect_stance_calls"],
             "stance_calls": row["stance_calls"],
-            "survivals": row["survivals"],
             "roles": role_rows,
+            "season_stats": season_stats,
             "history": history,
             "competition_stats": competition_stats,
         }
@@ -479,8 +610,8 @@ def render_player_markdown(rows: list[dict[str, Any]]) -> str:
     lines = [
         "# 队员排行榜",
         "",
-        "| 排名 | 队员 | 战队 | 出场 | 战绩 | 胜率 | 站边率 | 得分率 | 场均得分 | 存活率 |",
-        "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: |",
+        "| 排名 | 队员 | 战队 | 出场 | 战绩 | 胜率 | 站边率 | 总积分 | 场均得分 |",
+        "| --- | --- | --- | ---: | --- | ---: | ---: | ---: | ---: |",
     ]
 
     for row in rows:
@@ -493,9 +624,8 @@ def render_player_markdown(rows: list[dict[str, Any]]) -> str:
             f"{row['record']} | "
             f"{format_pct(row['win_rate'])} | "
             f"{format_pct(row['stance_rate'])} | "
-            f"{format_pct(row['score_rate'])} | "
-            f"{row['average_points']:.2f} | "
-            f"{format_pct(row['survival_rate'])} |"
+            f"{row['points_earned_total']:.2f} | "
+            f"{row['average_points']:.2f} |"
         )
 
     lines.append("")
@@ -506,7 +636,7 @@ def render_team_markdown(rows: list[dict[str, Any]]) -> str:
     lines = [
         "# 战队汇总",
         "",
-        "| 排名 | 战队 | 队员数 | 对局场次 | 队员出场 | 胜率 | 站边率 | 得分率 | 场均得分 |",
+        "| 排名 | 战队 | 队员数 | 对局场次 | 队员出场 | 胜率 | 站边率 | 总积分 | 场均得分 |",
         "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |",
     ]
 
@@ -520,7 +650,7 @@ def render_team_markdown(rows: list[dict[str, Any]]) -> str:
             f"{row['player_appearances']} | "
             f"{format_pct(row['win_rate'])} | "
             f"{format_pct(row['stance_rate'])} | "
-            f"{format_pct(row['score_rate'])} | "
+            f"{row['points_earned_total']:.2f} | "
             f"{row['average_points']:.2f} |"
         )
 
@@ -589,8 +719,8 @@ def render_dashboard_html(
                   <strong>{format_pct(row['stance_rate'])}</strong>
                 </div>
                 <div>
-                  <span>得分率</span>
-                  <strong>{format_pct(row['score_rate'])}</strong>
+                  <span>总积分</span>
+                  <strong>{row['points_earned_total']:.2f}</strong>
                 </div>
                 <div>
                   <span>场均得分</span>
@@ -628,8 +758,8 @@ def render_dashboard_html(
                   <strong>{format_pct(row['stance_rate'])}</strong>
                 </div>
                 <div>
-                  <span>得分率</span>
-                  <strong>{format_pct(row['score_rate'])}</strong>
+                  <span>总积分</span>
+                  <strong>{row['points_earned_total']:.2f}</strong>
                 </div>
                 <div>
                   <span>场均得分</span>
@@ -681,9 +811,8 @@ def render_dashboard_html(
           <td>{escape(row['record'])}</td>
           <td>{format_pct(row['win_rate'])}</td>
           <td>{format_pct(row['stance_rate'])}</td>
-          <td>{format_pct(row['score_rate'])}</td>
+          <td>{row['points_earned_total']:.2f}</td>
           <td>{row['average_points']:.2f}</td>
-          <td>{format_pct(row['survival_rate'])}</td>
         </tr>
         """
         for row in player_rows
@@ -699,7 +828,7 @@ def render_dashboard_html(
           <td>{row['player_appearances']}</td>
           <td>{format_pct(row['win_rate'])}</td>
           <td>{format_pct(row['stance_rate'])}</td>
-          <td>{format_pct(row['score_rate'])}</td>
+          <td>{row['points_earned_total']:.2f}</td>
           <td>{row['average_points']:.2f}</td>
         </tr>
         """
@@ -1083,7 +1212,7 @@ def render_dashboard_html(
                   </div>
                 </div>
                 <div class="small text-white-50">
-                  数据来自本仓库中的战队、队员与赛事记录文件，统计口径包含胜率、站边率、得分率、场均得分和存活率。
+                  数据来自本仓库中的战队、队员与赛事记录文件，统计口径包含胜率、站边率、总积分和场均得分。
                 </div>
               </div>
             </div>
@@ -1100,7 +1229,7 @@ def render_dashboard_html(
           <div class="d-flex flex-column flex-lg-row align-items-lg-end justify-content-between gap-3 mb-3 mb-lg-4">
             <div>
               <h2 class="section-title mb-2">队员榜前列</h2>
-              <p class="section-copy mb-0">按得分率、胜率、站边率和场均得分综合排序，先看最有明星相的队员。</p>
+              <p class="section-copy mb-0">按总积分、胜率、站边率和场均得分综合排序，先看当前表现最亮眼的队员。</p>
             </div>
           </div>
           <div class="row g-3 g-lg-4">
@@ -1151,9 +1280,8 @@ def render_dashboard_html(
                     <th>战绩</th>
                     <th>胜率</th>
                     <th>站边率</th>
-                    <th>得分率</th>
+                    <th>总积分</th>
                     <th>场均得分</th>
-                    <th>存活率</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1183,7 +1311,7 @@ def render_dashboard_html(
                     <th>队员出场</th>
                     <th>胜率</th>
                     <th>站边率</th>
-                    <th>得分率</th>
+                    <th>总积分</th>
                     <th>场均得分</th>
                   </tr>
                 </thead>
@@ -1239,12 +1367,8 @@ def render_dashboard_html(
                   <strong id="详情站边率">0.0%</strong>
                 </div>
                 <div class="detail-metric">
-                  <span>得分率</span>
-                  <strong id="详情得分率">0.0%</strong>
-                </div>
-                <div class="detail-metric">
-                  <span>存活率</span>
-                  <strong id="详情存活率">0.0%</strong>
+                  <span>总积分</span>
+                  <strong id="详情总积分">0.00</strong>
                 </div>
               </div>
             </div>
@@ -1271,22 +1395,18 @@ def render_dashboard_html(
                     <span>总得分</span>
                     <strong id="详情总得分">0.00</strong>
                   </div>
-                  <div class="detail-metric">
-                    <span>总满分</span>
-                    <strong id="详情总满分">0.00</strong>
-                  </div>
-                  <div class="detail-metric">
-                    <span>正确站边</span>
+                <div class="detail-metric">
+                    <span>站对边</span>
                     <strong id="详情正确站边">0</strong>
-                  </div>
-                  <div class="detail-metric">
+                </div>
+                <div class="detail-metric">
+                    <span>站错边</span>
+                    <strong id="详情错误站边">0</strong>
+                </div>
+                <div class="detail-metric">
                     <span>站边次数</span>
                     <strong id="详情站边次数">0</strong>
-                  </div>
-                  <div class="detail-metric">
-                    <span>存活局数</span>
-                    <strong id="详情存活局数">0</strong>
-                  </div>
+                </div>
                   <div class="detail-metric">
                     <span>总出场</span>
                     <strong id="详情总出场">0</strong>
@@ -1354,9 +1474,9 @@ def render_dashboard_html(
                 </div>
                 <span class="badge rounded-pill text-bg-dark">${{对局.result_label}}</span>
               </div>
-              <div class="small mb-2">角色：${{对局.role}} · 阵营：${{对局.camp_label}} · ${{对局.survived_label}}</div>
-              <div class="small mb-2">站边：${{对局.stance_pick_label}} · 判断：${{对局.stance_correct_label}}</div>
-              <div class="small mb-2">得分：${{对局.points_earned}} / ${{对局.points_available}}</div>
+              <div class="small mb-2">角色：${{对局.role}} · 阵营：${{对局.camp_label}}</div>
+              <div class="small mb-2">站边：${{对局.stance_result_label}}</div>
+              <div class="small mb-2">得分：${{对局.points_earned}}</div>
               <div class="small text-secondary">${{对局.notes}}</div>
             </div>
           `;
@@ -1377,17 +1497,15 @@ def render_dashboard_html(
         设置文本("详情场均得分", 数据.average_points);
         设置文本("详情胜率", 数据.win_rate);
         设置文本("详情站边率", 数据.stance_rate);
-        设置文本("详情得分率", 数据.score_rate);
-        设置文本("详情存活率", 数据.survival_rate);
+        设置文本("详情总积分", 数据.points_total);
         设置文本("详情别名", 数据.aliases.length ? 数据.aliases.join("、") : "无");
         设置文本("详情入库日期", 数据.joined_on);
         设置文本("详情照片路径", 数据.photo);
         设置文本("详情备注", 数据.notes || "无");
         设置文本("详情总得分", 数据.points_total);
-        设置文本("详情总满分", 数据.points_cap);
         设置文本("详情正确站边", String(数据.correct_stances));
+        设置文本("详情错误站边", String(数据.incorrect_stances));
         设置文本("详情站边次数", String(数据.stance_calls));
-        设置文本("详情存活局数", String(数据.survivals));
         设置文本("详情总出场", String(数据.games_played));
         渲染角色分布(数据.roles);
         渲染对局历史(数据.history);

@@ -30,6 +30,12 @@
 |   |-- player.schema.json
 |   `-- team.schema.json
 `-- scripts/
+    |-- web/
+    |   |-- features/
+    |   |   |-- guilds.py
+    |   |   |-- profile.py
+    |   |   `-- team_center.py
+    |   `-- README.md
     |-- generate_stats.py
     |-- migrate_json_to_sqlite.py
     |-- sqlite_store.py
@@ -44,6 +50,12 @@
 - `data/werewolf_stats.db`
 
 网站、校验脚本和报表脚本现在都直接读写 `SQLite`，不再在运行时自动依赖 `JSON` 文件。
+
+Web 层当前已经开始按业务模块拆分：
+
+- `scripts/web_app.py` 负责兼容入口、共享工具和路由分发
+- `scripts/web/features/` 负责按功能拆分页面与处理器
+- 目前已经独立出门派、个人中心、战队操作三个模块，后续可以继续按赛事、比赛、权限等域拆分
 
 如果你手头还有旧版 `JSON` 数据，需要显式执行一次迁移：
 

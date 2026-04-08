@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 data/*.db
+tmp/
+tmp_web_app_stdout.log
+tmp_web_app_stderr.log

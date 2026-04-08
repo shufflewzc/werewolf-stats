@@ -4,6 +4,7 @@
     "display_name": "管理员",
     "password_salt": "RlSF3Jm4xiqAupLedZ7tnA==",
     "password_hash": "ij6pnS/kypQBqYDpYcxT8pC1zdgh0UJjflVVcjpCKJo=",
-    "active": true
+    "active": true,
+    "role": "admin"
   }
 ]

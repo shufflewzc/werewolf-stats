@@ -17,6 +17,7 @@ from sqlite_store import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
+GUILDS_JSON_PATH = DATA_DIR / "guilds.json"
 TEAMS_JSON_PATH = DATA_DIR / "teams.json"
 PLAYERS_JSON_PATH = DATA_DIR / "players.json"
 MATCHES_JSON_PATH = DATA_DIR / "matches.json"
@@ -30,6 +31,7 @@ def read_json(path: Path) -> Any:
 
 def main() -> int:
     try:
+        guilds = read_json(GUILDS_JSON_PATH) if GUILDS_JSON_PATH.exists() else []
         teams = read_json(TEAMS_JSON_PATH)
         players = read_json(PLAYERS_JSON_PATH)
         matches = read_json(MATCHES_JSON_PATH)
@@ -46,6 +48,7 @@ def main() -> int:
         create_schema(connection)
         replace_repository_data(
             connection,
+            guilds=guilds,
             teams=teams,
             players=players,
             matches=matches,
@@ -54,6 +57,7 @@ def main() -> int:
 
     print("JSON 数据已迁移到 SQLite：")
     print(f"- {DB_PATH}")
+    print(f"- 门派 {len(guilds)} 条")
     print(f"- 战队 {len(teams)} 条")
     print(f"- 队员 {len(players)} 条")
     print(f"- 比赛 {len(matches)} 条")

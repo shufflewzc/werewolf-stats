@@ -16,13 +16,16 @@
     "format",
     "duration_minutes",
     "winning_camp",
+    "mvp_player_id",
+    "svp_player_id",
+    "scapegoat_player_id",
     "players",
     "notes"
   ],
   "properties": {
     "match_id": {
       "type": "string",
-      "pattern": "^[a-z0-9][a-z0-9_-]*$"
+      "pattern": "^[a-z0-9]{1,6}-[a-z0-9]{1,8}-\\d{6}-\\d{2}$"
     },
     "competition_name": {
       "type": "string",
@@ -34,11 +37,12 @@
     },
     "stage": {
       "type": "string",
-      "enum": [
-        "regular_season",
-        "playoffs",
-        "finals",
-        "showmatch"
+        "enum": [
+          "placement",
+          "regular_season",
+          "playoffs",
+          "finals",
+          "showmatch"
       ]
     },
     "round": {
@@ -69,10 +73,17 @@
       "type": "string",
       "enum": [
         "villagers",
-        "werewolves",
-        "third_party",
-        "draw"
+        "werewolves"
       ]
+    },
+    "mvp_player_id": {
+      "type": "string"
+    },
+    "svp_player_id": {
+      "type": "string"
+    },
+    "scapegoat_player_id": {
+      "type": "string"
     },
     "players": {
       "type": "array",
@@ -86,12 +97,9 @@
           "seat",
           "role",
           "camp",
-          "survived",
           "result",
           "points_earned",
-          "points_available",
-          "stance_pick",
-          "stance_correct",
+          "stance_result",
           "notes"
         ],
         "properties": {
@@ -117,36 +125,24 @@
               "third_party"
             ]
           },
-          "survived": {
-            "type": "boolean"
-          },
           "result": {
             "type": "string",
             "enum": [
               "win",
-              "loss",
-              "draw"
+              "loss"
             ]
           },
           "points_earned": {
             "type": "number",
             "minimum": 0
           },
-          "points_available": {
-            "type": "number",
-            "exclusiveMinimum": 0
-          },
-          "stance_pick": {
+          "stance_result": {
             "type": "string",
             "enum": [
-              "villagers",
-              "werewolves",
-              "third_party",
+              "correct",
+              "incorrect",
               "none"
             ]
-          },
-          "stance_correct": {
-            "type": "boolean"
           },
           "notes": {
             "type": "string"

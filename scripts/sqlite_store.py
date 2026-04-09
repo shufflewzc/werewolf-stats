@@ -37,6 +37,39 @@ def to_legacy_stance_columns(
     return "none", 0
 
 
+MATCH_SCORE_MODEL_STANDARD = "standard"
+MATCH_SCORE_MODEL_JINGCHENG_DAILY = "jingcheng_daily"
+MATCH_SCORE_COMPONENT_FIELDS = [
+    "result_points",
+    "vote_points",
+    "behavior_points",
+    "special_points",
+    "adjustment_points",
+]
+
+
+def normalize_match_score_model(value: Any) -> str:
+    normalized = str(value or "").strip()
+    if normalized == MATCH_SCORE_MODEL_JINGCHENG_DAILY:
+        return normalized
+    return MATCH_SCORE_MODEL_STANDARD
+
+
+def uses_structured_score_model(value: Any) -> bool:
+    return normalize_match_score_model(value) == MATCH_SCORE_MODEL_JINGCHENG_DAILY
+
+
+def normalize_score_breakdown(entry: dict[str, Any]) -> dict[str, float]:
+    return {
+        field_name: float(entry.get(field_name, 0.0) or 0.0)
+        for field_name in MATCH_SCORE_COMPONENT_FIELDS
+    }
+
+
+def calculate_score_breakdown_total(entry: dict[str, Any]) -> float:
+    return round(sum(normalize_score_breakdown(entry).values()), 2)
+
+
 def derive_match_awards(
     participants: list[dict[str, Any]],
     winning_camp: str,
@@ -136,6 +169,8 @@ def create_schema(connection: sqlite3.Connection) -> None:
             short_name TEXT NOT NULL,
             logo TEXT NOT NULL,
             active INTEGER NOT NULL CHECK (active IN (0, 1)),
+            is_placeholder_team INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder_team IN (0, 1)),
+            placeholder_source_name TEXT,
             founded_on TEXT NOT NULL,
             competition_name TEXT NOT NULL DEFAULT '',
             season_name TEXT NOT NULL DEFAULT '',
@@ -171,6 +206,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             stage TEXT NOT NULL,
             round INTEGER NOT NULL,
             game_no INTEGER NOT NULL,
+            score_model TEXT NOT NULL DEFAULT 'standard',
             played_on TEXT NOT NULL,
             table_label TEXT NOT NULL,
             format TEXT NOT NULL,
@@ -193,6 +229,11 @@ def create_schema(connection: sqlite3.Connection) -> None:
             survived INTEGER NOT NULL CHECK (survived IN (0, 1)),
             result TEXT NOT NULL,
             points_earned REAL NOT NULL,
+            result_points REAL NOT NULL DEFAULT 0,
+            vote_points REAL NOT NULL DEFAULT 0,
+            behavior_points REAL NOT NULL DEFAULT 0,
+            special_points REAL NOT NULL DEFAULT 0,
+            adjustment_points REAL NOT NULL DEFAULT 0,
             points_available REAL NOT NULL,
             stance_pick TEXT NOT NULL,
             stance_correct INTEGER NOT NULL CHECK (stance_correct IN (0, 1)),
@@ -220,6 +261,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             target_guild_id TEXT NOT NULL DEFAULT '',
             scope_competition_name TEXT NOT NULL DEFAULT '',
             scope_season_name TEXT NOT NULL DEFAULT '',
+            request_payload_json TEXT NOT NULL DEFAULT '{}',
             created_on TEXT NOT NULL
         );
 
@@ -312,6 +354,12 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE teams ADD COLUMN guild_id TEXT NOT NULL DEFAULT ''")
     if "captain_player_id" not in team_columns:
         connection.execute("ALTER TABLE teams ADD COLUMN captain_player_id TEXT")
+    if "is_placeholder_team" not in team_columns:
+        connection.execute(
+            "ALTER TABLE teams ADD COLUMN is_placeholder_team INTEGER NOT NULL DEFAULT 0"
+        )
+    if "placeholder_source_name" not in team_columns:
+        connection.execute("ALTER TABLE teams ADD COLUMN placeholder_source_name TEXT")
     match_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(matches)").fetchall()
     }
@@ -332,10 +380,26 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE matches ADD COLUMN scapegoat_player_id TEXT NOT NULL DEFAULT ''"
         )
+    if "score_model" not in match_columns:
+        connection.execute(
+            "ALTER TABLE matches ADD COLUMN score_model TEXT NOT NULL DEFAULT 'standard'"
+        )
+    match_player_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(match_players)").fetchall()
+    }
+    for column_name in MATCH_SCORE_COMPONENT_FIELDS:
+        if column_name not in match_player_columns:
+            connection.execute(
+                f"ALTER TABLE match_players ADD COLUMN {column_name} REAL NOT NULL DEFAULT 0"
+            )
     request_columns = {
         row["name"]
         for row in connection.execute("PRAGMA table_info(membership_requests)").fetchall()
     }
+    if "request_payload_json" not in request_columns:
+        connection.execute(
+            "ALTER TABLE membership_requests ADD COLUMN request_payload_json TEXT NOT NULL DEFAULT '{}'"
+        )
     if "target_guild_id" not in request_columns:
         connection.execute(
             "ALTER TABLE membership_requests ADD COLUMN target_guild_id TEXT NOT NULL DEFAULT ''"
@@ -548,10 +612,10 @@ def replace_repository_data(
             connection.execute(
                 """
                 INSERT INTO teams (
-                    team_id, name, short_name, logo, active, founded_on,
+                    team_id, name, short_name, logo, active, is_placeholder_team, placeholder_source_name, founded_on,
                     competition_name, season_name, guild_id, captain_player_id, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     team["team_id"],
@@ -559,6 +623,8 @@ def replace_repository_data(
                     team["short_name"],
                     team["logo"],
                     1 if team.get("active") else 0,
+                    1 if team.get("is_placeholder_team") else 0,
+                    team.get("placeholder_source_name"),
                     team["founded_on"],
                     team.get("competition_name", ""),
                     team.get("season_name", ""),
@@ -600,10 +666,10 @@ def replace_repository_data(
             connection.execute(
                 """
                 INSERT INTO matches (
-                    match_id, competition_name, season, stage, round, game_no, played_on, table_label, format,
+                    match_id, competition_name, season, stage, round, game_no, score_model, played_on, table_label, format,
                     duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     match["match_id"],
@@ -612,6 +678,7 @@ def replace_repository_data(
                     match["stage"],
                     match["round"],
                     match["game_no"],
+                    normalize_match_score_model(match.get("score_model")),
                     match["played_on"],
                     match["table_label"],
                     match["format"],
@@ -624,13 +691,21 @@ def replace_repository_data(
                 ),
             )
             for sort_order, entry in enumerate(match["players"]):
+                score_model = normalize_match_score_model(match.get("score_model"))
+                score_breakdown = normalize_score_breakdown(entry)
+                points_earned = (
+                    calculate_score_breakdown_total(entry)
+                    if uses_structured_score_model(score_model)
+                    else float(entry.get("points_earned", 0.0))
+                )
                 connection.execute(
                     """
                     INSERT INTO match_players (
                         match_id, sort_order, player_id, team_id, seat, role, camp, survived, result,
-                        points_earned, points_available, stance_pick, stance_correct, notes
+                        points_earned, result_points, vote_points, behavior_points, special_points, adjustment_points,
+                        points_available, stance_pick, stance_correct, notes
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         match["match_id"],
@@ -642,8 +717,13 @@ def replace_repository_data(
                         entry["camp"],
                         0,
                         entry["result"],
-                        float(entry["points_earned"]),
-                        float(entry.get("points_available", entry["points_earned"])),
+                        points_earned,
+                        score_breakdown["result_points"],
+                        score_breakdown["vote_points"],
+                        score_breakdown["behavior_points"],
+                        score_breakdown["special_points"],
+                        score_breakdown["adjustment_points"],
+                        float(entry.get("points_available", points_earned)),
                         to_legacy_stance_columns(
                             normalize_stance_result(entry),
                             match["winning_camp"],
@@ -784,7 +864,7 @@ def load_teams(connection: sqlite3.Connection | None = None) -> list[dict[str, A
         require_initialized_database(connection)
         team_rows = connection.execute(
             """
-            SELECT team_id, name, short_name, logo, active, founded_on,
+            SELECT team_id, name, short_name, logo, active, is_placeholder_team, placeholder_source_name, founded_on,
                    competition_name, season_name, guild_id, captain_player_id, notes
             FROM teams
             ORDER BY team_id
@@ -808,6 +888,8 @@ def load_teams(connection: sqlite3.Connection | None = None) -> list[dict[str, A
                 "short_name": row["short_name"],
                 "logo": row["logo"],
                 "active": bool(row["active"]),
+                "is_placeholder_team": bool(row["is_placeholder_team"]),
+                "placeholder_source_name": row["placeholder_source_name"] or None,
                 "founded_on": row["founded_on"],
                 "competition_name": row["competition_name"] or "",
                 "season_name": row["season_name"] or "",
@@ -864,7 +946,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
         require_initialized_database(connection)
         match_rows = connection.execute(
             """
-            SELECT match_id, competition_name, season, stage, round, game_no, played_on, table_label, format,
+            SELECT match_id, competition_name, season, stage, round, game_no, score_model, played_on, table_label, format,
                    duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
             FROM matches
             ORDER BY played_on, round, game_no, match_id
@@ -873,7 +955,8 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
         participant_rows = connection.execute(
             """
             SELECT match_id, player_id, team_id, seat, role, camp, survived, result,
-                   points_earned, points_available, stance_pick, stance_correct, notes
+                   points_earned, result_points, vote_points, behavior_points, special_points, adjustment_points,
+                   points_available, stance_pick, stance_correct, notes
             FROM match_players
             ORDER BY match_id, sort_order
             """
@@ -881,6 +964,10 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
 
         participants_by_match: dict[str, list[dict[str, Any]]] = {}
         for row in participant_rows:
+            score_breakdown = {
+                field_name: float(row[field_name] or 0.0)
+                for field_name in MATCH_SCORE_COMPONENT_FIELDS
+            }
             participants_by_match.setdefault(row["match_id"], []).append(
                 {
                     "player_id": row["player_id"],
@@ -890,6 +977,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
                     "camp": row["camp"],
                     "result": row["result"],
                     "points_earned": float(row["points_earned"]),
+                    **score_breakdown,
                     "stance_result": normalize_stance_result(
                         {
                             "stance_pick": row["stance_pick"],
@@ -908,6 +996,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
                 "stage": row["stage"],
                 "round": row["round"],
                 "game_no": row["game_no"],
+                "score_model": normalize_match_score_model(row["score_model"]),
                 "played_on": row["played_on"],
                 "table_label": row["table_label"],
                 "format": row["format"],
@@ -981,7 +1070,7 @@ def load_membership_requests(connection: sqlite3.Connection | None = None) -> li
             """
             SELECT request_id, request_type, username, display_name, player_id,
                    source_team_id, target_team_id, target_guild_id,
-                   scope_competition_name, scope_season_name, created_on
+                   scope_competition_name, scope_season_name, request_payload_json, created_on
             FROM membership_requests
             ORDER BY created_on, request_id
             """
@@ -998,6 +1087,7 @@ def load_membership_requests(connection: sqlite3.Connection | None = None) -> li
                 "target_guild_id": row["target_guild_id"] or "",
                 "scope_competition_name": row["scope_competition_name"] or "",
                 "scope_season_name": row["scope_season_name"] or "",
+                "request_payload": json.loads(row["request_payload_json"] or "{}"),
                 "created_on": row["created_on"],
             }
             for row in rows
@@ -1019,9 +1109,9 @@ def save_membership_requests(requests: list[dict[str, Any]]) -> None:
                     INSERT INTO membership_requests (
                         request_id, request_type, username, display_name, player_id,
                         source_team_id, target_team_id, target_guild_id,
-                        scope_competition_name, scope_season_name, created_on
+                        scope_competition_name, scope_season_name, request_payload_json, created_on
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         item["request_id"],
@@ -1034,6 +1124,7 @@ def save_membership_requests(requests: list[dict[str, Any]]) -> None:
                         item.get("target_guild_id", ""),
                         item.get("scope_competition_name", ""),
                         item.get("scope_season_name", ""),
+                        json.dumps(item.get("request_payload", {}), ensure_ascii=False),
                         item["created_on"],
                     ),
                 )

@@ -19,6 +19,7 @@ MATCH_HEADERS = [
     "stage",
     "round",
     "game_no",
+    "score_model",
     "played_on",
     "table_label",
     "format",
@@ -40,6 +41,7 @@ MATCH_ROWS = [
         "regular_season",
         1,
         1,
+        "jingcheng_daily",
         "2026-04-08",
         "A桌",
         "经典十二人局",
@@ -60,24 +62,29 @@ PLAYER_HEADERS = [
     "role",
     "camp",
     "result",
+    "result_points",
+    "vote_points",
+    "behavior_points",
+    "special_points",
+    "adjustment_points",
     "points_earned",
     "stance_result",
     "notes",
 ]
 
 PLAYER_ROWS = [
-    ["SAMPLE-001", 1, "GZ-2026S-001", "LAL-GZ-2026S-001", "预言家", "villagers", "win", 3.0, "correct", ""],
-    ["SAMPLE-001", 2, "GZ-2026S-002", "LAL-GZ-2026S-001", "女巫", "villagers", "win", 2.5, "correct", ""],
-    ["SAMPLE-001", 3, "GZ-2026S-003", "LAL-GZ-2026S-001", "猎人", "villagers", "win", 2.0, "none", ""],
-    ["SAMPLE-001", 4, "GZ-2026S-004", "LAL-GZ-2026S-001", "守卫", "villagers", "win", 1.5, "none", ""],
-    ["SAMPLE-001", 5, "GZ-2026S-005", "LAL-GZ-2026S-002", "平民", "villagers", "win", 1.0, "incorrect", ""],
-    ["SAMPLE-001", 6, "GZ-2026S-006", "LAL-GZ-2026S-002", "平民", "villagers", "win", 1.0, "none", ""],
-    ["SAMPLE-001", 7, "GZ-2026S-007", "LAL-GZ-2026S-002", "平民", "villagers", "win", 2.8, "correct", "示例 SVP"],
-    ["SAMPLE-001", 8, "GZ-2026S-008", "LAL-GZ-2026S-002", "平民", "villagers", "win", 0.8, "none", ""],
-    ["SAMPLE-001", 9, "GZ-2026S-009", "LAL-GZ-2026S-003", "狼人", "werewolves", "loss", -0.5, "incorrect", ""],
-    ["SAMPLE-001", 10, "GZ-2026S-010", "LAL-GZ-2026S-003", "狼人", "werewolves", "loss", -1.0, "incorrect", ""],
-    ["SAMPLE-001", 11, "GZ-2026S-011", "LAL-GZ-2026S-003", "狼人", "werewolves", "loss", -1.5, "none", ""],
-    ["SAMPLE-001", 12, "GZ-2026S-012", "LAL-GZ-2026S-003", "狼王", "werewolves", "loss", -2.0, "incorrect", ""],
+    ["SAMPLE-001", 1, "GZ-2026S-001", "LAL-GZ-2026S-001", "预言家", "villagers", "win", 5, 0.5, 0, 0, 0, 5.5, "correct", ""],
+    ["SAMPLE-001", 2, "GZ-2026S-002", "LAL-GZ-2026S-001", "女巫", "villagers", "win", 5, -0.5, 0, 0, 0, 4.5, "correct", ""],
+    ["SAMPLE-001", 3, "GZ-2026S-003", "LAL-GZ-2026S-001", "猎人", "villagers", "win", 5, 0, 0, 0.5, 0, 5.5, "none", ""],
+    ["SAMPLE-001", 4, "GZ-2026S-004", "LAL-GZ-2026S-001", "守卫", "villagers", "win", 5, -1.0, 0, 0, 0, 4.0, "none", ""],
+    ["SAMPLE-001", 5, "GZ-2026S-005", "LAL-GZ-2026S-002", "平民", "villagers", "win", 5, 0, 0, 1.0, 0, 6.0, "incorrect", ""],
+    ["SAMPLE-001", 6, "GZ-2026S-006", "LAL-GZ-2026S-002", "平民", "villagers", "win", 5, 0, 0, 0, 0, 5.0, "none", ""],
+    ["SAMPLE-001", 7, "GZ-2026S-007", "LAL-GZ-2026S-002", "平民", "villagers", "win", 5, 0, 0.5, 2.0, 0, 7.5, "correct", "示例 SVP"],
+    ["SAMPLE-001", 8, "GZ-2026S-008", "LAL-GZ-2026S-002", "平民", "villagers", "win", 5, -0.5, 0, 0, 0, 4.5, "none", ""],
+    ["SAMPLE-001", 9, "GZ-2026S-009", "LAL-GZ-2026S-003", "狼人", "werewolves", "loss", 0, 0, 0, 0.5, 0, 0.5, "incorrect", ""],
+    ["SAMPLE-001", 10, "GZ-2026S-010", "LAL-GZ-2026S-003", "狼人", "werewolves", "loss", 0, -0.5, 0, 0, -0.5, -1.0, "incorrect", ""],
+    ["SAMPLE-001", 11, "GZ-2026S-011", "LAL-GZ-2026S-003", "狼人", "werewolves", "loss", 0, 0, -1.0, 0, 0, -1.0, "none", ""],
+    ["SAMPLE-001", 12, "GZ-2026S-012", "LAL-GZ-2026S-003", "狼王", "werewolves", "loss", 0, 0, 0, -1.0, -0.5, -1.5, "incorrect", ""],
 ]
 
 INSTRUCTION_HEADERS = ["section", "rule", "details"]
@@ -85,6 +92,7 @@ INSTRUCTION_HEADERS = ["section", "rule", "details"]
 INSTRUCTION_ROWS = [
     ["整体", "一个文件可以导入多场比赛", "用 match_key 关联 matches 和 players 两张表；同一场比赛的 12 行选手数据必须使用同一个 match_key。"],
     ["matches", "import_mode", "create 表示新增比赛；update 表示编辑已有比赛。新增时 match_id 留空，编辑时必须填写已有 match_id。"],
+    ["matches", "score_model", "可填写 standard 或 jingcheng_daily；不填时默认按 standard 处理。"],
     ["matches", "必填字段", "competition_name、season_name、stage、round、game_no、played_on、table_label、format、duration_minutes、winning_camp、mvp_player_id、svp_player_id。"],
     ["matches", "winning_camp 取值", "只能填写 villagers 或 werewolves。"],
     ["matches", "背锅规则", "好人胜利时 scapegoat_player_id 留空；狼人胜利时必须填写，且要选失败阵营的选手。"],
@@ -92,7 +100,8 @@ INSTRUCTION_ROWS = [
     ["players", "camp 取值", "当前模板按业务规则只保留 villagers / werewolves。"],
     ["players", "result 取值", "只能填写 win 或 loss。"],
     ["players", "stance_result 取值", "填写 correct、incorrect 或 none；这个字段不是必填，不填时建议写 none。"],
-    ["players", "points_earned", "支持整数或小数，模板示例使用一位小数。"],
+    ["players", "points_earned", "standard 模型下必填总分；jingcheng_daily 模型下会按分项自动汇总，总分列可作为核对值保留。"],
+    ["players", "京城日报分项", "jingcheng_daily 模型支持填写 result_points、vote_points、behavior_points、special_points、adjustment_points。"],
 ]
 
 

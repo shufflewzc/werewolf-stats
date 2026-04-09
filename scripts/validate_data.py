@@ -16,6 +16,14 @@ VALID_CAMPS = {"villagers", "werewolves", "third_party"}
 VALID_WINNING_CAMPS = {"villagers", "werewolves"}
 VALID_RESULTS = {"win", "loss"}
 VALID_STANCE_RESULTS = {"correct", "incorrect", "none"}
+VALID_SCORE_MODELS = {"standard", "jingcheng_daily"}
+MATCH_SCORE_COMPONENT_FIELDS = {
+    "result_points",
+    "vote_points",
+    "behavior_points",
+    "special_points",
+    "adjustment_points",
+}
 
 
 def is_number(value: Any) -> bool:
@@ -71,6 +79,8 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
         "short_name",
         "logo",
         "active",
+        "is_placeholder_team",
+        "placeholder_source_name",
         "founded_on",
         "competition_name",
         "season_name",
@@ -105,6 +115,10 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
 
         if not isinstance(team.get("active"), bool):
             errors.append(f"{label}.active: expected boolean")
+        if not isinstance(team.get("is_placeholder_team"), bool):
+            errors.append(f"{label}.is_placeholder_team: expected boolean")
+        if team.get("placeholder_source_name") is not None and not isinstance(team.get("placeholder_source_name"), str):
+            errors.append(f"{label}.placeholder_source_name: expected string or null")
 
         errors.extend(validate_iso_date(team.get("founded_on"), f"{label}.founded_on"))
         errors.extend(
@@ -343,6 +357,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "stage",
         "round",
         "game_no",
+        "score_model",
         "played_on",
         "table_label",
         "format",
@@ -362,6 +377,11 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "camp",
         "result",
         "points_earned",
+        "result_points",
+        "vote_points",
+        "behavior_points",
+        "special_points",
+        "adjustment_points",
         "stance_result",
         "notes",
     }
@@ -404,6 +424,12 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         game_no = match.get("game_no")
         if not isinstance(game_no, int) or isinstance(game_no, bool) or game_no < 1:
             errors.append(f"{label}.game_no: expected integer >= 1")
+
+        score_model = match.get("score_model")
+        if score_model not in VALID_SCORE_MODELS:
+            errors.append(
+                f"{label}.score_model: expected one of {sorted(VALID_SCORE_MODELS)}"
+            )
 
         errors.extend(validate_iso_date(match.get("played_on"), f"{label}.played_on"))
         errors.extend(
@@ -508,8 +534,34 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                 points_earned = participant.get("points_earned")
                 if not is_number(points_earned):
                     errors.append(f"{participant_label}.points_earned: expected number")
-                elif points_earned < 0:
-                    errors.append(f"{participant_label}.points_earned: must be >= 0")
+
+                for component_name in sorted(MATCH_SCORE_COMPONENT_FIELDS):
+                    component_value = participant.get(component_name)
+                    if not is_number(component_value):
+                        errors.append(
+                            f"{participant_label}.{component_name}: expected number"
+                        )
+
+                if (
+                    score_model == "jingcheng_daily"
+                    and is_number(points_earned)
+                    and all(
+                        is_number(participant.get(component_name))
+                        for component_name in MATCH_SCORE_COMPONENT_FIELDS
+                    )
+                ):
+                    breakdown_total = round(
+                        sum(
+                            float(participant.get(component_name) or 0.0)
+                            for component_name in MATCH_SCORE_COMPONENT_FIELDS
+                        ),
+                        2,
+                    )
+                    if round(float(points_earned), 2) != breakdown_total:
+                        errors.append(
+                            f"{participant_label}.points_earned: expected {breakdown_total:.2f} "
+                            "from breakdown when score_model is 'jingcheng_daily'"
+                        )
 
                 stance_result = participant.get("stance_result")
                 if stance_result not in VALID_STANCE_RESULTS:

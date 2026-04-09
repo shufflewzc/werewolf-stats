@@ -20,8 +20,10 @@ STANCE_OPTIONS = legacy.STANCE_OPTIONS
 WINNING_CAMP_OPTIONS = legacy.WINNING_CAMP_OPTIONS
 append_alert_query = legacy.append_alert_query
 build_empty_match = legacy.build_empty_match
+build_empty_score_breakdown = legacy.build_empty_score_breakdown
 build_match_award_select = legacy.build_match_award_select
 build_scoped_path = legacy.build_scoped_path
+calculate_score_breakdown_total = legacy.calculate_score_breakdown_total
 can_manage_matches = legacy.can_manage_matches
 canonicalize_match_ids = legacy.canonicalize_match_ids
 ensure_placeholder_players_for_matches = legacy.ensure_placeholder_players_for_matches
@@ -30,19 +32,26 @@ file_value = legacy.file_value
 form_value = legacy.form_value
 get_match_by_id = legacy.get_match_by_id
 get_match_competition_name = legacy.get_match_competition_name
+get_match_score_model_label = legacy.get_match_score_model_label
 layout = legacy.layout
 list_seasons = legacy.list_seasons
 load_series_catalog = legacy.load_series_catalog
 load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
+MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
+MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 normalize_stance_result = legacy.normalize_stance_result
+normalize_match_score_model = legacy.normalize_match_score_model
 option_tags = legacy.option_tags
 parse_match_form = legacy.parse_match_form
+parse_float_value = legacy.parse_float_value
 redirect = legacy.redirect
 replace_match_path_id = legacy.replace_match_path_id
 require_competition_manager = legacy.require_competition_manager
+resolve_match_entities = legacy.resolve_match_entities
 save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
+uses_structured_score_model = legacy.uses_structured_score_model
 validate_match_awards = legacy.validate_match_awards
 validate_match_competition_selection = legacy.validate_match_competition_selection
 validate_match_season_selection = legacy.validate_match_season_selection
@@ -175,7 +184,7 @@ def build_excel_import_panel() -> str:
           <label class="form-label">选择 Excel 文件</label>
           <input class="form-control" type="file" name="match_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
         </div>
-        <div class="small text-secondary">模板包含 `matches`、`players`、`instructions` 三张工作表。更新已有比赛时把 `import_mode` 设为 `update` 并填写 `match_id`。</div>
+        <div class="small text-secondary">模板包含 `matches`、`players`、`instructions` 三张工作表。更新已有比赛时把 `import_mode` 设为 `update` 并填写 `match_id`；如需按京城日报模型导入，可把 `score_model` 设为 `jingcheng_daily` 并填写各分项分数。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入</button>
         </div>
@@ -268,6 +277,7 @@ def build_match_from_excel_rows(
     match["stage"] = match_row.get("stage", "").strip()
     match["round"] = parse_excel_int(match_row.get("round", ""), "round")
     match["game_no"] = parse_excel_int(match_row.get("game_no", ""), "game_no")
+    match["score_model"] = normalize_match_score_model(match_row.get("score_model", "").strip())
     match["played_on"] = match_row.get("played_on", "").strip()
     match["table_label"] = match_row.get("table_label", "").strip()
     match["format"] = match_row.get("format", "").strip()
@@ -279,6 +289,14 @@ def build_match_from_excel_rows(
     match["notes"] = match_row.get("notes", "").strip()
     participants = []
     for player_row in sorted(player_rows, key=lambda item: parse_excel_int(item.get("seat", ""), "seat")):
+        score_breakdown = {
+            field_name: parse_float_value(player_row.get(field_name, "").strip() or "0", 0.0)
+            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+        }
+        if uses_structured_score_model(match["score_model"]):
+            points_earned = calculate_score_breakdown_total(score_breakdown)
+        else:
+            points_earned = parse_excel_float(player_row.get("points_earned", ""), "points_earned")
         participants.append(
             {
                 "player_id": player_row.get("player_id", "").strip(),
@@ -287,7 +305,8 @@ def build_match_from_excel_rows(
                 "role": player_row.get("role", "").strip(),
                 "camp": player_row.get("camp", "").strip(),
                 "result": player_row.get("result", "").strip(),
-                "points_earned": parse_excel_float(player_row.get("points_earned", ""), "points_earned"),
+                "points_earned": points_earned,
+                **score_breakdown,
                 "stance_result": player_row.get("stance_result", "").strip() or "none",
                 "notes": player_row.get("notes", "").strip(),
             }
@@ -344,6 +363,9 @@ def import_matches_from_excel(
         season_error = validate_match_season_selection(data, competition_name, season_name)
         if season_error:
             return None, season_error
+        resolution_errors = resolve_match_entities(data, [current_match])
+        if resolution_errors:
+            return None, f"{match_key} 导入失败：{resolution_errors[0]}"
         award_error = validate_match_awards(current_match)
         if award_error:
             return None, f"{match_key} 导入失败：{award_error}"
@@ -526,6 +548,61 @@ def build_match_season_field(
     """
 
 
+def get_match_form_player_name(
+    player_lookup: dict[str, dict[str, object]],
+    participant: dict[str, object],
+) -> str:
+    explicit_name = str(participant.get("player_name") or "").strip()
+    if explicit_name:
+        return explicit_name
+    player_id = str(participant.get("player_id") or "").strip()
+    if player_id and player_id in player_lookup:
+        return str(player_lookup[player_id].get("display_name") or player_id)
+    return ""
+
+
+def get_match_form_team_name(
+    team_lookup: dict[str, dict[str, object]],
+    participant: dict[str, object],
+) -> str:
+    explicit_name = str(participant.get("team_name") or "").strip()
+    if explicit_name:
+        return explicit_name
+    team_id = str(participant.get("team_id") or "").strip()
+    if team_id and team_id in team_lookup:
+        return str(team_lookup[team_id].get("name") or team_id)
+    return ""
+
+
+def build_match_award_name_select(
+    selected_name: str,
+    participants: list[dict[str, object]],
+    player_lookup: dict[str, dict[str, object]],
+    team_lookup: dict[str, dict[str, object]],
+    placeholder: str,
+    winning_camp: str = "",
+    losing_only: bool = False,
+) -> str:
+    options = [f'<option value="">{escape(placeholder)}</option>']
+    for participant in participants:
+        player_name = get_match_form_player_name(player_lookup, participant)
+        if not player_name:
+            continue
+        camp = str(participant.get("camp") or "").strip()
+        if losing_only and winning_camp and camp == winning_camp:
+            continue
+        seat = str(participant.get("seat") or "").strip()
+        role = str(participant.get("role") or "").strip()
+        team_name = get_match_form_team_name(team_lookup, participant)
+        pieces = [f"{seat}号" if seat else "", player_name, role, team_name]
+        label = " · ".join(piece for piece in pieces if piece)
+        selected_attr = " selected" if player_name == selected_name else ""
+        options.append(
+            f'<option value="{escape(player_name)}"{selected_attr}>{escape(label)}</option>'
+        )
+    return "".join(options)
+
+
 def render_match_form_page(
     ctx: RequestContext,
     current: dict[str, object],
@@ -537,6 +614,20 @@ def render_match_form_page(
     match_code_hint: str,
     alert: str = "",
 ) -> str:
+    score_model = normalize_match_score_model(str(current.get("score_model", "")))
+    score_model_label = get_match_score_model_label(score_model)
+    try:
+        current_data = load_validated_data()
+    except Exception:
+        current_data = {"players": [], "teams": []}
+    player_lookup = {
+        str(player["player_id"]): player
+        for player in current_data.get("players", [])
+    }
+    team_lookup = {
+        str(team["team_id"]): team
+        for team in current_data.get("teams", [])
+    }
     competition_field_html = build_match_competition_field(
         str(current.get("competition_name", "")),
         ctx.current_user,
@@ -550,13 +641,34 @@ def render_match_form_page(
         if str(current.get("winning_camp")) == "villagers"
         else ""
     )
+    selected_mvp_name = str(current.get("mvp_player_name") or "").strip()
+    if not selected_mvp_name and str(current.get("mvp_player_id") or "").strip() in player_lookup:
+        selected_mvp_name = str(player_lookup[str(current.get("mvp_player_id") or "").strip()].get("display_name") or "")
+    selected_svp_name = str(current.get("svp_player_name") or "").strip()
+    if not selected_svp_name and str(current.get("svp_player_id") or "").strip() in player_lookup:
+        selected_svp_name = str(player_lookup[str(current.get("svp_player_id") or "").strip()].get("display_name") or "")
+    selected_scapegoat_name = str(current.get("scapegoat_player_name") or "").strip()
+    if not selected_scapegoat_name and str(current.get("scapegoat_player_id") or "").strip() in player_lookup:
+        selected_scapegoat_name = str(player_lookup[str(current.get("scapegoat_player_id") or "").strip()].get("display_name") or "")
     participant_rows = []
     for index, player in enumerate(current["players"]):
+        player_name = get_match_form_player_name(player_lookup, player)
+        team_name = get_match_form_team_name(team_lookup, player)
+        score_breakdown = {
+            field_name: parse_float_value(player.get(field_name), 0.0)
+            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+        }
+        structured_cells = "".join(
+            f'<td data-structured-score-column><input class="form-control form-control-sm" '
+            f'data-score-component name="{field_name}_{index}" type="number" step="0.1" '
+            f'value="{escape(str(score_breakdown[field_name]))}"></td>'
+            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+        )
         participant_rows.append(
             f"""
-            <tr>
-              <td><input class="form-control form-control-sm" data-award-player-id name="player_id_{index}" value="{escape(str(player['player_id']))}"></td>
-              <td><input class="form-control form-control-sm" name="team_id_{index}" value="{escape(str(player['team_id']))}"></td>
+            <tr data-participant-row>
+              <td><input class="form-control form-control-sm" data-award-player-id name="player_name_{index}" value="{escape(player_name)}"></td>
+              <td><input class="form-control form-control-sm" name="team_name_{index}" value="{escape(team_name)}"></td>
               <td><input class="form-control form-control-sm" data-award-seat name="seat_{index}" type="number" value="{escape(str(player['seat']))}"></td>
               <td><input class="form-control form-control-sm" data-award-role name="role_{index}" value="{escape(str(player['role']))}"></td>
               <td>
@@ -569,7 +681,8 @@ def render_match_form_page(
                   {option_tags(RESULT_OPTIONS, str(player['result']))}
                 </select>
               </td>
-              <td><input class="form-control form-control-sm" name="points_earned_{index}" type="number" step="0.1" value="{escape(str(player['points_earned']))}"></td>
+              {structured_cells}
+              <td><input class="form-control form-control-sm" data-points-earned name="points_earned_{index}" type="number" step="0.1" value="{escape(str(player['points_earned']))}"></td>
               <td>
                 <select class="form-select form-select-sm" name="stance_result_{index}">
                   {option_tags(STANCE_OPTIONS, str(player.get('stance_result', normalize_stance_result(player))))}
@@ -605,6 +718,13 @@ def render_match_form_page(
           <div class="col-12 col-md-6 col-xl-3">
             <label class="form-label">赛季</label>
             {season_field_html}
+          </div>
+          <div class="col-12 col-md-6 col-xl-3">
+            <label class="form-label">计分模型</label>
+            <select class="form-select" data-score-model-select name="score_model">
+              {option_tags(MATCH_SCORE_MODEL_OPTIONS, score_model)}
+            </select>
+            <div class="small text-secondary mt-2">当前模型：{escape(score_model_label)}。京城日报模型会按固定分项自动汇总单局积分。</div>
           </div>
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">阶段</label>
@@ -644,20 +764,20 @@ def render_match_form_page(
           </div>
           <div class="col-12 col-md-4">
             <label class="form-label">MVP</label>
-            <select class="form-select" data-award-select="mvp" data-selected="{escape(str(current.get('mvp_player_id', '')))}" name="mvp_player_id">
-              {build_match_award_select('mvp_player_id', str(current.get('mvp_player_id', '')), current['players'], '请选择 MVP')}
+            <select class="form-select" data-award-select="mvp" data-selected="{escape(selected_mvp_name)}" name="mvp_player_name">
+              {build_match_award_name_select(selected_mvp_name, current['players'], player_lookup, team_lookup, '请选择 MVP')}
             </select>
           </div>
           <div class="col-12 col-md-4">
             <label class="form-label">SVP</label>
-            <select class="form-select" data-award-select="svp" data-selected="{escape(str(current.get('svp_player_id', '')))}" name="svp_player_id">
-              {build_match_award_select('svp_player_id', str(current.get('svp_player_id', '')), current['players'], '请选择 SVP')}
+            <select class="form-select" data-award-select="svp" data-selected="{escape(selected_svp_name)}" name="svp_player_name">
+              {build_match_award_name_select(selected_svp_name, current['players'], player_lookup, team_lookup, '请选择 SVP')}
             </select>
           </div>
           <div class="col-12 col-md-4" data-scapegoat-field{scapegoat_hidden_attr}>
             <label class="form-label">背锅</label>
-            <select class="form-select" data-award-select="scapegoat" data-selected="{escape(str(current.get('scapegoat_player_id', '')))}" name="scapegoat_player_id">
-              {build_match_award_select('scapegoat_player_id', str(current.get('scapegoat_player_id', '')), current['players'], '请选择背锅选手', str(current.get('winning_camp', '')), True)}
+            <select class="form-select" data-award-select="scapegoat" data-selected="{escape(selected_scapegoat_name)}" name="scapegoat_player_name">
+              {build_match_award_name_select(selected_scapegoat_name, current['players'], player_lookup, team_lookup, '请选择背锅选手', str(current.get('winning_camp', '')), True)}
             </select>
             <div class="small text-secondary mt-2">仅在狼人胜利时设置背锅选手。</div>
           </div>
@@ -670,7 +790,7 @@ def render_match_form_page(
         <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
           <div>
             <h2 class="h5 mb-1">上场选手数据</h2>
-            <div class="small text-secondary">这里按当前顺序编辑所有参赛选手信息。</div>
+            <div class="small text-secondary">这里按当前顺序编辑所有参赛选手信息。录入时直接填写队员姓名和战队名称；系统会在当前赛事赛季内自动匹配，找不到时会先创建占位档案。选择京城日报模型后，会展开固定分项并自动计算总分。</div>
           </div>
         </div>
 
@@ -678,12 +798,13 @@ def render_match_form_page(
           <table class="table align-middle">
             <thead>
               <tr>
-                <th>队员编号</th>
-                <th>战队编号</th>
+                <th>队员姓名</th>
+                <th>战队名称</th>
                 <th>座位</th>
                 <th>角色</th>
                 <th>阵营</th>
                 <th>结果</th>
+                {''.join(f'<th data-structured-score-column>{escape(field_label)}</th>' for _, field_label in MATCH_SCORE_COMPONENT_FIELDS)}
                 <th>得分</th>
                 <th>站边结果</th>
                 <th>备注</th>
@@ -710,18 +831,24 @@ def render_match_form_page(
         const svpSelect = form.querySelector('[data-award-select="svp"]');
         const scapegoatSelect = form.querySelector('[data-award-select="scapegoat"]');
         const scapegoatField = form.querySelector("[data-scapegoat-field]");
+        const scoreModelSelect = form.querySelector("[data-score-model-select]");
         const playerInputs = Array.from(form.querySelectorAll("[data-award-player-id]"));
+        const teamNameInputs = Array.from(form.querySelectorAll('[name^="team_name_"]'));
         const seatInputs = Array.from(form.querySelectorAll("[data-award-seat]"));
         const roleInputs = Array.from(form.querySelectorAll("[data-award-role]"));
         const campInputs = Array.from(form.querySelectorAll("[data-award-camp]"));
+        const structuredScoreColumns = Array.from(form.querySelectorAll("[data-structured-score-column]"));
+        const participantRows = Array.from(form.querySelectorAll("[data-participant-row]"));
         function collectParticipants() {{
           return playerInputs.map((input, index) => {{
-            const playerId = (input.value || "").trim();
+            const playerName = (input.value || "").trim();
             const seat = (seatInputs[index] && seatInputs[index].value) || "";
             const role = (roleInputs[index] && roleInputs[index].value) || "";
+            const teamNameInput = form.querySelector(`[name="team_name_${{index}}"]`);
+            const teamName = (teamNameInput && teamNameInput.value) || "";
             const camp = (campInputs[index] && campInputs[index].value) || "";
-            return {{ playerId, seat, role, camp }};
-          }}).filter((item) => item.playerId);
+            return {{ playerName, seat, role, teamName, camp }};
+          }}).filter((item) => item.playerName);
         }}
         function buildOptions(select, participants, placeholder, losingOnly) {{
           if (!select) return;
@@ -732,14 +859,15 @@ def render_match_form_page(
             : participants;
           const options = [`<option value="">${{placeholder}}</option>`].concat(
             filtered.map((item) => {{
-              const pieces = [`${{item.seat}}号`, item.playerId];
+              const pieces = [`${{item.seat}}号`, item.playerName];
               if (item.role) pieces.push(item.role);
-              const selected = item.playerId === selectedValue ? " selected" : "";
-              return `<option value="${{item.playerId}}"${{selected}}>${{pieces.join(" · ")}}</option>`;
+              if (item.teamName) pieces.push(item.teamName);
+              const selected = item.playerName === selectedValue ? " selected" : "";
+              return `<option value="${{item.playerName}}"${{selected}}>${{pieces.join(" · ")}}</option>`;
             }})
           );
           select.innerHTML = options.join("");
-          if (selectedValue && !filtered.some((item) => item.playerId === selectedValue)) {{
+          if (selectedValue && !filtered.some((item) => item.playerName === selectedValue)) {{
             select.value = "";
           }}
           select.setAttribute("data-selected", select.value || "");
@@ -759,12 +887,37 @@ def render_match_form_page(
             buildOptions(scapegoatSelect, participants, "请选择背锅选手", true);
           }}
         }}
-        [winningCampSelect, ...playerInputs, ...seatInputs, ...roleInputs, ...campInputs]
+        function updateStructuredScoreRows() {{
+          const isStructured = scoreModelSelect && scoreModelSelect.value === "jingcheng_daily";
+          structuredScoreColumns.forEach((element) => {{
+            element.style.display = isStructured ? "" : "none";
+          }});
+          participantRows.forEach((row) => {{
+            const totalInput = row.querySelector("[data-points-earned]");
+            const componentInputs = Array.from(row.querySelectorAll("[data-score-component]"));
+            if (!totalInput) return;
+            totalInput.readOnly = !!isStructured;
+            if (!isStructured) return;
+            const total = componentInputs.reduce((sum, input) => {{
+              const nextValue = Number.parseFloat(input.value || "0");
+              return sum + (Number.isFinite(nextValue) ? nextValue : 0);
+            }}, 0);
+            totalInput.value = total.toFixed(2);
+          }});
+        }}
+        [winningCampSelect, ...playerInputs, ...teamNameInputs, ...seatInputs, ...roleInputs, ...campInputs]
           .filter(Boolean)
           .forEach((element) => element.addEventListener("input", renderAwards));
         [winningCampSelect, ...campInputs]
           .filter(Boolean)
           .forEach((element) => element.addEventListener("change", renderAwards));
+        participantRows.forEach((row) => {{
+          row.querySelectorAll("[data-score-component]").forEach((input) => {{
+            input.addEventListener("input", updateStructuredScoreRows);
+          }});
+        }});
+        if (scoreModelSelect) scoreModelSelect.addEventListener("change", updateStructuredScoreRows);
+        updateStructuredScoreRows();
         renderAwards();
       }})();
     </script>
@@ -890,6 +1043,13 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
         return permission_guard
 
     updated_match = parse_match_form(ctx.form, match)
+    resolution_errors = resolve_match_entities(data, [updated_match])
+    if resolution_errors:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_match_edit_page(ctx, match_id, alert=resolution_errors[0], field_values=updated_match),
+        )
     permission_guard = require_competition_manager(
         ctx,
         start_response,
@@ -1075,6 +1235,13 @@ def handle_match_create(ctx: RequestContext, start_response):
         return redirect(start_response, append_alert_query(next_path, alert_message))
 
     new_match = parse_match_form(ctx.form, build_empty_match())
+    resolution_errors = resolve_match_entities(data, [new_match])
+    if resolution_errors:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_match_create_page(ctx, alert=resolution_errors[0], field_values=new_match),
+        )
     permission_guard = require_competition_manager(
         ctx,
         start_response,

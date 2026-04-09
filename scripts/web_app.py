@@ -168,6 +168,60 @@ def normalize_stance_result(entry: dict[str, Any]) -> str:
     return "correct" if entry.get("stance_correct") else "incorrect"
 
 
+MATCH_SCORE_MODEL_STANDARD = "standard"
+MATCH_SCORE_MODEL_JINGCHENG_DAILY = "jingcheng_daily"
+MATCH_SCORE_MODEL_OPTIONS = {
+    MATCH_SCORE_MODEL_STANDARD: "通用总分录入",
+    MATCH_SCORE_MODEL_JINGCHENG_DAILY: "京城大师赛日报积分模型",
+}
+MATCH_SCORE_COMPONENT_FIELDS = [
+    ("result_points", "胜负分"),
+    ("vote_points", "投票分"),
+    ("behavior_points", "行为分"),
+    ("special_points", "特殊分"),
+    ("adjustment_points", "附加/罚分"),
+]
+
+
+def normalize_match_score_model(value: str | None) -> str:
+    normalized = str(value or "").strip()
+    if normalized in MATCH_SCORE_MODEL_OPTIONS:
+        return normalized
+    return MATCH_SCORE_MODEL_STANDARD
+
+
+def uses_structured_score_model(value: str | None) -> bool:
+    return normalize_match_score_model(value) == MATCH_SCORE_MODEL_JINGCHENG_DAILY
+
+
+def build_empty_score_breakdown() -> dict[str, float]:
+    return {field_name: 0.0 for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS}
+
+
+def parse_float_value(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def normalize_score_breakdown(entry: dict[str, Any] | None) -> dict[str, float]:
+    current = entry or {}
+    return {
+        field_name: parse_float_value(current.get(field_name), 0.0)
+        for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+    }
+
+
+def calculate_score_breakdown_total(entry: dict[str, Any] | None) -> float:
+    return round(sum(normalize_score_breakdown(entry).values()), 2)
+
+
+def get_match_score_model_label(value: str | None) -> str:
+    normalized = normalize_match_score_model(value)
+    return MATCH_SCORE_MODEL_OPTIONS.get(normalized, MATCH_SCORE_MODEL_OPTIONS[MATCH_SCORE_MODEL_STANDARD])
+
+
 def parse_cookies(environ: dict[str, Any]) -> cookies.SimpleCookie[str]:
     jar = cookies.SimpleCookie()
     if environ.get("HTTP_COOKIE"):
@@ -566,6 +620,10 @@ def can_manage_matches(
         competition_name,
         {"match_manage"},
     )
+
+
+def is_placeholder_team(team: dict[str, Any] | None) -> bool:
+    return bool(team and team.get("is_placeholder_team"))
 
 
 def can_access_series_management(user: dict[str, Any] | None) -> bool:
@@ -1499,7 +1557,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-center">
             <div>
               <div class="brand-kicker">Official League Site</div>
-              <div class="brand-title">狼人杀赛事数据中心</div>
+              <div class="brand-title">一颗小草赛事数据中心</div>
               <div class="small text-secondary">当前时间：{escape(ctx.now_label)}</div>
             </div>
             <div class="topbar-actions d-flex flex-wrap align-items-center gap-3 gap-xl-4">
@@ -1726,10 +1784,11 @@ def build_placeholder_player(
     team_id: str,
     competition_name: str,
     season_name: str,
+    display_name: str = "",
 ) -> dict[str, Any]:
     return {
         "player_id": player_id,
-        "display_name": player_id,
+        "display_name": display_name.strip() or player_id,
         "team_id": team_id,
         "photo": DEFAULT_PLAYER_PHOTO,
         "aliases": [],
@@ -1740,6 +1799,153 @@ def build_placeholder_player(
             " 等待选手注册后绑定认领。"
         ),
     }
+
+
+def build_placeholder_team(
+    team_id: str,
+    team_name: str,
+    competition_name: str,
+    season_name: str,
+) -> dict[str, Any]:
+    normalized_name = team_name.strip()
+    short_name = normalized_name[:12] if normalized_name else "待认领战队"
+    return {
+        "team_id": team_id,
+        "name": normalized_name or team_id,
+        "short_name": short_name,
+        "logo": DEFAULT_TEAM_LOGO,
+        "active": False,
+        "founded_on": china_today_label(),
+        "competition_name": competition_name,
+        "season_name": season_name,
+        "guild_id": "",
+        "captain_player_id": None,
+        "members": [],
+        "notes": f"比赛录入时自动预创建的占位战队：{competition_name} / {season_name}，待后续认领。",
+        "is_placeholder_team": True,
+        "placeholder_source_name": normalized_name or team_id,
+    }
+
+
+def find_team_by_name_in_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    team_name: str,
+) -> dict[str, Any] | None:
+    normalized_team_name = team_name.strip()
+    if not normalized_team_name:
+        return None
+    for team in data["teams"]:
+        if (
+            str(team.get("name") or "").strip() == normalized_team_name
+            and str(team.get("competition_name") or "").strip() == competition_name.strip()
+            and str(team.get("season_name") or "").strip() == season_name.strip()
+        ):
+            return team
+    return None
+
+
+def find_player_by_name_in_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    player_name: str,
+) -> dict[str, Any] | None:
+    normalized_player_name = player_name.strip()
+    if not normalized_player_name:
+        return None
+    team_scope_by_id = {
+        team["team_id"]: (
+            str(team.get("competition_name") or "").strip(),
+            str(team.get("season_name") or "").strip(),
+        )
+        for team in data["teams"]
+    }
+    for player in data["players"]:
+        if str(player.get("display_name") or "").strip() != normalized_player_name:
+            continue
+        if team_scope_by_id.get(player.get("team_id")) == (
+            competition_name.strip(),
+            season_name.strip(),
+        ):
+            return player
+    return None
+
+
+def resolve_match_award_player_ids(match: dict[str, Any]) -> None:
+    participant_name_map = {
+        str(participant.get("player_name") or "").strip(): str(participant.get("player_id") or "").strip()
+        for participant in match.get("players", [])
+        if str(participant.get("player_name") or "").strip() and str(participant.get("player_id") or "").strip()
+    }
+    match["mvp_player_id"] = participant_name_map.get(str(match.get("mvp_player_name") or "").strip(), "")
+    match["svp_player_id"] = participant_name_map.get(str(match.get("svp_player_name") or "").strip(), "")
+    match["scapegoat_player_id"] = participant_name_map.get(str(match.get("scapegoat_player_name") or "").strip(), "")
+
+
+def resolve_match_entities(
+    data: dict[str, Any],
+    matches: list[dict[str, Any]],
+) -> list[str]:
+    existing_player_ids = {player["player_id"] for player in data["players"]}
+    errors: list[str] = []
+    for match in matches:
+        competition_name = get_match_competition_name(match)
+        season_name = str(match.get("season") or "").strip()
+        for entry in match.get("players", []):
+            player_name = str(
+                entry.get("player_name")
+                or entry.get("display_name")
+                or entry.get("player_id")
+                or ""
+            ).strip()
+            team_name = str(entry.get("team_name") or entry.get("team_id") or "").strip()
+            if not player_name and not team_name:
+                continue
+            if not team_name:
+                errors.append(f"{player_name or '某位选手'} 缺少战队名称。")
+                continue
+            team = find_team_by_name_in_scope(data, competition_name, season_name, team_name)
+            if not team:
+                placeholder_team_id = build_team_serial(data, competition_name, season_name, data["teams"])
+                team = build_placeholder_team(
+                    placeholder_team_id,
+                    team_name,
+                    competition_name,
+                    season_name,
+                )
+                data["teams"].append(team)
+            entry["team_id"] = team["team_id"]
+            entry["team_name"] = team["name"]
+            if not player_name:
+                errors.append(f"{team_name} 有一行缺少队员姓名。")
+                continue
+            player = find_player_by_name_in_scope(data, competition_name, season_name, player_name)
+            if player and player["team_id"] != team["team_id"]:
+                existing_team = get_team_by_id(data, player["team_id"])
+                existing_team_name = existing_team["name"] if existing_team else player["team_id"]
+                errors.append(
+                    f"同一赛季内不允许重名选手。{player_name} 当前赛季已属于战队 {existing_team_name}，不能再次录入到 {team['name']}。"
+                )
+                continue
+            if not player:
+                player_id = build_unique_slug(existing_player_ids, "player", player_name, "player")
+                player = build_placeholder_player(
+                    player_id,
+                    team["team_id"],
+                    competition_name,
+                    season_name,
+                    display_name=player_name,
+                )
+                data["players"].append(player)
+                existing_player_ids.add(player_id)
+            entry["player_id"] = player["player_id"]
+            entry["player_name"] = player["display_name"]
+            if entry["player_id"] not in team["members"]:
+                team["members"].append(entry["player_id"])
+        resolve_match_award_player_ids(match)
+    return errors
 
 
 def build_placeholder_username(player_id: str) -> str:
@@ -2925,7 +3131,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         region_name=selected_region,
         series_slug=selected_series_slug,
     )
-    top_player = displayed_player_rows[0] if displayed_player_rows else None
     active_team_count = len(visible_team_rows) if selected_competition else max(
         (row["team_count"] for row in scoped_competition_rows),
         default=0,
@@ -2998,32 +3203,25 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     )
     stat_cards = f"""
     <div class="row g-3 g-lg-4 mb-4">
-      <div class="col-6 col-xl-3">
+      <div class="col-6 col-xl-4">
         <div class="stat-card h-100 p-4 shadow-sm border-0">
           <div class="stat-label">官方快照 · 战队</div>
           <div class="stat-value mt-2">{active_team_count}</div>
           <div class="small-muted mt-2">{escape(scope_label)} 口径</div>
         </div>
       </div>
-      <div class="col-6 col-xl-3">
+      <div class="col-6 col-xl-4">
         <div class="stat-card h-100 p-4 shadow-sm border-0">
           <div class="stat-label">官方快照 · 队员</div>
           <div class="stat-value mt-2">{active_player_count}</div>
           <div class="small-muted mt-2">当前口径下已出场队员</div>
         </div>
       </div>
-      <div class="col-6 col-xl-3">
+      <div class="col-6 col-xl-4">
         <div class="stat-card h-100 p-4 shadow-sm border-0">
           <div class="stat-label">官方快照 · 对局</div>
           <div class="stat-value mt-2">{active_match_count}</div>
           <div class="small-muted mt-2">当前口径下比赛记录</div>
-        </div>
-      </div>
-      <div class="col-6 col-xl-3">
-        <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">实时榜首</div>
-          <div class="stat-value mt-2">{escape(top_player['display_name'] if top_player else '-')}</div>
-          <div class="small-muted mt-2">{escape(top_player['team_name'] if top_player else '暂无数据')}</div>
         </div>
       </div>
     </div>
@@ -3145,8 +3343,8 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="hero-layout">
         <div>
-          <div class="eyebrow mb-3">官方赛事数据中心</div>
-          <h1 class="hero-title mb-3">{escape(selected_region or DEFAULT_REGION_NAME)}赛区首页<br>像赛事官网一样浏览榜单与赛程</h1>
+          <div class="eyebrow mb-3">一颗小草赛事数据中心</div>
+          <h1 class="hero-title mb-3">{escape(selected_region or DEFAULT_REGION_NAME)}赛区首页<br>赛事统计和赛程</h1>
           <p class="hero-copy mb-0">未登录时首页默认显示广州赛区；登录后会优先按你的账号地区展示对应赛区。先切换地区，再切换系列赛；如果进入某个地区赛事页，就可以继续选择赛季，并查看该站独立的战队和队员数据。</p>
           {region_switcher_html}
           {series_switcher_html}
@@ -3162,11 +3360,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               <span>当前对局</span>
               <strong>{active_match_count}</strong>
               <small>{escape(scope_label)}</small>
-            </div>
-            <div class="hero-pill">
-              <span>当前榜首</span>
-              <strong>{escape(top_player['display_name'] if top_player else '待更新')}</strong>
-              <small>{escape(top_player['team_name'] if top_player else '暂无数据')}</small>
             </div>
           </div>
         </div>
@@ -3190,11 +3383,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               <span>收录队员</span>
               <strong>{active_player_count}</strong>
               <small>当前口径下出场</small>
-            </div>
-            <div class="hero-stage-metric">
-              <span>实时榜首</span>
-              <strong>{escape(top_player['display_name'] if top_player else '待更新')}</strong>
-              <small>{escape(top_player['team_name'] if top_player else '暂无数据')}</small>
             </div>
           </div>
         </div>
@@ -3706,6 +3894,9 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
     selected_region = form_value(ctx.query, "region").strip() or None
     selected_series_slug = form_value(ctx.query, "series").strip() or None
     next_path = form_value(ctx.query, "next").strip() or build_match_next_path(match)
+    score_model = normalize_match_score_model(match.get("score_model"))
+    score_model_label = get_match_score_model_label(score_model)
+    show_score_breakdown = uses_structured_score_model(score_model)
     participant_by_id = {
         str(participant.get("player_id") or "").strip(): participant
         for participant in match["players"]
@@ -3809,6 +4000,13 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
         player_name = player["display_name"] if player else participant["player_id"]
         team_name = team["name"] if team else participant["team_id"]
         stance_result = normalize_stance_result(participant)
+        score_breakdown = normalize_score_breakdown(participant)
+        breakdown_cells = ""
+        if show_score_breakdown:
+            breakdown_cells = "".join(
+                f"<td>{score_breakdown[field_name]:.2f}</td>"
+                for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+            )
         participant_rows.append(
             f"""
             <tr>
@@ -3818,11 +4016,19 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
               <td>{escape(participant['role'])}</td>
               <td>{escape(to_chinese_camp(participant['camp']))}</td>
               <td>{escape(RESULT_OPTIONS.get(participant['result'], participant['result']))}</td>
+              {breakdown_cells}
               <td>{escape(STANCE_OPTIONS.get(stance_result, stance_result))}</td>
               <td>{float(participant['points_earned']):.2f}</td>
               <td>{escape(participant['notes'] or '无')}</td>
             </tr>
             """
+        )
+
+    breakdown_header_html = ""
+    if show_score_breakdown:
+        breakdown_header_html = "".join(
+            f"<th>{escape(field_label)}</th>"
+            for _, field_label in MATCH_SCORE_COMPONENT_FIELDS
         )
 
     edit_button = ""
@@ -3843,6 +4049,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
             <span class="chip">编号 {escape(match['match_id'])}</span>
             <span class="chip">{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</span>
             <span class="chip">第 {match['round']} 轮 · 第 {match['game_no']} 局</span>
+            <span class="chip">计分模型 {escape(score_model_label)}</span>
             <a class="switcher-chip" href="{escape(build_match_day_path(match['played_on'], build_scoped_path('/matches/' + match_id, competition_name, season_name)))}">{escape(match['played_on'])}</a>
           </div>
           <div class="d-flex flex-wrap gap-2 mt-3">
@@ -3902,7 +4109,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
           <h2 class="section-title mb-2">上场成员明细</h2>
-          <p class="section-copy mb-0">点击队员或战队名称，可以继续跳转到对应的详情页，并保持当前系列赛与赛季口径。</p>
+          <p class="section-copy mb-0">点击队员或战队名称，可以继续跳转到对应的详情页，并保持当前系列赛与赛季口径。{escape('当前使用京城日报积分模型，已展开分项积分。' if show_score_breakdown else '')}</p>
         </div>
       </div>
       <div class="table-responsive">
@@ -3915,6 +4122,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
               <th>角色</th>
               <th>阵营</th>
               <th>结果</th>
+              {breakdown_header_html}
               <th>站边</th>
               <th>得分</th>
               <th>备注</th>
@@ -5515,17 +5723,34 @@ def validate_match_awards(match: dict[str, Any]) -> str:
 
 
 def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any]) -> dict[str, Any]:
+    score_model = normalize_match_score_model(form_value(form, "score_model"))
     participants = []
     for index in range(len(existing_match["players"])):
+        score_breakdown = {
+            field_name: parse_float_value(
+                form_value(form, f"{field_name}_{index}", "0") or "0",
+                0.0,
+            )
+            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+        }
+        points_earned = parse_float_value(
+            form_value(form, f"points_earned_{index}", "0") or "0",
+            0.0,
+        )
+        if uses_structured_score_model(score_model):
+            points_earned = round(sum(score_breakdown.values()), 2)
         participants.append(
             {
-                "player_id": form_value(form, f"player_id_{index}"),
-                "team_id": form_value(form, f"team_id_{index}"),
+                "player_id": "",
+                "player_name": form_value(form, f"player_name_{index}").strip(),
+                "team_id": "",
+                "team_name": form_value(form, f"team_name_{index}").strip(),
                 "seat": int(form_value(form, f"seat_{index}", "0") or "0"),
                 "role": form_value(form, f"role_{index}"),
                 "camp": form_value(form, f"camp_{index}"),
                 "result": form_value(form, f"result_{index}"),
-                "points_earned": float(form_value(form, f"points_earned_{index}", "0") or "0"),
+                "points_earned": points_earned,
+                **score_breakdown,
                 "stance_result": form_value(form, f"stance_result_{index}", "none"),
                 "notes": form_value(form, f"notes_{index}"),
             }
@@ -5538,14 +5763,18 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
         "stage": form_value(form, "stage"),
         "round": int(form_value(form, "round", "0") or "0"),
         "game_no": int(form_value(form, "game_no", "0") or "0"),
+        "score_model": score_model,
         "played_on": form_value(form, "played_on").strip(),
         "table_label": form_value(form, "table_label").strip(),
         "format": form_value(form, "format").strip(),
         "duration_minutes": int(form_value(form, "duration_minutes", "0") or "0"),
         "winning_camp": form_value(form, "winning_camp"),
-        "mvp_player_id": form_value(form, "mvp_player_id").strip(),
-        "svp_player_id": form_value(form, "svp_player_id").strip(),
-        "scapegoat_player_id": form_value(form, "scapegoat_player_id").strip(),
+        "mvp_player_id": "",
+        "svp_player_id": "",
+        "scapegoat_player_id": "",
+        "mvp_player_name": form_value(form, "mvp_player_name").strip(),
+        "svp_player_name": form_value(form, "svp_player_name").strip(),
+        "scapegoat_player_name": form_value(form, "scapegoat_player_name").strip(),
         "players": participants,
         "notes": form_value(form, "notes").strip(),
     }
@@ -5602,6 +5831,7 @@ def build_empty_match(competition_name: str = "", season_name: str = "") -> dict
         "stage": "regular_season",
         "round": 1,
         "game_no": 1,
+        "score_model": MATCH_SCORE_MODEL_STANDARD,
         "played_on": china_today_label(),
         "table_label": "一号桌",
         "format": "经典十二人局",
@@ -5610,16 +5840,22 @@ def build_empty_match(competition_name: str = "", season_name: str = "") -> dict
         "mvp_player_id": "",
         "svp_player_id": "",
         "scapegoat_player_id": "",
+        "mvp_player_name": "",
+        "svp_player_name": "",
+        "scapegoat_player_name": "",
         "notes": "",
         "players": [
             {
                 "player_id": "",
+                "player_name": "",
                 "team_id": "",
+                "team_name": "",
                 "seat": seat,
                 "role": "",
                 "camp": "villagers",
                 "result": "win",
                 "points_earned": 0.0,
+                **build_empty_score_breakdown(),
                 "stance_result": "none",
                 "notes": "",
             }

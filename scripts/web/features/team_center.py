@@ -16,8 +16,11 @@ build_scoped_path = legacy.build_scoped_path
 build_team_serial = legacy.build_team_serial
 build_team_scope_value = legacy.build_team_scope_value
 build_unique_slug = legacy.build_unique_slug
+can_manage_matches = legacy.can_manage_matches
 china_now_label = legacy.china_now_label
 china_today_label = legacy.china_today_label
+find_team_by_name_in_scope = legacy.find_team_by_name_in_scope
+find_player_by_name_in_scope = legacy.find_player_by_name_in_scope
 form_value = legacy.form_value
 get_guild_by_id = legacy.get_guild_by_id
 get_team_by_id = legacy.get_team_by_id
@@ -30,6 +33,9 @@ get_user_badge_label = legacy.get_user_badge_label
 get_user_by_player_id = legacy.get_user_by_player_id
 get_user_player = legacy.get_user_player
 get_user_team_identities = legacy.get_user_team_identities
+is_admin_user = legacy.is_admin_user
+is_placeholder_team = legacy.is_placeholder_team
+is_placeholder_user = legacy.is_placeholder_user
 is_team_captain = legacy.is_team_captain
 layout = legacy.layout
 list_ongoing_team_scopes = legacy.list_ongoing_team_scopes
@@ -50,6 +56,9 @@ user_has_match_history = legacy.user_has_match_history
 user_has_permission = legacy.user_has_permission
 user_has_team_identity_in_scope = legacy.user_has_team_identity_in_scope
 validate_team_creation = legacy.validate_team_creation
+build_placeholder_player = legacy.build_placeholder_player
+
+
 def get_team_member_removal_error(
     data: dict[str, Any],
     team: dict[str, Any] | None,
@@ -107,6 +116,26 @@ def can_manage_current_team_members(
             or (current_player and is_team_captain(current_team, current_player))
         )
     )
+
+
+def can_review_team_claim_request(
+    data: dict[str, Any],
+    acting_user: dict[str, Any] | None,
+    target_team: dict[str, Any] | None,
+) -> bool:
+    if not acting_user or not target_team:
+        return False
+    if is_admin_user(acting_user) or user_has_permission(acting_user, "team_manage"):
+        return True
+    competition_name, _ = get_team_scope(target_team)
+    return bool(competition_name and can_manage_matches(acting_user, data, competition_name))
+
+
+def remove_placeholder_owner(users: list[dict[str, Any]], player_id: str) -> list[dict[str, Any]]:
+    owner_user = get_user_by_player_id(users, player_id)
+    if not owner_user or not is_placeholder_user(owner_user):
+        return users
+    return [user for user in users if user["username"] != owner_user["username"]]
 
 
 def handle_switch_primary_identity_action(
@@ -224,7 +253,7 @@ def get_team_center_page(
             for item in requests
             if current_user
             and item["username"] == current_user["username"]
-            and item["request_type"] in {"join", "transfer"}
+            and item["request_type"] in {"join", "transfer", "team_claim"}
         ),
         None,
     )
@@ -385,6 +414,65 @@ def get_team_center_page(
       </div>
     </section>
     """
+    team_claim_rows = []
+    if current_user:
+        for item in requests:
+            if item.get("request_type") != "team_claim":
+                continue
+            target_team = get_team_by_id(data, item.get("target_team_id", ""))
+            if not can_review_team_claim_request(data, current_user, target_team):
+                continue
+            payload = item.get("request_payload", {})
+            team_claim_rows.append(
+                f"""
+                <tr>
+                  <td>{escape(item['display_name'])}</td>
+                  <td>{escape(item['username'])}</td>
+                  <td>{escape(target_team['name'] if target_team else item.get('target_team_id', ''))}</td>
+                  <td>{escape(team_scope_label(target_team) if target_team else ((item.get('scope_competition_name') or '') + ' / ' + (item.get('scope_season_name') or '')))}</td>
+                  <td>{escape(payload.get('short_name', ''))}</td>
+                  <td>{escape(item.get('created_on') or '')}</td>
+                  <td>
+                    <div class="d-flex flex-wrap gap-2">
+                      <form method="post" action="/team-center" class="m-0">
+                        <input type="hidden" name="action" value="approve_team_claim">
+                        <input type="hidden" name="request_id" value="{escape(item['request_id'])}">
+                        <button type="submit" class="btn btn-sm btn-dark">通过</button>
+                      </form>
+                      <form method="post" action="/team-center" class="m-0">
+                        <input type="hidden" name="action" value="reject_team_claim">
+                        <input type="hidden" name="request_id" value="{escape(item['request_id'])}">
+                        <button type="submit" class="btn btn-sm btn-outline-danger">拒绝</button>
+                      </form>
+                    </div>
+                  </td>
+                </tr>
+                """
+            )
+    team_claim_panel = ""
+    if team_claim_rows:
+        team_claim_panel = f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mt-4">
+          <h2 class="section-title mb-2">待审核的战队认领申请</h2>
+          <p class="section-copy mb-3">当比赛先录入、战队后补建时，可以在这里把占位战队认领为正式战队。</p>
+          <div class="table-responsive">
+            <table class="table align-middle">
+              <thead>
+                <tr>
+                  <th>申请人</th>
+                  <th>账号</th>
+                  <th>目标战队</th>
+                  <th>赛事赛季</th>
+                  <th>简称</th>
+                  <th>申请时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>{''.join(team_claim_rows)}</tbody>
+            </table>
+          </div>
+        </section>
+        """
 
     if current_player:
         team_card = ""
@@ -419,6 +507,7 @@ def get_team_center_page(
                 f'<option value="{escape(team["team_id"])}">{escape(team["name"])}</option>'
                 for team in teams
                 if team["team_id"] != current_team["team_id"]
+                and not is_placeholder_team(team)
                 and get_team_scope(team) == get_team_scope(current_team)
             )
             transfer_panel = (
@@ -623,6 +712,7 @@ def get_team_center_page(
             </section>
             {captain_panel}
             {season_team_manage_panel}
+            {team_claim_panel}
             """
         else:
             team_card = """
@@ -631,7 +721,11 @@ def get_team_center_page(
         return layout("战队操作", team_card, ctx, alert=alert)
 
     if current_request:
-        request_kind = "加入申请" if current_request["request_type"] == "join" else "转会申请"
+        request_kind = {
+            "join": "加入申请",
+            "transfer": "转会申请",
+            "team_claim": "战队认领申请",
+        }.get(current_request["request_type"], "申请")
         target_team = get_team_by_id(data, current_request["target_team_id"])
         pending_body = f"""
         <section class="hero p-4 p-md-5 shadow-lg mb-4">
@@ -656,6 +750,7 @@ def get_team_center_page(
     </section>
     {identity_panel}
     {season_team_manage_panel}
+    {team_claim_panel}
     """
     return layout("战队操作", body, ctx, alert=alert)
 
@@ -702,10 +797,60 @@ def handle_team_center(ctx: RequestContext, start_response):
         team_name = form_value(ctx.form, "team_name").strip()
         short_name = form_value(ctx.form, "short_name").strip()
         notes = form_value(ctx.form, "notes").strip()
+        placeholder_team = find_team_by_name_in_scope(data, competition_name, season_name, team_name)
         if selected_scope not in valid_scope_values:
             error = "请从正在进行中的赛季列表里选择要创建战队的赛事。"
         elif user_has_team_identity_in_scope(data, current_user, competition_name, season_name):
             error = "当前账号在这个赛事赛季里已经绑定了队员身份，不能重复创建战队。"
+        elif placeholder_team and is_placeholder_team(placeholder_team):
+            error = validate_team_creation(
+                team_name,
+                short_name,
+                competition_name,
+                season_name,
+                [team for team in data["teams"] if team["team_id"] != placeholder_team["team_id"]],
+            )
+            if error:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_team_center_page(
+                        ctx,
+                        alert=error,
+                        create_values={
+                            "scope": selected_scope,
+                            "name": team_name,
+                            "short_name": short_name,
+                            "notes": notes,
+                        },
+                    ),
+                )
+            requests.append(
+                {
+                    "request_id": secrets.token_urlsafe(12),
+                    "request_type": "team_claim",
+                    "username": username,
+                    "display_name": display_name,
+                    "player_id": None,
+                    "source_team_id": None,
+                    "target_team_id": placeholder_team["team_id"],
+                    "target_guild_id": "",
+                    "scope_competition_name": competition_name,
+                    "scope_season_name": season_name,
+                    "request_payload": {
+                        "team_name": team_name,
+                        "short_name": short_name,
+                        "notes": notes,
+                    },
+                    "created_on": china_now_label(),
+                }
+            )
+            save_membership_requests(requests)
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="同一赛季内不允许重名战队。当前赛季已存在同名占位战队，已转为认领申请，请等待管理员或赛事管理员审批。"),
+            )
         else:
             error = validate_team_creation(
                 team_name,
@@ -751,6 +896,8 @@ def handle_team_center(ctx: RequestContext, start_response):
                 "short_name": short_name,
                 "logo": DEFAULT_TEAM_LOGO,
                 "active": True,
+                "is_placeholder_team": False,
+                "placeholder_source_name": None,
                 "founded_on": china_today_label(),
                 "competition_name": competition_name,
                 "season_name": season_name,
@@ -857,6 +1004,12 @@ def handle_team_center(ctx: RequestContext, start_response):
                 "200 OK",
                 get_team_center_page(ctx, alert="没有找到目标战队。"),
             )
+        if is_placeholder_team(target_team):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="目标战队还是未认领的占位战队，暂时不能发起转会，请等待战队负责人先完成认领。"),
+            )
         if get_team_scope(target_team) != get_team_scope(current_team):
             return start_response_html(
                 start_response,
@@ -883,6 +1036,99 @@ def handle_team_center(ctx: RequestContext, start_response):
             start_response,
             "200 OK",
             get_team_center_page(ctx, alert="转会申请已提交，等待目标战队队长审核。"),
+        )
+
+    if action in {"approve_team_claim", "reject_team_claim"}:
+        request_id = form_value(ctx.form, "request_id").strip()
+        request_item = next(
+            (item for item in requests if item.get("request_id") == request_id and item.get("request_type") == "team_claim"),
+            None,
+        )
+        if not request_item:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="没有找到对应的战队认领申请。"),
+            )
+        target_team = get_team_by_id(data, request_item.get("target_team_id") or "")
+        if not can_review_team_claim_request(data, current_user, target_team):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">你没有权限审核这条战队认领申请。</div>', ctx),
+            )
+        if action == "reject_team_claim":
+            requests = [item for item in requests if item.get("request_id") != request_id]
+            save_membership_requests(requests)
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="战队认领申请已拒绝。"),
+            )
+        requester = next((user for user in users if user["username"] == request_item["username"]), None)
+        if not requester or not target_team or not is_placeholder_team(target_team):
+            requests = [item for item in requests if item.get("request_id") != request_id]
+            save_membership_requests(requests)
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="战队认领申请对应的数据已失效，申请已移除。"),
+            )
+        competition_name, season_name = get_team_scope(target_team)
+        if user_has_team_identity_in_scope(data, requester, competition_name, season_name):
+            requests = [item for item in requests if item.get("request_id") != request_id]
+            save_membership_requests(requests)
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="该账号在当前赛事赛季里已经有战队身份，申请已移除。"),
+            )
+        payload = request_item.get("request_payload", {})
+        captain_player = find_player_by_name_in_scope(
+            data,
+            competition_name,
+            season_name,
+            requester.get("display_name") or requester["username"],
+        )
+        if captain_player and captain_player["team_id"] != target_team["team_id"]:
+            captain_player = None
+        if captain_player is None:
+            player_id = build_unique_slug(existing_player_ids, "player", requester["username"], "player")
+            captain_player = build_placeholder_player(
+                player_id,
+                target_team["team_id"],
+                competition_name,
+                season_name,
+                display_name=requester.get("display_name") or requester["username"],
+            )
+            captain_player["notes"] = "经管理员审核通过后认领占位战队时创建的队长档案。"
+            data["players"].append(captain_player)
+            if player_id not in target_team["members"]:
+                target_team["members"].append(player_id)
+        users = remove_placeholder_owner(users, captain_player["player_id"])
+        users = append_user_player_binding(users, requester["username"], captain_player["player_id"])
+        target_team["name"] = str(payload.get("team_name") or target_team["name"]).strip() or target_team["name"]
+        target_team["short_name"] = str(payload.get("short_name") or target_team["short_name"]).strip() or target_team["short_name"]
+        target_team["notes"] = str(payload.get("notes") or target_team["notes"]).strip() or target_team["notes"]
+        target_team["active"] = True
+        target_team["is_placeholder_team"] = False
+        target_team["placeholder_source_name"] = None
+        target_team["captain_player_id"] = captain_player["player_id"]
+        if captain_player["player_id"] not in target_team["members"]:
+            target_team["members"].insert(0, captain_player["player_id"])
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="通过认领申请失败：" + "；".join(errors[:3])),
+            )
+        requests = [item for item in requests if item.get("request_id") != request_id]
+        save_membership_requests(requests)
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert=f"已通过 {target_team['name']} 的战队认领申请。"),
         )
 
     if action == "cancel_request":
@@ -1036,22 +1282,46 @@ def handle_team_center(ctx: RequestContext, start_response):
                     "200 OK",
                     get_team_center_page(ctx, alert="该账号在当前赛事赛季里已经加入其他战队，申请已移除。"),
                 )
-            player_id = build_unique_slug(existing_player_ids, "player", requester["username"], "player")
-            current_team["members"].append(player_id)
+            existing_player = find_player_by_name_in_scope(
+                data,
+                request_competition_name,
+                request_season_name,
+                requester.get("display_name") or requester["username"],
+            )
+            if existing_player and existing_player["team_id"] != current_team["team_id"]:
+                requests = [item for item in requests if item["request_id"] != request_id]
+                save_membership_requests(requests)
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_team_center_page(
+                        ctx,
+                        alert=f"同一赛季内不允许重名选手。{existing_player['display_name']} 已存在于本赛季其他战队，申请已移除。",
+                    ),
+                )
+            if existing_player:
+                player_id = existing_player["player_id"]
+                existing_player["team_id"] = current_team["team_id"]
+                existing_player["active"] = True
+            else:
+                player_id = build_unique_slug(existing_player_ids, "player", requester["username"], "player")
+                data["players"].append(
+                    {
+                        "player_id": player_id,
+                        "display_name": requester.get("display_name") or requester["username"],
+                        "team_id": current_team["team_id"],
+                        "photo": DEFAULT_PLAYER_PHOTO,
+                        "aliases": [],
+                        "active": True,
+                        "joined_on": china_today_label(),
+                        "notes": f"经战队队长审核通过后加入战队：{team_scope_label(current_team)}。",
+                    }
+                )
+            if player_id not in current_team["members"]:
+                current_team["members"].append(player_id)
             if not current_team.get("captain_player_id"):
                 current_team["captain_player_id"] = current_player["player_id"]
-            data["players"].append(
-                {
-                    "player_id": player_id,
-                    "display_name": requester.get("display_name") or requester["username"],
-                    "team_id": current_team["team_id"],
-                    "photo": DEFAULT_PLAYER_PHOTO,
-                    "aliases": [],
-                    "active": True,
-                    "joined_on": china_today_label(),
-                    "notes": f"经战队队长审核通过后加入战队：{team_scope_label(current_team)}。",
-                }
-            )
+            users = remove_placeholder_owner(users, player_id)
             users = append_user_player_binding(users, requester["username"], player_id)
         else:
             transfer_player = next((item for item in data["players"] if item["player_id"] == request_item["player_id"]), None)

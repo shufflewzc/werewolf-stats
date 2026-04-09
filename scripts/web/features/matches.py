@@ -93,8 +93,27 @@ def build_placeholder_match(
     match["mvp_player_id"] = ""
     match["svp_player_id"] = ""
     match["scapegoat_player_id"] = ""
+    match["mvp_player_name"] = ""
+    match["svp_player_name"] = ""
+    match["scapegoat_player_name"] = ""
     match["notes"] = "批量创建的待补录比赛，请稍后完善比赛详情。"
+    match["players"] = []
     return match
+
+
+def ensure_match_form_players(current: dict[str, object]) -> dict[str, object]:
+    participants = current.get("players")
+    if isinstance(participants, list) and participants:
+        return current
+    editable_match = build_empty_match(
+        str(current.get("competition_name") or ""),
+        str(current.get("season") or ""),
+    )
+    return {
+        **editable_match,
+        **current,
+        "players": editable_match["players"],
+    }
 
 
 def build_batch_create_form(
@@ -263,6 +282,16 @@ def parse_excel_float(value: str, field_label: str) -> float:
         raise ValueError(f"{field_label} 需要填写数字。") from exc
 
 
+def parse_excel_optional_int(value: str, default: int) -> int:
+    raw = value.strip()
+    if not raw:
+        return default
+    try:
+        return int(float(raw))
+    except ValueError as exc:
+        raise ValueError("需要填写整数。") from exc
+
+
 def build_match_from_excel_rows(
     match_row: dict[str, str],
     player_rows: list[dict[str, str]],
@@ -281,8 +310,14 @@ def build_match_from_excel_rows(
     match["played_on"] = match_row.get("played_on", "").strip()
     match["table_label"] = match_row.get("table_label", "").strip()
     match["format"] = match_row.get("format", "").strip()
-    match["duration_minutes"] = parse_excel_int(match_row.get("duration_minutes", ""), "duration_minutes")
-    match["winning_camp"] = match_row.get("winning_camp", "").strip()
+    is_placeholder_match = match["format"] == "待补录"
+    match["duration_minutes"] = parse_excel_optional_int(
+        match_row.get("duration_minutes", ""),
+        0 if is_placeholder_match else 60,
+    )
+    match["winning_camp"] = (
+        match_row.get("winning_camp", "").strip() or ("draw" if is_placeholder_match else "")
+    )
     match["mvp_player_id"] = match_row.get("mvp_player_id", "").strip()
     match["svp_player_id"] = match_row.get("svp_player_id", "").strip()
     match["scapegoat_player_id"] = match_row.get("scapegoat_player_id", "").strip()
@@ -360,7 +395,12 @@ def import_matches_from_excel(
         competition_error = validate_match_competition_selection(data, competition_name)
         if competition_error:
             return None, competition_error
-        season_error = validate_match_season_selection(data, competition_name, season_name)
+        season_error = validate_match_season_selection(
+            data,
+            competition_name,
+            season_name,
+            include_non_ongoing=True,
+        )
         if season_error:
             return None, season_error
         resolution_errors = resolve_match_entities(data, [current_match])
@@ -497,6 +537,7 @@ def build_match_season_field(
         season_names = list_seasons(
             data,
             entry["competition_name"],
+            include_non_ongoing=True,
             selected_season=current_season_name if entry["competition_name"] == current_competition_name else "",
         )
         if season_names:
@@ -507,7 +548,7 @@ def build_match_season_field(
     return f"""
     <div class="match-season-picker" data-season-map='{selected_json}'>
       <select class="form-select" name="season" required data-match-season-select data-selected="{escape(current_season_name)}"></select>
-      <div class="small text-secondary mt-2" data-match-season-helper>只显示当前正在进行中的赛季；赛季需要先在系列赛管理里配置起止时间。</div>
+      <div class="small text-secondary mt-2" data-match-season-helper>显示该系列赛下已配置的全部赛季，未开始赛季也可以提前创建待补录比赛。</div>
     </div>
     <script>
       (function() {{
@@ -957,10 +998,10 @@ def get_match_edit_page(
     ):
         return layout("没有权限", '<div class="alert alert-danger">你不能编辑这个地区系列赛下的比赛。</div>', ctx)
 
-    current = field_values or match
+    current = ensure_match_form_players(field_values or match)
     next_path = form_value(ctx.query, "next", "/dashboard")
     match_code_hint = current.get("match_id", match_id)
-    return render_match_form_page(
+    form_html = render_match_form_page(
         ctx,
         current,
         f"/matches/{match_id}/edit?next={quote(next_path)}",
@@ -971,6 +1012,14 @@ def get_match_edit_page(
         match_code_hint,
         alert=alert,
     )
+    excel_panel_html = build_excel_import_panel()
+    if '<section class="form-panel' not in form_html:
+        return form_html
+    return form_html.replace(
+        '<section class="form-panel',
+        f"{excel_panel_html}<section class=\"form-panel",
+        1,
+    )
 
 
 def get_match_create_page(
@@ -979,10 +1028,10 @@ def get_match_create_page(
     field_values: dict[str, object] | None = None,
     batch_form_values: dict[str, str] | None = None,
 ) -> str:
-    current = field_values or build_empty_match(
+    current = ensure_match_form_players(field_values or build_empty_match(
         form_value(ctx.query, "competition").strip(),
         form_value(ctx.query, "season").strip(),
-    )
+    ))
     if current.get("competition_name"):
         data = load_validated_data()
         if ctx.current_user and not can_manage_matches(
@@ -1074,6 +1123,7 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
         updated_match["competition_name"],
         updated_match["season"],
         existing_season_name=(match.get("season") or "").strip(),
+        include_non_ongoing=True,
     )
     if season_error:
         return start_response_html(
@@ -1157,7 +1207,12 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=competition_error, batch_form_values=batch_form_values),
             )
-        season_error = validate_match_season_selection(data, competition_name, season_name)
+        season_error = validate_match_season_selection(
+            data,
+            competition_name,
+            season_name,
+            include_non_ongoing=True,
+        )
         if season_error:
             return start_response_html(
                 start_response,
@@ -1269,6 +1324,7 @@ def handle_match_create(ctx: RequestContext, start_response):
         data,
         new_match["competition_name"],
         new_match["season"],
+        include_non_ongoing=True,
     )
     if season_error:
         return start_response_html(

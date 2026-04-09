@@ -861,6 +861,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         if is_admin_user(ctx.current_user):
             nav_links.append('<a class="nav-link nav-pill px-0" href="/accounts">账号管理</a>')
             nav_links.append('<a class="nav-link nav-pill px-0" href="/permissions">权限控制</a>')
+            nav_links.append('<a class="nav-link nav-pill px-0" href="/team-admin">战队管理</a>')
     else:
         nav_links = [
             '<a class="nav-link nav-pill px-0" href="/dashboard">首页</a>',
@@ -2614,12 +2615,17 @@ def parse_team_scope_value(value: str) -> tuple[str, str]:
     return competition_name.strip(), season_name.strip()
 
 
-def list_ongoing_team_scopes(data: dict[str, Any]) -> list[dict[str, str]]:
+def list_team_scopes(
+    data: dict[str, Any],
+    allowed_statuses: set[str] | None = None,
+) -> list[dict[str, str]]:
     season_catalog = load_season_catalog(data)
     series_catalog = load_series_catalog(data)
+    effective_statuses = allowed_statuses or {"ongoing"}
     scopes: list[dict[str, str]] = []
     for season_entry in season_catalog:
-        if get_season_status(season_entry) != "ongoing":
+        season_status = get_season_status(season_entry)
+        if season_status not in effective_statuses:
             continue
         for competition_entry in series_catalog:
             if competition_entry["series_slug"] != season_entry["series_slug"]:
@@ -2631,6 +2637,7 @@ def list_ongoing_team_scopes(data: dict[str, Any]) -> list[dict[str, str]]:
                     "value": build_team_scope_value(competition_name, season_name),
                     "competition_name": competition_name,
                     "season_name": season_name,
+                    "status": season_status,
                     "label": (
                         f"{competition_entry['series_name']} · {competition_name} · {season_name}"
                     ),
@@ -2638,6 +2645,10 @@ def list_ongoing_team_scopes(data: dict[str, Any]) -> list[dict[str, str]]:
             )
     scopes.sort(key=lambda item: (item["competition_name"], item["season_name"]))
     return scopes
+
+
+def list_ongoing_team_scopes(data: dict[str, Any]) -> list[dict[str, str]]:
+    return list_team_scopes(data, {"ongoing"})
 
 
 def build_scope_query(
@@ -4151,6 +4162,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         return layout("未找到战队", '<div class="alert alert-danger">没有找到对应的战队。</div>', ctx)
     current_player = get_user_player(data, ctx.current_user)
     can_manage_team_profile = can_manage_team(ctx, team, current_player)
+    can_delete_team = bool(ctx.current_user and is_admin_user(ctx.current_user))
     team_competition_name, team_season_name = get_team_scope(team)
     team_status = get_team_season_status(data, team)
     team_status_label = get_team_season_status_label(team_status)
@@ -4172,6 +4184,18 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
           <h2 class="section-title mb-2">战队图标</h2>
           <p class="section-copy mb-3">当前队标会出现在战队页面和后续战队展示卡片中。</p>
           <div class="small text-secondary mb-3">当前路径：{escape(team['logo'])}</div>
+          {(
+            f'''
+            <form method="post" action="/team-center" class="mb-3">
+              <input type="hidden" name="action" value="delete_team">
+              <input type="hidden" name="team_id" value="{escape(team_id)}">
+              <button type="submit" class="btn btn-outline-danger">管理员删除战队</button>
+              <div class="small text-secondary mt-2">仅管理员可用。会同时移除该战队下没有历史比赛记录的队员和相关待处理申请。</div>
+            </form>
+            '''
+            if can_delete_team
+            else ''
+          )}
           {(
             f'''
             <form method="post" action="/teams/{escape(team_id)}/logo" enctype="multipart/form-data">
@@ -5709,9 +5733,9 @@ def validate_match_awards(match: dict[str, Any]) -> str:
         return "SVP 必须从本场参赛选手中选择。"
     if mvp_player_id == svp_player_id:
         return "MVP 和 SVP 不能选择同一位选手。"
-    if winning_camp == "villagers":
+    if winning_camp in {"villagers", "third_party", "draw"}:
         if scapegoat_player_id:
-            return "好人胜利时不设置背锅选手。"
+            return "只有狼人胜利时才设置背锅选手。"
         return ""
     if not scapegoat_player_id:
         return "狼人胜利时请选择本场背锅选手。"
@@ -5810,16 +5834,18 @@ def validate_match_season_selection(
     competition_name: str,
     season_name: str,
     existing_season_name: str = "",
+    include_non_ongoing: bool = False,
 ) -> str:
     if not season_name.strip():
         return "请选择赛季。"
     available_seasons = list_seasons(
         data,
         competition_name,
+        include_non_ongoing=include_non_ongoing,
         selected_season=existing_season_name or season_name,
     )
     if season_name not in available_seasons:
-        return "请选择该系列赛当前可录入的赛季。"
+        return "请选择该系列赛已配置的赛季。"
     return ""
 
 
@@ -6398,6 +6424,12 @@ def handle_team_center(ctx: RequestContext, start_response):
     return impl(ctx, start_response)
 
 
+def handle_team_admin(ctx: RequestContext, start_response):
+    from web.features.team_admin import handle_team_admin as impl
+
+    return impl(ctx, start_response)
+
+
 
 def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
     from web.features.matches import handle_match_edit as impl
@@ -6514,6 +6546,11 @@ def app(environ, start_response):
             return handle_player_bindings(ctx, start_response)
         if path == "/team-center":
             return handle_team_center(ctx, start_response)
+        if path == "/team-admin":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_team_admin(ctx, start_response)
         if path == "/series-manage":
             manager_guard = require_series_manager(ctx, start_response)
             if manager_guard is not None:

@@ -13,7 +13,7 @@ SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 MATCH_ID_PATTERN = re.compile(r"^[a-z0-9]{1,6}-[a-z0-9]{1,8}-\d{6}-\d{2}$")
 VALID_STAGES = {"placement", "regular_season", "playoffs", "finals", "showmatch"}
 VALID_CAMPS = {"villagers", "werewolves", "third_party"}
-VALID_WINNING_CAMPS = {"villagers", "werewolves"}
+VALID_WINNING_CAMPS = {"villagers", "werewolves", "third_party"}
 VALID_RESULTS = {"win", "loss"}
 VALID_STANCE_RESULTS = {"correct", "incorrect", "none"}
 VALID_SCORE_MODELS = {"standard", "jingcheng_daily"}
@@ -437,15 +437,22 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         )
         errors.extend(validate_non_empty_string(match.get("format"), f"{label}.format"))
 
+        is_placeholder_match = str(match.get("format") or "").strip() == "待补录"
         winning_camp = match.get("winning_camp")
-        if winning_camp not in VALID_WINNING_CAMPS:
+        valid_winning_camps = (
+            VALID_WINNING_CAMPS | {"draw"} if is_placeholder_match else VALID_WINNING_CAMPS
+        )
+        if winning_camp not in valid_winning_camps:
             errors.append(
-                f"{label}.winning_camp: expected one of {sorted(VALID_WINNING_CAMPS)}"
+                f"{label}.winning_camp: expected one of {sorted(valid_winning_camps)}"
             )
 
         duration_minutes = match.get("duration_minutes")
         if not isinstance(duration_minutes, int) or isinstance(duration_minutes, bool):
             errors.append(f"{label}.duration_minutes: expected integer")
+        elif is_placeholder_match:
+            if duration_minutes < 0:
+                errors.append(f"{label}.duration_minutes: must be >= 0")
         elif duration_minutes < 1:
             errors.append(f"{label}.duration_minutes: must be >= 1")
 
@@ -454,7 +461,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         participant_camps_by_id: dict[str, str] = {}
         if not isinstance(participants, list):
             errors.append(f"{label}.players: expected array")
-        elif not participants:
+        elif not participants and not is_placeholder_match:
             errors.append(f"{label}.players: expected at least one participant")
         else:
             seen_seats: set[int] = set()
@@ -573,15 +580,29 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                     errors.append(f"{participant_label}.notes: expected string")
 
         mvp_player_id = match.get("mvp_player_id")
-        errors.extend(validate_slug(mvp_player_id, f"{label}.mvp_player_id"))
-        if isinstance(mvp_player_id, str) and mvp_player_id not in participant_ids_in_match:
+        if isinstance(mvp_player_id, str) and not mvp_player_id.strip() and is_placeholder_match:
+            pass
+        else:
+            errors.extend(validate_slug(mvp_player_id, f"{label}.mvp_player_id"))
+        if (
+            isinstance(mvp_player_id, str)
+            and mvp_player_id.strip()
+            and mvp_player_id not in participant_ids_in_match
+        ):
             errors.append(
                 f"{label}.mvp_player_id: expected one of this match's participant IDs"
             )
 
         svp_player_id = match.get("svp_player_id")
-        errors.extend(validate_slug(svp_player_id, f"{label}.svp_player_id"))
-        if isinstance(svp_player_id, str) and svp_player_id not in participant_ids_in_match:
+        if isinstance(svp_player_id, str) and not svp_player_id.strip() and is_placeholder_match:
+            pass
+        else:
+            errors.extend(validate_slug(svp_player_id, f"{label}.svp_player_id"))
+        if (
+            isinstance(svp_player_id, str)
+            and svp_player_id.strip()
+            and svp_player_id not in participant_ids_in_match
+        ):
             errors.append(
                 f"{label}.svp_player_id: expected one of this match's participant IDs"
             )
@@ -595,11 +616,13 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             errors.append(f"{label}: mvp_player_id and svp_player_id must be different")
 
         scapegoat_player_id = match.get("scapegoat_player_id")
-        if winning_camp == "villagers":
+        if is_placeholder_match and isinstance(scapegoat_player_id, str) and not scapegoat_player_id.strip():
+            pass
+        elif winning_camp in {"villagers", "third_party"}:
             if not isinstance(scapegoat_player_id, str):
                 errors.append(f"{label}.scapegoat_player_id: expected string")
             elif scapegoat_player_id.strip():
-                errors.append(f"{label}.scapegoat_player_id: must be empty when villagers win")
+                errors.append(f"{label}.scapegoat_player_id: must be empty when non-werewolves win")
         else:
             errors.extend(
                 validate_slug(scapegoat_player_id, f"{label}.scapegoat_player_id")

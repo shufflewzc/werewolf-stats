@@ -38,6 +38,7 @@ is_placeholder_team = legacy.is_placeholder_team
 is_placeholder_user = legacy.is_placeholder_user
 is_team_captain = legacy.is_team_captain
 layout = legacy.layout
+list_team_scopes = legacy.list_team_scopes
 list_ongoing_team_scopes = legacy.list_ongoing_team_scopes
 load_membership_requests = legacy.load_membership_requests
 load_users = legacy.load_users
@@ -90,6 +91,44 @@ def get_team_membership_change_error(
     return ""
 
 
+def get_team_dissolution_error(
+    data: dict[str, Any],
+    team: dict[str, Any] | None,
+    action_label: str = "解散战队",
+) -> str:
+    if not team:
+        return f"当前战队不存在，无法{action_label}。"
+    for member_id in team.get("members", []):
+        if user_has_match_history(data, member_id):
+            return f"当前战队已有成员产生历史比赛记录，不能直接{action_label}，请联系管理员处理历史数据。"
+    return ""
+
+
+def dissolve_team(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    team: dict[str, Any],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    removed_member_ids = set(team.get("members", []))
+    data["players"] = [
+        item for item in data["players"] if item["player_id"] not in removed_member_ids
+    ]
+    data["teams"] = [
+        item for item in data["teams"] if item["team_id"] != team["team_id"]
+    ]
+    for member_id in removed_member_ids:
+        owner_user = get_user_by_player_id(users, member_id)
+        if owner_user:
+            users = remove_user_player_binding(users, owner_user["username"], member_id)
+    requests = [
+        item
+        for item in load_membership_requests()
+        if item.get("target_team_id") != team["team_id"]
+        and item.get("source_team_id") != team["team_id"]
+    ]
+    return users, requests
+
+
 def issue_fresh_team_center_session(
     start_response,
     username: str,
@@ -114,6 +153,16 @@ def can_manage_current_team_members(
         and (
             user_has_permission(current_user, "team_manage")
             or (current_player and is_team_captain(current_team, current_player))
+        )
+    )
+
+
+def can_seed_team_for_scope(current_user: dict[str, Any] | None) -> bool:
+    return bool(
+        current_user
+        and (
+            is_admin_user(current_user)
+            or user_has_permission(current_user, "team_manage")
         )
     )
 
@@ -220,6 +269,24 @@ def handle_leave_team_action(
             "200 OK",
             get_team_center_page(ctx, alert="已有比赛记录时不能直接退出战队，请改用转会申请。"),
         )
+    if is_team_captain(current_team, current_player):
+        dissolution_error = get_team_dissolution_error(data, current_team, "解散战队")
+        if dissolution_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert=dissolution_error),
+            )
+        users, requests = dissolve_team(data, users, current_team)
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="解散战队失败：" + "；".join(errors[:3])),
+            )
+        save_membership_requests(requests)
+        return issue_fresh_team_center_session(start_response, username)
     remove_member_from_team(current_team, current_player["player_id"])
     data["players"] = [item for item in data["players"] if item["player_id"] != current_player["player_id"]]
     users = remove_user_player_binding(users, username, current_player["player_id"])
@@ -257,6 +324,7 @@ def get_team_center_page(
         ),
         None,
     )
+    createable_scopes = list_team_scopes(data, {"ongoing", "upcoming"})
     ongoing_scopes = list_ongoing_team_scopes(data)
     user_scope_keys = {
         build_team_scope_value(*get_team_scope(team))
@@ -264,7 +332,7 @@ def get_team_center_page(
     }
     create_scope_options = "".join(
         f'<option value="{escape(scope["value"])}"{" selected" if create_form["scope"] == scope["value"] else ""}>{escape(scope["label"])}</option>'
-        for scope in ongoing_scopes
+        for scope in createable_scopes
         if scope["value"] not in user_scope_keys
     )
     eligible_join_teams = [
@@ -387,7 +455,7 @@ def get_team_center_page(
                 </form>
                 '''
                 if create_scope_options
-                else '<div class="small text-secondary">当前没有可创建战队的进行中赛季，先让赛事负责人配置赛季档期。</div>'
+                else '<div class="small text-secondary">当前没有可创建战队的赛季。请先让赛事负责人配置赛季档期，并确认赛季状态为未开始或进行中。</div>'
             }
           </div>
         </div>
@@ -773,8 +841,8 @@ def handle_team_center(ctx: RequestContext, start_response):
     current_request = next((item for item in requests if item["username"] == username), None)
     current_team = get_team_for_player(data, current_user and get_user_player(data, current_user))
     current_player = get_user_player(data, current_user)
-    ongoing_scopes = list_ongoing_team_scopes(data)
-    valid_scope_values = {item["value"] for item in ongoing_scopes}
+    creatable_scopes = list_team_scopes(data, {"ongoing", "upcoming"})
+    valid_scope_values = {item["value"] for item in creatable_scopes}
 
     if action == "switch_primary_identity":
         return handle_switch_primary_identity_action(
@@ -794,13 +862,18 @@ def handle_team_center(ctx: RequestContext, start_response):
             )
         selected_scope = form_value(ctx.form, "team_scope").strip()
         competition_name, season_name = parse_team_scope_value(selected_scope)
+        normalized_scope_value = build_team_scope_value(competition_name, season_name)
         team_name = form_value(ctx.form, "team_name").strip()
         short_name = form_value(ctx.form, "short_name").strip()
         notes = form_value(ctx.form, "notes").strip()
+        can_seed_without_binding = can_seed_team_for_scope(current_user)
         placeholder_team = find_team_by_name_in_scope(data, competition_name, season_name, team_name)
-        if selected_scope not in valid_scope_values:
-            error = "请从正在进行中的赛季列表里选择要创建战队的赛事。"
-        elif user_has_team_identity_in_scope(data, current_user, competition_name, season_name):
+        if normalized_scope_value not in valid_scope_values:
+            error = "请从可创建的赛季列表里选择要创建战队的赛事。"
+        elif (
+            user_has_team_identity_in_scope(data, current_user, competition_name, season_name)
+            and not can_seed_without_binding
+        ):
             error = "当前账号在这个赛事赛季里已经绑定了队员身份，不能重复创建战队。"
         elif placeholder_team and is_placeholder_team(placeholder_team):
             error = validate_team_creation(
@@ -818,7 +891,7 @@ def handle_team_center(ctx: RequestContext, start_response):
                         ctx,
                         alert=error,
                         create_values={
-                            "scope": selected_scope,
+                            "scope": normalized_scope_value,
                             "name": team_name,
                             "short_name": short_name,
                             "notes": notes,
@@ -867,7 +940,7 @@ def handle_team_center(ctx: RequestContext, start_response):
                     ctx,
                     alert=error,
                     create_values={
-                        "scope": selected_scope,
+                        "scope": normalized_scope_value,
                         "name": team_name,
                         "short_name": short_name,
                         "notes": notes,
@@ -875,20 +948,31 @@ def handle_team_center(ctx: RequestContext, start_response):
                 ),
             )
 
-        player_id = build_unique_slug(existing_player_ids, "player", username, "player")
         team_id = build_team_serial(data, competition_name, season_name, data["teams"])
-        data["players"].append(
-            {
-                "player_id": player_id,
-                "display_name": display_name,
-                "team_id": team_id,
-                "photo": DEFAULT_PLAYER_PHOTO,
-                "aliases": [],
-                "active": True,
-                "joined_on": china_today_label(),
-                "notes": "网站账号创建战队时自动生成的队员档案。",
-            }
+        should_create_bound_captain = not user_has_team_identity_in_scope(
+            data,
+            current_user,
+            competition_name,
+            season_name,
         )
+        player_id: str | None = None
+        team_alert = ""
+        if should_create_bound_captain:
+            player_id = build_unique_slug(existing_player_ids, "player", username, "player")
+            data["players"].append(
+                {
+                    "player_id": player_id,
+                    "display_name": display_name,
+                    "team_id": team_id,
+                    "photo": DEFAULT_PLAYER_PHOTO,
+                    "aliases": [],
+                    "active": True,
+                    "joined_on": china_today_label(),
+                    "notes": "网站账号创建战队时自动生成的队员档案。",
+                }
+            )
+        else:
+            team_alert = "当前账号在该赛季已有身份，已改为创建待认领战队，不会重复绑定到你的账号。后续可由赛事管理员或队长认领并补充资料。"
         data["teams"].append(
             {
                 "team_id": team_id,
@@ -896,18 +980,24 @@ def handle_team_center(ctx: RequestContext, start_response):
                 "short_name": short_name,
                 "logo": DEFAULT_TEAM_LOGO,
                 "active": True,
-                "is_placeholder_team": False,
-                "placeholder_source_name": None,
+                "is_placeholder_team": not should_create_bound_captain,
+                "placeholder_source_name": team_name if not should_create_bound_captain else None,
                 "founded_on": china_today_label(),
                 "competition_name": competition_name,
                 "season_name": season_name,
                 "guild_id": "",
                 "captain_player_id": player_id,
-                "members": [player_id],
-                "notes": notes or f"由网站账号创建，用于 {competition_name} / {season_name}。",
+                "members": [player_id] if player_id else [],
+                "notes": notes
+                or (
+                    f"由网站账号创建，用于 {competition_name} / {season_name}。"
+                    if should_create_bound_captain
+                    else f"由管理员预创建，等待 {competition_name} / {season_name} 赛季战队负责人认领。"
+                ),
             }
         )
-        users = append_user_player_binding(users, username, player_id)
+        if player_id:
+            users = append_user_player_binding(users, username, player_id)
         errors = save_repository_state(data, users)
         if errors:
             return start_response_html(
@@ -917,17 +1007,17 @@ def handle_team_center(ctx: RequestContext, start_response):
                     ctx,
                     alert="创建战队失败：" + "；".join(errors[:3]),
                     create_values={
-                        "scope": selected_scope,
+                        "scope": normalized_scope_value,
                         "name": team_name,
                         "short_name": short_name,
                         "notes": notes,
                     },
                 ),
             )
-        return redirect(
-            start_response,
-            build_scoped_path(f"/teams/{team_id}", competition_name, season_name),
-        )
+        team_path = build_scoped_path(f"/teams/{team_id}", competition_name, season_name)
+        if team_alert:
+            team_path = f"{team_path}{'&' if '?' in team_path else '?'}notice=seeded"
+        return redirect(start_response, team_path)
 
     if action == "request_join":
         if current_request:
@@ -1210,6 +1300,43 @@ def handle_team_center(ctx: RequestContext, start_response):
             start_response,
             "200 OK",
             get_team_center_page(ctx, alert=f"队员 {member['display_name']} 已从战队移除。"),
+        )
+
+    if action == "delete_team":
+        if not is_admin_user(current_user):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">只有管理员可以删除战队。</div>', ctx),
+            )
+        team_id = form_value(ctx.form, "team_id").strip()
+        team = get_team_by_id(data, team_id)
+        if not team:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="没有找到要删除的战队。"),
+            )
+        dissolution_error = get_team_dissolution_error(data, team, "删除战队")
+        if dissolution_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert=dissolution_error),
+            )
+        users, requests = dissolve_team(data, users, team)
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_center_page(ctx, alert="删除战队失败：" + "；".join(errors[:3])),
+            )
+        save_membership_requests(requests)
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_center_page(ctx, alert=f"战队 {team['name']} 已删除。"),
         )
 
     if action in {"approve_request", "reject_request"}:

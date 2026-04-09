@@ -19,6 +19,7 @@ CAMP_OPTIONS = {
 WINNING_CAMP_OPTIONS = {
     "villagers": "好人阵营",
     "werewolves": "狼人阵营",
+    "third_party": "第三方阵营",
 }
 RESULT_OPTIONS = {
     "win": "胜",

@@ -222,6 +222,43 @@ def get_match_score_model_label(value: str | None) -> str:
     return MATCH_SCORE_MODEL_OPTIONS.get(normalized, MATCH_SCORE_MODEL_OPTIONS[MATCH_SCORE_MODEL_STANDARD])
 
 
+def is_placeholder_match(match: dict[str, Any]) -> bool:
+    return str(match.get("format") or "").strip() == "待补录"
+
+
+def is_match_counted_as_played(match: dict[str, Any]) -> bool:
+    if is_placeholder_match(match):
+        return False
+    return bool(match.get("players"))
+
+
+def parse_match_day(value: str) -> datetime | None:
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def sort_match_days_by_relevance(days: list[str], today_label: str | None = None) -> list[str]:
+    today_value = parse_match_day(today_label or china_today_label())
+    if today_value is None:
+        return sorted(days, reverse=True)
+
+    def sort_key(day: str) -> tuple[int, int, str]:
+        parsed_day = parse_match_day(day)
+        if parsed_day is None:
+            return (10**9, 1, day)
+        delta_days = (parsed_day.date() - today_value.date()).days
+        return (abs(delta_days), 0 if delta_days <= 0 else 1, day)
+
+    return sorted(days, key=sort_key)
+
+
+def get_nearest_match_day_label(days: list[str], today_label: str | None = None) -> str:
+    ordered_days = sort_match_days_by_relevance(days, today_label)
+    return ordered_days[0] if ordered_days else "待更新"
+
+
 def parse_cookies(environ: dict[str, Any]) -> cookies.SimpleCookie[str]:
     jar = cookies.SimpleCookie()
     if environ.get("HTTP_COOKIE"):
@@ -3017,6 +3054,7 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             for match in data["matches"]
             if get_match_competition_name(match) == competition_name
         ]
+        played_matches = [match for match in matches if is_match_counted_as_played(match)]
         series_context = build_series_context_from_competition(competition_name, series_catalog)
         season_entries = get_season_entries_for_series(
             season_catalog,
@@ -3062,7 +3100,7 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "match_count": len(matches),
                 "team_count": max(len(team_ids), len(registered_team_ids)),
                 "player_count": len(player_ids),
-                "latest_played_on": max((match["played_on"] for match in matches), default=""),
+                "latest_played_on": max((match["played_on"] for match in played_matches), default=""),
                 "seasons": seasons,
             }
         )
@@ -3180,8 +3218,8 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         if selected_series_row
         else (featured_competition["competition_name"] if featured_competition else "等待录入赛事")
     )
-    latest_played_on = max(
-        (
+    latest_played_on = get_nearest_match_day_label(
+        [
             match["played_on"]
             for match in stats_data["matches"]
             if (
@@ -3189,8 +3227,8 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
                 if selected_competition
                 else get_match_competition_name(match) in scoped_competition_names
             )
-        ),
-        default="待更新",
+        ],
+        china_today_label(),
     )
     featured_seasons = selected_season or (
         " / ".join((selected_series_row or featured_competition or {}).get("seasons", [])[:2])
@@ -3314,6 +3352,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         )
         if has_match:
             relevant_days.append(played_on)
+    relevant_days = sort_match_days_by_relevance(relevant_days, china_today_label())
 
     recent_day_cards = []
     for played_on in relevant_days[:6]:

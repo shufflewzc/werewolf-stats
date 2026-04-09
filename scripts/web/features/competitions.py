@@ -33,6 +33,8 @@ format_pct = legacy.format_pct
 get_selected_season = legacy.get_selected_season
 get_series_entries_by_slug = legacy.get_series_entries_by_slug
 get_match_competition_name = legacy.get_match_competition_name
+get_nearest_match_day_label = legacy.get_nearest_match_day_label
+is_match_counted_as_played = legacy.is_match_counted_as_played
 get_season_entry = legacy.get_season_entry
 get_season_status = legacy.get_season_status
 get_series_entry_by_competition = legacy.get_series_entry_by_competition
@@ -41,6 +43,7 @@ get_user_player = legacy.get_user_player
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
 list_seasons = legacy.list_seasons
+sort_match_days_by_relevance = legacy.sort_match_days_by_relevance
 load_season_catalog = legacy.load_season_catalog
 load_series_catalog = legacy.load_series_catalog
 load_validated_data = legacy.load_validated_data
@@ -155,7 +158,10 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     series_topic_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_topic_path(competition_meta["series_slug"], selected_season))}">查看系列专题页</a>' if competition_meta else ""
     edit_competition_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_manage_path(selected_competition, current_competition_path, None, "catalog"))}">编辑赛事页信息</a>' if can_edit_selected_competition else ""
     season_manage_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_manage_path(selected_competition, current_competition_path, selected_season, "season"))}">管理赛季档期</a>' if can_manage_selected_seasons else ""
-    latest_played_on = max((match["played_on"] for match in match_rows), default="待更新")
+    latest_played_on = get_nearest_match_day_label(
+        [match["played_on"] for match in match_rows],
+        legacy.china_today_label(),
+    )
     registered_team_ids = season_entry.get("registered_team_ids", []) if season_entry else []
     registered_team_cards = [
         f"""<div class="col-12 col-md-6 col-xl-4"><a class="team-link-card shadow-sm p-3 h-100" href="{escape(build_scoped_path('/teams/' + registered_team_id, selected_competition, selected_season, selected_region, selected_series_slug))}"><div class="d-flex justify-content-between align-items-start gap-3"><div><div class="card-kicker mb-2">已报名战队</div><div class="fw-semibold">{escape(team_lookup[registered_team_id]['name'])}</div></div><span class="chip">查看战队</span></div></a></div>"""
@@ -225,7 +231,10 @@ def get_series_page(ctx: RequestContext, series_slug: str) -> str:
     season_switcher = build_series_season_switcher(series_slug, season_names, selected_season)
     season_switcher_html = f'<div class="hero-switchers mt-4">{season_switcher}</div>' if season_switcher else ""
     region_names = "、".join(sorted({row["region_name"] for row in series_rows}))
-    latest_played_on = max((match["played_on"] for match in filtered_matches), default="待更新")
+    latest_played_on = get_nearest_match_day_label(
+        [match["played_on"] for match in filtered_matches],
+        legacy.china_today_label(),
+    )
     top_player = player_rows[0] if player_rows else None
     region_cards = []
     for row in series_rows:
@@ -568,7 +577,7 @@ def list_match_days(data: dict[str, Any]) -> list[str]:
         {
             str(match.get("played_on") or "").strip()
             for match in data["matches"]
-            if str(match.get("played_on") or "").strip()
+            if str(match.get("played_on") or "").strip() and is_match_counted_as_played(match)
         },
         reverse=True,
     )

@@ -13,6 +13,7 @@ from web_authz import DEFAULT_EVENT_MANAGER_PERMISSION_KEYS
 ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "werewolf_stats.db"
+DEFAULT_USER_PHOTO = "assets/players/default-player.svg"
 
 
 def normalize_stance_result(entry: dict[str, Any]) -> str:
@@ -138,12 +139,11 @@ def create_schema(connection: sqlite3.Connection) -> None:
             manager_scope_keys_json TEXT NOT NULL DEFAULT '[]',
             permissions_json TEXT NOT NULL DEFAULT '[]',
             role TEXT NOT NULL DEFAULT 'member',
-            is_placeholder_account INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder_account IN (0, 1)),
-            placeholder_source_player_id TEXT,
             province_name TEXT NOT NULL DEFAULT '',
             region_name TEXT NOT NULL DEFAULT '',
             gender TEXT NOT NULL DEFAULT '',
-            bio TEXT NOT NULL DEFAULT ''
+            bio TEXT NOT NULL DEFAULT '',
+            photo TEXT NOT NULL DEFAULT 'assets/players/default-player.svg'
         );
 
         CREATE TABLE IF NOT EXISTS app_meta (
@@ -160,6 +160,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             founded_on TEXT NOT NULL,
             leader_username TEXT NOT NULL,
             manager_usernames_json TEXT NOT NULL DEFAULT '[]',
+            honors_json TEXT NOT NULL DEFAULT '[]',
             notes TEXT NOT NULL
         );
 
@@ -169,13 +170,12 @@ def create_schema(connection: sqlite3.Connection) -> None:
             short_name TEXT NOT NULL,
             logo TEXT NOT NULL,
             active INTEGER NOT NULL CHECK (active IN (0, 1)),
-            is_placeholder_team INTEGER NOT NULL DEFAULT 0 CHECK (is_placeholder_team IN (0, 1)),
-            placeholder_source_name TEXT,
             founded_on TEXT NOT NULL,
             competition_name TEXT NOT NULL DEFAULT '',
             season_name TEXT NOT NULL DEFAULT '',
             guild_id TEXT NOT NULL DEFAULT '',
             captain_player_id TEXT,
+            stage_groups_json TEXT NOT NULL DEFAULT '[]',
             notes TEXT NOT NULL
         );
 
@@ -208,6 +208,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             game_no INTEGER NOT NULL,
             score_model TEXT NOT NULL DEFAULT 'standard',
             played_on TEXT NOT NULL,
+            group_label TEXT NOT NULL DEFAULT '',
             table_label TEXT NOT NULL,
             format TEXT NOT NULL,
             duration_minutes INTEGER NOT NULL,
@@ -319,18 +320,16 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         )
     if "province_name" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN province_name TEXT NOT NULL DEFAULT ''")
-    if "is_placeholder_account" not in user_columns:
-        connection.execute(
-            "ALTER TABLE users ADD COLUMN is_placeholder_account INTEGER NOT NULL DEFAULT 0"
-        )
-    if "placeholder_source_player_id" not in user_columns:
-        connection.execute("ALTER TABLE users ADD COLUMN placeholder_source_player_id TEXT")
     if "region_name" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN region_name TEXT NOT NULL DEFAULT ''")
     if "gender" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN gender TEXT NOT NULL DEFAULT ''")
     if "bio" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN bio TEXT NOT NULL DEFAULT ''")
+    if "photo" not in user_columns:
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT 'assets/players/default-player.svg'"
+        )
     guild_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(guilds)").fetchall()
     }
@@ -338,6 +337,10 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         if "manager_usernames_json" not in guild_columns:
             connection.execute(
                 "ALTER TABLE guilds ADD COLUMN manager_usernames_json TEXT NOT NULL DEFAULT '[]'"
+            )
+        if "honors_json" not in guild_columns:
+            connection.execute(
+                "ALTER TABLE guilds ADD COLUMN honors_json TEXT NOT NULL DEFAULT '[]'"
             )
     team_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(teams)").fetchall()
@@ -354,12 +357,10 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE teams ADD COLUMN guild_id TEXT NOT NULL DEFAULT ''")
     if "captain_player_id" not in team_columns:
         connection.execute("ALTER TABLE teams ADD COLUMN captain_player_id TEXT")
-    if "is_placeholder_team" not in team_columns:
+    if "stage_groups_json" not in team_columns:
         connection.execute(
-            "ALTER TABLE teams ADD COLUMN is_placeholder_team INTEGER NOT NULL DEFAULT 0"
+            "ALTER TABLE teams ADD COLUMN stage_groups_json TEXT NOT NULL DEFAULT '[]'"
         )
-    if "placeholder_source_name" not in team_columns:
-        connection.execute("ALTER TABLE teams ADD COLUMN placeholder_source_name TEXT")
     match_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(matches)").fetchall()
     }
@@ -367,6 +368,13 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute("ALTER TABLE matches ADD COLUMN competition_name TEXT")
         connection.execute(
             "UPDATE matches SET competition_name = season WHERE competition_name IS NULL OR competition_name = ''"
+        )
+    if "group_label" not in match_columns:
+        connection.execute(
+            "ALTER TABLE matches ADD COLUMN group_label TEXT NOT NULL DEFAULT ''"
+        )
+        connection.execute(
+            "UPDATE matches SET group_label = 'A组' WHERE group_label IS NULL OR group_label = ''"
         )
     if "mvp_player_id" not in match_columns:
         connection.execute(
@@ -414,6 +422,7 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         )
     backfill_team_scopes(connection)
     backfill_match_awards(connection)
+    backfill_team_claim_captains(connection)
 
 
 def backfill_team_scopes(connection: sqlite3.Connection) -> None:
@@ -526,6 +535,47 @@ def backfill_match_awards(connection: sqlite3.Connection) -> None:
             )
 
 
+def backfill_team_claim_captains(connection: sqlite3.Connection) -> None:
+    user_rows = connection.execute(
+        """
+        SELECT player_id, linked_player_ids_json
+        FROM users
+        """
+    ).fetchall()
+    bound_player_ids: set[str] = set()
+    for row in user_rows:
+        primary_player_id = str(row["player_id"] or "").strip()
+        if primary_player_id:
+            bound_player_ids.add(primary_player_id)
+        try:
+            linked_player_ids = json.loads(row["linked_player_ids_json"] or "[]")
+        except json.JSONDecodeError:
+            linked_player_ids = []
+        for player_id in linked_player_ids:
+            normalized_player_id = str(player_id or "").strip()
+            if normalized_player_id:
+                bound_player_ids.add(normalized_player_id)
+
+    team_rows = connection.execute(
+        """
+        SELECT team_id, captain_player_id
+        FROM teams
+        WHERE captain_player_id IS NOT NULL AND captain_player_id != ''
+        """
+    ).fetchall()
+    stale_team_ids = [
+        row["team_id"]
+        for row in team_rows
+        if str(row["captain_player_id"] or "").strip() not in bound_player_ids
+    ]
+    if not stale_team_ids:
+        return
+    connection.executemany(
+        "UPDATE teams SET captain_player_id = NULL WHERE team_id = ?",
+        [(team_id,) for team_id in stale_team_ids],
+    )
+
+
 def database_is_initialized(connection: sqlite3.Connection) -> bool:
     cursor = connection.execute(
         "SELECT meta_value FROM app_meta WHERE meta_key = 'initialized'"
@@ -558,10 +608,9 @@ def replace_repository_data(
                 INSERT INTO users (
                     username, display_name, password_salt, password_hash, active, player_id,
                     linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
-                    is_placeholder_account, placeholder_source_player_id,
-                    province_name, region_name, gender, bio
+                    province_name, region_name, gender, bio, photo
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["username"],
@@ -574,12 +623,11 @@ def replace_repository_data(
                     json.dumps(user.get("manager_scope_keys", []), ensure_ascii=False),
                     json.dumps(user.get("permissions", []), ensure_ascii=False),
                     user.get("role") or ("admin" if user["username"] == "admin" else "member"),
-                    1 if user.get("is_placeholder_account") else 0,
-                    user.get("placeholder_source_player_id"),
                     user.get("province_name") or "",
                     user.get("region_name") or "",
                     user.get("gender") or "",
                     user.get("bio") or "",
+                    user.get("photo") or DEFAULT_USER_PHOTO,
                 ),
             )
 
@@ -588,9 +636,9 @@ def replace_repository_data(
                 """
                 INSERT INTO guilds (
                     guild_id, name, short_name, logo, active, founded_on,
-                    leader_username, manager_usernames_json, notes
+                    leader_username, manager_usernames_json, honors_json, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     guild["guild_id"],
@@ -601,21 +649,19 @@ def replace_repository_data(
                     guild["founded_on"],
                     guild["leader_username"],
                     json.dumps(guild.get("manager_usernames", []), ensure_ascii=False),
+                    json.dumps(guild.get("honors", []), ensure_ascii=False),
                     guild["notes"],
                 ),
             )
 
         for team in teams:
-            captain_player_id = team.get("captain_player_id")
-            if not captain_player_id and team["members"]:
-                captain_player_id = team["members"][0]
             connection.execute(
                 """
                 INSERT INTO teams (
-                    team_id, name, short_name, logo, active, is_placeholder_team, placeholder_source_name, founded_on,
-                    competition_name, season_name, guild_id, captain_player_id, notes
+                    team_id, name, short_name, logo, active, founded_on,
+                    competition_name, season_name, guild_id, captain_player_id, stage_groups_json, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     team["team_id"],
@@ -623,24 +669,15 @@ def replace_repository_data(
                     team["short_name"],
                     team["logo"],
                     1 if team.get("active") else 0,
-                    1 if team.get("is_placeholder_team") else 0,
-                    team.get("placeholder_source_name"),
                     team["founded_on"],
                     team.get("competition_name", ""),
                     team.get("season_name", ""),
                     team.get("guild_id", ""),
-                    captain_player_id,
+                    team.get("captain_player_id"),
+                    json.dumps(team.get("stage_groups", []), ensure_ascii=False),
                     team["notes"],
                 ),
             )
-            for sort_order, player_id in enumerate(team["members"]):
-                connection.execute(
-                    """
-                    INSERT INTO team_members (team_id, player_id, sort_order)
-                    VALUES (?, ?, ?)
-                    """,
-                    (team["team_id"], player_id, sort_order),
-                )
 
         for player in players:
             connection.execute(
@@ -662,14 +699,24 @@ def replace_repository_data(
                 ),
             )
 
+        for team in teams:
+            for sort_order, player_id in enumerate(team["members"]):
+                connection.execute(
+                    """
+                    INSERT INTO team_members (team_id, player_id, sort_order)
+                    VALUES (?, ?, ?)
+                    """,
+                    (team["team_id"], player_id, sort_order),
+                )
+
         for match in matches:
             connection.execute(
                 """
                 INSERT INTO matches (
-                    match_id, competition_name, season, stage, round, game_no, score_model, played_on, table_label, format,
+                    match_id, competition_name, season, stage, round, game_no, score_model, played_on, group_label, table_label, format,
                     duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     match["match_id"],
@@ -680,6 +727,7 @@ def replace_repository_data(
                     match["game_no"],
                     normalize_match_score_model(match.get("score_model")),
                     match["played_on"],
+                    match.get("group_label", "A组"),
                     match["table_label"],
                     match["format"],
                     match["duration_minutes"],
@@ -771,8 +819,7 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
             """
             SELECT username, display_name, password_salt, password_hash, active, player_id,
                    linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
-                   is_placeholder_account, placeholder_source_player_id,
-                   province_name, region_name, gender, bio
+                   province_name, region_name, gender, bio, photo
             FROM users
             ORDER BY username
             """
@@ -789,12 +836,11 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
                 "manager_scope_keys": json.loads(row["manager_scope_keys_json"] or "[]"),
                 "permissions": json.loads(row["permissions_json"] or "[]"),
                 "role": row["role"] or ("admin" if row["username"] == "admin" else "member"),
-                "is_placeholder_account": bool(row["is_placeholder_account"]),
-                "placeholder_source_player_id": row["placeholder_source_player_id"] or None,
                 "province_name": row["province_name"] or "",
                 "region_name": row["region_name"] or "",
                 "gender": row["gender"] or "",
                 "bio": row["bio"] or "",
+                "photo": row["photo"] or DEFAULT_USER_PHOTO,
             }
             for row in rows
         ]
@@ -831,7 +877,7 @@ def load_guilds(connection: sqlite3.Connection | None = None) -> list[dict[str, 
         rows = connection.execute(
             """
             SELECT guild_id, name, short_name, logo, active, founded_on,
-                   leader_username, manager_usernames_json, notes
+                   leader_username, manager_usernames_json, honors_json, notes
             FROM guilds
             ORDER BY guild_id
             """
@@ -846,6 +892,7 @@ def load_guilds(connection: sqlite3.Connection | None = None) -> list[dict[str, 
                 "founded_on": row["founded_on"],
                 "leader_username": row["leader_username"],
                 "manager_usernames": json.loads(row["manager_usernames_json"] or "[]"),
+                "honors": json.loads(row["honors_json"] or "[]"),
                 "notes": row["notes"],
             }
             for row in rows
@@ -864,8 +911,8 @@ def load_teams(connection: sqlite3.Connection | None = None) -> list[dict[str, A
         require_initialized_database(connection)
         team_rows = connection.execute(
             """
-            SELECT team_id, name, short_name, logo, active, is_placeholder_team, placeholder_source_name, founded_on,
-                   competition_name, season_name, guild_id, captain_player_id, notes
+            SELECT team_id, name, short_name, logo, active, founded_on,
+                   competition_name, season_name, guild_id, captain_player_id, stage_groups_json, notes
             FROM teams
             ORDER BY team_id
             """
@@ -888,13 +935,12 @@ def load_teams(connection: sqlite3.Connection | None = None) -> list[dict[str, A
                 "short_name": row["short_name"],
                 "logo": row["logo"],
                 "active": bool(row["active"]),
-                "is_placeholder_team": bool(row["is_placeholder_team"]),
-                "placeholder_source_name": row["placeholder_source_name"] or None,
                 "founded_on": row["founded_on"],
                 "competition_name": row["competition_name"] or "",
                 "season_name": row["season_name"] or "",
                 "guild_id": row["guild_id"] or "",
-                "captain_player_id": row["captain_player_id"] or (members_by_team.get(row["team_id"], [None])[0]),
+                "captain_player_id": row["captain_player_id"] or None,
+                "stage_groups": json.loads(row["stage_groups_json"] or "[]"),
                 "members": members_by_team.get(row["team_id"], []),
                 "notes": row["notes"],
             }
@@ -946,7 +992,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
         require_initialized_database(connection)
         match_rows = connection.execute(
             """
-            SELECT match_id, competition_name, season, stage, round, game_no, score_model, played_on, table_label, format,
+            SELECT match_id, competition_name, season, stage, round, game_no, score_model, played_on, group_label, table_label, format,
                    duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
             FROM matches
             ORDER BY played_on, round, game_no, match_id
@@ -998,6 +1044,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
                 "game_no": row["game_no"],
                 "score_model": normalize_match_score_model(row["score_model"]),
                 "played_on": row["played_on"],
+                "group_label": row["group_label"] or "A组",
                 "table_label": row["table_label"],
                 "format": row["format"],
                 "duration_minutes": row["duration_minutes"],

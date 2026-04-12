@@ -32,6 +32,7 @@ list_ongoing_team_scopes = legacy.list_ongoing_team_scopes
 load_membership_requests = legacy.load_membership_requests
 load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
+is_admin_user = legacy.is_admin_user
 parse_team_scope_value = legacy.parse_team_scope_value
 parse_username_list_text = legacy.parse_username_list_text
 redirect = legacy.redirect
@@ -44,6 +45,37 @@ user_has_permission = legacy.user_has_permission
 user_has_team_identity_in_scope = legacy.user_has_team_identity_in_scope
 validate_guild_creation = legacy.validate_guild_creation
 validate_team_creation = legacy.validate_team_creation
+
+
+def can_manage_guild_honors(user: dict[str, Any] | None) -> bool:
+    return is_admin_user(user) or user_has_permission(user, "guild_honor_manage")
+
+
+def format_guild_honors_text(honors: list[dict[str, Any]] | None) -> str:
+    rows: list[str] = []
+    for item in honors or []:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()
+        team_name = str(item.get("team_name") or "").strip()
+        scope = str(item.get("scope") or "").strip()
+        if not title and not team_name and not scope:
+            continue
+        rows.append(" | ".join([title, team_name, scope]))
+    return "\n".join(rows)
+
+
+def parse_guild_honors_text(value: str) -> tuple[list[dict[str, str]], str]:
+    honors: list[dict[str, str]] = []
+    for index, raw_line in enumerate(value.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [part.strip() for part in line.split("|")]
+        if len(parts) != 3 or not all(parts):
+            return [], f"第 {index} 行格式不正确，请使用“荣誉标题 | 战队名 | 赛事赛季”。"
+        honors.append({"title": parts[0], "team_name": parts[1], "scope": parts[2]})
+    return honors, ""
 def get_guilds_page(
     ctx: RequestContext,
     alert: str = "",
@@ -106,7 +138,7 @@ def get_guild_join_approval_error(
 ) -> str:
     if not team:
         return "申请对应的战队已经不存在。"
-    if get_team_season_status(data, team) != "ongoing":
+    if get_team_season_status(data, team) == "completed":
         return "当前战队所属赛季已结束，不能再审核入门派申请。"
     current_guild_id = str(team.get("guild_id") or "").strip()
     if current_guild_id and current_guild_id != guild_id:
@@ -120,7 +152,9 @@ def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
     if not guild:
         return layout("未找到门派", '<div class="alert alert-danger">没有找到对应的门派。</div>', ctx)
     manage_mode = form_value(ctx.query, "view").strip() == "manage"
-    if manage_mode and not can_manage_guild(ctx.current_user, guild):
+    can_manage_membership = can_manage_guild(ctx.current_user, guild)
+    can_manage_honors = can_manage_guild_honors(ctx.current_user)
+    if manage_mode and not (can_manage_membership or can_manage_honors):
         return layout("没有权限", '<div class="alert alert-danger">你没有权限管理这个门派。</div>', ctx)
     guild_teams = [
         team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild_id
@@ -301,40 +335,23 @@ def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
         for item in pending_requests
     )
     create_team_panel = ""
-    if manage_mode and can_manage_guild(ctx.current_user, guild):
-        scope_options = "".join(
-            f'<option value="{escape(scope["value"])}">{escape(scope["label"])}</option>'
-            for scope in list_ongoing_team_scopes(data)
-        )
-        create_team_panel = f"""
+    if manage_mode and can_manage_membership:
+        create_team_panel = """
         <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-          <h2 class="section-title mb-2">为门派创建赛季战队</h2>
-          <p class="section-copy mb-4">门主或门派管理员可以直接创建某个正在进行赛季的战队，并指定队长账号。</p>
+          <h2 class="section-title mb-2">赛季战队来源</h2>
+          <p class="section-copy mb-0">赛季战队不再由门派页手动创建。请先由赛事管理员批量创建，或在录入比赛结果时自动生成战队赛季档案；生成后再进入战队页认领、完善资料，并按需加入当前门派。</p>
+        </section>
+        """
+    honor_manage_panel = ""
+    if manage_mode and can_manage_honors:
+        honor_manage_panel = f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <h2 class="section-title mb-2">历届荣誉维护</h2>
+          <p class="section-copy mb-3">每行一条，格式为：荣誉标题 | 战队名 | 赛事赛季。留空保存即可清空。</p>
           <form method="post" action="{manage_post_path}">
-            <input type="hidden" name="action" value="create_guild_team">
-            <div class="row g-3">
-              <div class="col-12">
-                <label class="form-label">赛事赛季</label>
-                <select class="form-select" name="team_scope">{scope_options}</select>
-              </div>
-              <div class="col-12 col-lg-6">
-                <label class="form-label">战队名称</label>
-                <input class="form-control" name="team_name">
-              </div>
-              <div class="col-12 col-lg-6">
-                <label class="form-label">战队简称</label>
-                <input class="form-control" name="short_name">
-              </div>
-              <div class="col-12 col-lg-6">
-                <label class="form-label">队长账号</label>
-                <input class="form-control" name="captain_username" placeholder="留空则默认当前账号">
-              </div>
-              <div class="col-12">
-                <label class="form-label">战队说明</label>
-                <textarea class="form-control" name="notes" rows="3"></textarea>
-              </div>
-            </div>
-            <button type="submit" class="btn btn-dark mt-4">创建门派战队</button>
+            <input type="hidden" name="action" value="update_guild_honors">
+            <textarea class="form-control" name="honors_text" rows="8" placeholder="全国总冠军 | 狼王战队 | 2025 全国总决赛">{escape(format_guild_honors_text(guild.get('honors', [])))}</textarea>
+            <button type="submit" class="btn btn-dark mt-3">保存历届荣誉</button>
           </form>
         </section>
         """
@@ -348,11 +365,12 @@ def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
       <div class="d-flex flex-wrap gap-2 mt-3">
         <a class="btn btn-outline-dark" href="/guilds">返回门派列表</a>
         <a class="btn btn-outline-dark" href="/profile">进入个人中心</a>
-        {f'<a class="btn btn-dark" href="/guilds/{escape(guild_id)}">查看对外页面</a>' if manage_mode else (f'<a class="btn btn-dark" href="/guilds/{escape(guild_id)}?view=manage">管理门派</a>' if can_manage_guild(ctx.current_user, guild) else '')}
+        {f'<a class="btn btn-dark" href="/guilds/{escape(guild_id)}">查看对外页面</a>' if manage_mode else (f'<a class="btn btn-dark" href="/guilds/{escape(guild_id)}?view=manage">管理门派</a>' if (can_manage_membership or can_manage_honors) else '')}
       </div>
     </section>
     {summary_cards_html}
     {create_team_panel}
+    {honor_manage_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <h2 class="section-title mb-3">当前进行中的赛季战队</h2>
       <p class="section-copy mb-3">这里只展示已经加入该门派、且所在赛季仍在进行中的战队。历届赛季战队默认折叠，可按需展开查看。</p>
@@ -380,7 +398,7 @@ def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
         </div>
       </section>
       '''
-      if manage_mode and pending_requests and can_manage_guild(ctx.current_user, guild)
+      if manage_mode and pending_requests and can_manage_membership
       else ''
     )}
     """
@@ -450,6 +468,7 @@ def handle_guilds(ctx: RequestContext, start_response):
                 "founded_on": china_today_label(),
                 "leader_username": ctx.current_user["username"],
                 "manager_usernames": manager_usernames,
+                "honors": [],
                 "notes": notes or "由网站创建的长期门派组织。",
             }
         )
@@ -479,7 +498,7 @@ def handle_guilds(ctx: RequestContext, start_response):
                 "200 OK",
                 get_team_page(ctx, team_id, alert="当前战队已经加入门派。"),
             )
-        if get_team_season_status(data, team) != "ongoing":
+        if get_team_season_status(data, team) == "completed":
             return start_response_html(
                 start_response,
                 "200 OK",
@@ -490,7 +509,7 @@ def handle_guilds(ctx: RequestContext, start_response):
             return start_response_html(
                 start_response,
                 "403 Forbidden",
-                layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、战队队长或管理员可以申请加入门派。</div>', ctx),
+                layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、已认领该战队的负责人或管理员可以申请加入门派。</div>', ctx),
             )
         requests = load_membership_requests()
         if any(
@@ -552,97 +571,46 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
         )
 
     action = form_value(ctx.form, "action").strip()
+    can_manage_membership = can_manage_guild(ctx.current_user, guild)
+    can_manage_honors = can_manage_guild_honors(ctx.current_user)
     if action == "create_guild_team":
-        if not can_manage_guild(ctx.current_user, guild):
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_guild_page(ctx, guild_id, alert="赛季战队不再从门派页手动创建，请先由赛事管理员批量创建，或在录入比赛结果后自动生成。"),
+        )
+
+    if action == "update_guild_honors":
+        if not can_manage_honors:
             return start_response_html(
                 start_response,
                 "403 Forbidden",
-                layout("没有权限", '<div class="alert alert-danger">只有门主、门派管理员或管理员可以创建门派战队。</div>', ctx),
+                layout("没有权限", '<div class="alert alert-danger">只有管理员或被授予门派荣誉维护权限的账号可以编辑历届荣誉。</div>', ctx),
             )
-        selected_scope = form_value(ctx.form, "team_scope").strip()
-        competition_name, season_name = parse_team_scope_value(selected_scope)
-        team_name = form_value(ctx.form, "team_name").strip()
-        short_name = form_value(ctx.form, "short_name").strip()
-        captain_username = form_value(ctx.form, "captain_username").strip() or ctx.current_user["username"]
-        notes = form_value(ctx.form, "notes").strip()
-        captain_user = next((user for user in users if user["username"] == captain_username), None)
-        if not captain_user:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="指定的队长账号不存在。"),
-            )
-        if selected_scope not in {scope["value"] for scope in list_ongoing_team_scopes(data)}:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="请为门派战队选择一个正在进行中的赛季。"),
-            )
-        if user_has_team_identity_in_scope(data, captain_user, competition_name, season_name):
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="指定的队长账号在这个赛事赛季里已经有战队身份。"),
-            )
-        error = validate_team_creation(
-            team_name,
-            short_name,
-            competition_name,
-            season_name,
-            data["teams"],
-        )
+        honors_text = form_value(ctx.form, "honors_text")
+        honors, error = parse_guild_honors_text(honors_text)
         if error:
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_guild_page(ctx, guild_id, alert=error),
             )
-        existing_player_ids = {player["player_id"] for player in data["players"]}
-        player_id = build_unique_slug(existing_player_ids, "player", captain_username, "player")
-        team_id = build_team_serial(data, competition_name, season_name, data["teams"])
-        data["players"].append(
-            {
-                "player_id": player_id,
-                "display_name": captain_user.get("display_name") or captain_username,
-                "team_id": team_id,
-                "photo": DEFAULT_PLAYER_PHOTO,
-                "aliases": [],
-                "active": True,
-                "joined_on": china_today_label(),
-                "notes": f"由门派 {guild['name']} 创建的赛季战队队长身份。",
-            }
-        )
-        data["teams"].append(
-            {
-                "team_id": team_id,
-                "name": team_name,
-                "short_name": short_name,
-                "logo": DEFAULT_TEAM_LOGO,
-                "active": True,
-                "founded_on": china_today_label(),
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "guild_id": guild_id,
-                "captain_player_id": player_id,
-                "members": [player_id],
-                "notes": notes or f"由门派 {guild['name']} 创建。",
-            }
-        )
-        users = append_user_player_binding(users, captain_username, player_id)
+        guild["honors"] = honors
         errors = save_repository_state(data, users)
         if errors:
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_guild_page(ctx, guild_id, alert="创建门派战队失败：" + "；".join(errors[:3])),
+                get_guild_page(ctx, guild_id, alert="保存门派荣誉失败：" + "；".join(errors[:3])),
             )
-        return redirect(
+        return start_response_html(
             start_response,
-            build_scoped_path(f"/teams/{team_id}", competition_name, season_name),
+            "200 OK",
+            get_guild_page(ctx, guild_id, alert="门派历届荣誉已更新。"),
         )
 
     if action in {"approve_guild_join", "reject_guild_join"}:
-        if not can_manage_guild(ctx.current_user, guild):
+        if not can_manage_membership:
             return start_response_html(
                 start_response,
                 "403 Forbidden",

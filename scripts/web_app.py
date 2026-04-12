@@ -259,6 +259,28 @@ def get_nearest_match_day_label(days: list[str], today_label: str | None = None)
     return ordered_days[0] if ordered_days else "待更新"
 
 
+def competition_latest_day_sort_key(row: dict[str, Any]) -> tuple[int, str, str]:
+    latest_played_on = str(row.get("latest_played_on") or "").strip()
+    parsed_day = parse_match_day(latest_played_on)
+    if parsed_day is None:
+        return (0, "", str(row.get("competition_name") or ""))
+    return (1, latest_played_on, str(row.get("competition_name") or ""))
+
+
+def get_scheduled_match_day_label(
+    matches: list[dict[str, Any]],
+    today_label: str | None = None,
+) -> str:
+    return get_nearest_match_day_label(
+        [
+            str(match.get("played_on") or "").strip()
+            for match in matches
+            if str(match.get("played_on") or "").strip()
+        ],
+        today_label,
+    )
+
+
 def parse_cookies(environ: dict[str, Any]) -> cookies.SimpleCookie[str]:
     jar = cookies.SimpleCookie()
     if environ.get("HTTP_COOKIE"):
@@ -659,10 +681,6 @@ def can_manage_matches(
     )
 
 
-def is_placeholder_team(team: dict[str, Any] | None) -> bool:
-    return bool(team and team.get("is_placeholder_team"))
-
-
 def can_access_series_management(user: dict[str, Any] | None) -> bool:
     if is_admin_user(user):
         return True
@@ -889,10 +907,10 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             '<a class="nav-link nav-pill px-0" href="/competitions">比赛页面</a>',
             '<a class="nav-link nav-pill px-0" href="/guilds">门派</a>',
             '<a class="nav-link nav-pill px-0" href="/profile">个人中心</a>',
-            '<a class="nav-link nav-pill px-0" href="/team-center">战队操作</a>',
+            '<a class="nav-link nav-pill px-0" href="/team-center">战队认领</a>',
         ]
         if can_manage_matches(ctx.current_user):
-            nav_links.append('<a class="nav-link nav-pill px-0" href="/matches/new">录入比赛</a>')
+            nav_links.append('<a class="nav-link nav-pill px-0" href="/matches/new">比赛管理</a>')
         if can_access_series_management(ctx.current_user):
             nav_links.append('<a class="nav-link nav-pill px-0" href="/series-manage">系列赛管理</a>')
         if is_admin_user(ctx.current_user):
@@ -1682,25 +1700,16 @@ def get_user_by_player_id(users: list[dict[str, Any]], player_id: str) -> dict[s
     return None
 
 
-def is_placeholder_user(user: dict[str, Any] | None) -> bool:
-    return bool(user and user.get("is_placeholder_account"))
-
-
 def get_user_badge_label(user: dict[str, Any] | None) -> str:
     if not user:
         return "未绑定账号"
-    if is_placeholder_user(user):
-        return f"{user['username']}（未注册账号）"
     return user["username"]
 
 
 def get_user_display_name_label(user: dict[str, Any] | None) -> str:
     if not user:
         return "无"
-    base_label = str(user.get("display_name") or user["username"])
-    if is_placeholder_user(user):
-        return f"{base_label}（未注册）"
-    return base_label
+    return str(user.get("display_name") or user["username"])
 
 
 def ensure_player_asset_dirs() -> None:
@@ -1799,22 +1808,10 @@ def can_manage_player_bindings(
         return False
     if target_user and acting_user["username"] == target_user["username"]:
         return True
-    if is_admin_user(acting_user) or user_has_permission(acting_user, "player_binding_manage"):
-        return True
-    captained_team_ids = get_user_captained_team_ids(data, acting_user)
-    if not captained_team_ids:
-        return False
-    if source_player and source_player.get("team_id") in captained_team_ids:
-        return True
-    if target_user:
-        target_bound_ids = set(get_user_bound_player_ids(target_user))
-        for player in data["players"]:
-            if (
-                player["player_id"] in target_bound_ids
-                and player.get("team_id") in captained_team_ids
-            ):
-                return True
-    return False
+    return bool(
+        is_admin_user(acting_user)
+        or user_has_permission(acting_user, "player_binding_manage")
+    )
 
 
 def build_placeholder_player(
@@ -1833,8 +1830,8 @@ def build_placeholder_player(
         "active": True,
         "joined_on": china_today_label(),
         "notes": (
-            f"比赛录入时自动预留的参赛ID档案：{competition_name} · {season_name}。"
-            " 等待选手注册后绑定认领。"
+            f"比赛录入时自动创建的赛季队员档案：{competition_name} · {season_name}。"
+            " 后续可由账号绑定到该赛季档案。"
         ),
     }
 
@@ -1846,22 +1843,45 @@ def build_placeholder_team(
     season_name: str,
 ) -> dict[str, Any]:
     normalized_name = team_name.strip()
-    short_name = normalized_name[:12] if normalized_name else "待认领战队"
+    short_name = normalized_name[:12] if normalized_name else "赛季战队"
     return {
         "team_id": team_id,
         "name": normalized_name or team_id,
         "short_name": short_name,
         "logo": DEFAULT_TEAM_LOGO,
-        "active": False,
+        "active": True,
         "founded_on": china_today_label(),
         "competition_name": competition_name,
         "season_name": season_name,
         "guild_id": "",
         "captain_player_id": None,
+        "stage_groups": [],
         "members": [],
-        "notes": f"比赛录入时自动预创建的占位战队：{competition_name} / {season_name}，待后续认领。",
-        "is_placeholder_team": True,
-        "placeholder_source_name": normalized_name or team_id,
+        "notes": f"比赛录入时自动创建的赛季战队档案：{competition_name} / {season_name}。",
+    }
+
+
+def normalize_team_stage_groups(team: dict[str, Any] | None) -> list[dict[str, str]]:
+    normalized_rows: list[dict[str, str]] = []
+    seen_stages: set[str] = set()
+    if not team:
+        return normalized_rows
+    for item in team.get("stage_groups", []) or []:
+        if not isinstance(item, dict):
+            continue
+        stage = str(item.get("stage") or "").strip()
+        group_label = str(item.get("group_label") or "").strip()
+        if stage not in STAGE_OPTIONS or not group_label or stage in seen_stages:
+            continue
+        seen_stages.add(stage)
+        normalized_rows.append({"stage": stage, "group_label": group_label})
+    return normalized_rows
+
+
+def get_team_stage_group_map(team: dict[str, Any] | None) -> dict[str, str]:
+    return {
+        item["stage"]: item["group_label"]
+        for item in normalize_team_stage_groups(team)
     }
 
 
@@ -1889,25 +1909,27 @@ def find_player_by_name_in_scope(
     competition_name: str,
     season_name: str,
     player_name: str,
+    team_name: str = "",
 ) -> dict[str, Any] | None:
     normalized_player_name = player_name.strip()
+    normalized_team_name = team_name.strip()
     if not normalized_player_name:
         return None
-    team_scope_by_id = {
-        team["team_id"]: (
-            str(team.get("competition_name") or "").strip(),
-            str(team.get("season_name") or "").strip(),
-        )
-        for team in data["teams"]
-    }
+    team_lookup_by_id = {team["team_id"]: team for team in data["teams"]}
     for player in data["players"]:
         if str(player.get("display_name") or "").strip() != normalized_player_name:
             continue
-        if team_scope_by_id.get(player.get("team_id")) == (
-            competition_name.strip(),
-            season_name.strip(),
+        player_team = team_lookup_by_id.get(player.get("team_id"))
+        if not player_team:
+            continue
+        if (
+            str(player_team.get("competition_name") or "").strip() != competition_name.strip()
+            or str(player_team.get("season_name") or "").strip() != season_name.strip()
         ):
-            return player
+            continue
+        if normalized_team_name and str(player_team.get("name") or "").strip() != normalized_team_name:
+            continue
+        return player
     return None
 
 
@@ -1959,14 +1981,13 @@ def resolve_match_entities(
             if not player_name:
                 errors.append(f"{team_name} 有一行缺少队员姓名。")
                 continue
-            player = find_player_by_name_in_scope(data, competition_name, season_name, player_name)
-            if player and player["team_id"] != team["team_id"]:
-                existing_team = get_team_by_id(data, player["team_id"])
-                existing_team_name = existing_team["name"] if existing_team else player["team_id"]
-                errors.append(
-                    f"同一赛季内不允许重名选手。{player_name} 当前赛季已属于战队 {existing_team_name}，不能再次录入到 {team['name']}。"
-                )
-                continue
+            player = find_player_by_name_in_scope(
+                data,
+                competition_name,
+                season_name,
+                player_name,
+                team["name"],
+            )
             if not player:
                 player_id = build_unique_slug(existing_player_ids, "player", player_name, "player")
                 player = build_placeholder_player(
@@ -1984,33 +2005,6 @@ def resolve_match_entities(
                 team["members"].append(entry["player_id"])
         resolve_match_award_player_ids(match)
     return errors
-
-
-def build_placeholder_username(player_id: str) -> str:
-    return f"placeholder__{player_id.strip().lower()}"
-
-
-def create_placeholder_user_for_player(player: dict[str, Any]) -> dict[str, Any]:
-    password_salt, password_hash = hash_password(secrets.token_urlsafe(24))
-    player_id = str(player.get("player_id") or "").strip()
-    return {
-        "username": build_placeholder_username(player_id),
-        "display_name": str(player.get("display_name") or player_id),
-        "password_salt": password_salt,
-        "password_hash": password_hash,
-        "active": False,
-        "player_id": player_id or None,
-        "linked_player_ids": [],
-        "manager_scope_keys": [],
-        "permissions": [],
-        "role": "member",
-        "is_placeholder_account": True,
-        "placeholder_source_player_id": player_id or None,
-        "province_name": DEFAULT_PROVINCE_NAME,
-        "region_name": DEFAULT_REGION_NAME,
-        "gender": "prefer_not_to_say",
-        "bio": "系统为未注册参赛选手自动创建的占位账号，待注册后可自动合并。",
-    }
 
 
 def ensure_placeholder_players_for_matches(
@@ -2051,27 +2045,7 @@ def ensure_placeholder_users_for_player_ids(
     users: list[dict[str, Any]],
     player_ids: list[str],
 ) -> list[dict[str, Any]]:
-    player_lookup = {player["player_id"]: player for player in data["players"]}
-    owned_player_ids = {
-        player_id
-        for user in users
-        for player_id in get_user_bound_player_ids(user)
-    }
-    existing_usernames = {user["username"] for user in users}
-    next_users = list(users)
-    for player_id in player_ids:
-        normalized_player_id = str(player_id or "").strip()
-        if not normalized_player_id or normalized_player_id in owned_player_ids:
-            continue
-        player = player_lookup.get(normalized_player_id)
-        if not player:
-            continue
-        placeholder_username = build_placeholder_username(normalized_player_id)
-        if placeholder_username in existing_usernames:
-            continue
-        next_users.append(create_placeholder_user_for_player(player))
-        existing_usernames.add(placeholder_username)
-    return next_users
+    return list(users)
 
 
 def merge_placeholder_users_for_registration(
@@ -2079,28 +2053,7 @@ def merge_placeholder_users_for_registration(
     display_name: str,
     new_user: dict[str, Any],
 ) -> tuple[list[dict[str, Any]], list[str]]:
-    normalized_display_name = display_name.strip()
-    if not normalized_display_name:
-        return [*users, new_user], []
-    matched_placeholder_users = [
-        user
-        for user in users
-        if is_placeholder_user(user)
-        and str(user.get("display_name") or "").strip() == normalized_display_name
-    ]
-    if len(matched_placeholder_users) != 1:
-        return [*users, new_user], []
-    placeholder_user = matched_placeholder_users[0]
-    merged_player_ids = get_user_bound_player_ids(placeholder_user)
-    merged_user = {
-        **new_user,
-        "player_id": merged_player_ids[0] if merged_player_ids else new_user.get("player_id"),
-        "linked_player_ids": merged_player_ids[1:] if len(merged_player_ids) > 1 else [],
-    }
-    remaining_users = [
-        user for user in users if user["username"] != placeholder_user["username"]
-    ]
-    return [*remaining_users, merged_user], merged_player_ids
+    return [*users, new_user], []
 
 
 def append_alert_query(path: str, alert: str) -> str:
@@ -2303,7 +2256,7 @@ def build_player_binding_candidates(
     for player in data["players"]:
         player_id = player["player_id"]
         owner = get_user_by_player_id(users, player_id)
-        if owner and not is_placeholder_user(owner) and owner["username"] != target_user["username"]:
+        if owner and owner["username"] != target_user["username"]:
             continue
         scope_labels = get_player_binding_scope_labels(data, player_id)
         competition_names = sorted({item.split(" / ", 1)[0] for item in scope_labels})
@@ -2335,7 +2288,6 @@ def build_player_binding_candidates(
                 "scope_labels": "、".join(scope_labels) or "未命名赛季",
                 "already_bound": player_id in target_bound_ids,
                 "owner_username": owner["username"] if owner else "",
-                "owner_is_placeholder": is_placeholder_user(owner),
             }
         )
     candidates.sort(
@@ -2368,6 +2320,17 @@ def save_uploaded_player_photo(player_id: str, upload: UploadedFile | None) -> s
     ensure_player_asset_dirs()
     extension = Path(upload.filename).suffix.lower()
     filename = f"{player_id}-{secrets.token_hex(6)}{extension}"
+    target = PLAYER_UPLOAD_DIR / filename
+    target.write_bytes(upload.data)
+    return str(target.relative_to(ROOT)).replace("\\", "/")
+
+
+def save_uploaded_user_photo(username: str, upload: UploadedFile | None) -> str | None:
+    if upload is None or not upload.filename:
+        return None
+    ensure_player_asset_dirs()
+    extension = Path(upload.filename).suffix.lower()
+    filename = f"user-{username}-{secrets.token_hex(6)}{extension}"
     target = PLAYER_UPLOAD_DIR / filename
     target.write_bytes(upload.data)
     return str(target.relative_to(ROOT)).replace("\\", "/")
@@ -2407,7 +2370,7 @@ def build_team_logo_html(logo_path: str, team_name: str, extra_class: str = "") 
         'style="background: linear-gradient(135deg, rgba(90, 167, 255, 0.18), rgba(23, 92, 211, 0.2));">'
         f'<span style="font-family: Manrope, Noto Sans SC, sans-serif; font-size: 2.2rem; font-weight: 800; color: #175cd3;">{escape(initials.upper())}</span>'
         "</div>"
-    )
+        )
 
 
 def get_team_by_id(data: dict[str, Any], team_id: str) -> dict[str, Any] | None:
@@ -2563,7 +2526,8 @@ def get_team_for_player(data: dict[str, Any], player: dict[str, Any] | None) -> 
 
 
 def get_team_captain_id(team: dict[str, Any]) -> str | None:
-    return team.get("captain_player_id") or (team["members"][0] if team["members"] else None)
+    captain_player_id = str(team.get("captain_player_id") or "").strip()
+    return captain_player_id or None
 
 
 def is_team_captain(team: dict[str, Any] | None, player: dict[str, Any] | None) -> bool:
@@ -2575,7 +2539,7 @@ def is_team_captain(team: dict[str, Any] | None, player: dict[str, Any] | None) 
 def remove_member_from_team(team: dict[str, Any], player_id: str) -> None:
     team["members"] = [member_id for member_id in team["members"] if member_id != player_id]
     if get_team_captain_id(team) == player_id:
-        team["captain_player_id"] = team["members"][0] if team["members"] else None
+        team["captain_player_id"] = None
 
 
 def get_team_member_removal_error(
@@ -2982,12 +2946,15 @@ def resolve_team_player_ids(
         for entry in match["players"]:
             if entry["team_id"] == team_id and entry["player_id"] not in seen:
                 seen.append(entry["player_id"])
+    for player in data["players"]:
+        if player.get("team_id") == team_id and player["player_id"] not in seen:
+            seen.append(player["player_id"])
 
     if seen:
         return seen
 
     team = get_team_by_id(data, team_id)
-    return team["members"] if team else []
+    return list(team.get("members", [])) if team else []
 
 
 def resolve_catalog_scope(ctx: RequestContext, data: dict[str, Any]) -> dict[str, Any]:
@@ -3100,7 +3067,7 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "match_count": len(matches),
                 "team_count": max(len(team_ids), len(registered_team_ids)),
                 "player_count": len(player_ids),
-                "latest_played_on": max((match["played_on"] for match in played_matches), default=""),
+                "latest_played_on": get_scheduled_match_day_label(matches, china_today_label()),
                 "seasons": seasons,
             }
         )
@@ -3206,7 +3173,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     )
     featured_competition = max(
         scoped_competition_rows or competition_catalog,
-        key=lambda row: (row["latest_played_on"], row["competition_name"]),
+        key=competition_latest_day_sort_key,
         default=None,
     )
     selected_series_row = next(
@@ -3781,7 +3748,7 @@ def get_schedule_page(ctx: RequestContext) -> str:
     if can_manage_matches(ctx.current_user, data, selected_competition):
         create_match_button = (
             f'<a class="btn btn-dark" href="/matches/new?'
-            f'{urlencode({"competition": selected_competition, "season": selected_season or "", "next": build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug)})}">录入比赛</a>'
+            f'{urlencode({"competition": selected_competition, "season": selected_season or "", "next": build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug)})}">比赛管理</a>'
         )
 
     day_sections = []
@@ -3803,7 +3770,7 @@ def get_schedule_page(ctx: RequestContext) -> str:
                   <td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td>
                   <td>第 {match['round']} 轮</td>
                   <td>第 {match['game_no']} 局</td>
-                  <td>{escape(team_names)}</td>
+                  <td>{escape(str(match.get('group_label') or team_names or '未设置'))}</td>
                   <td>{escape(match['table_label'])}</td>
                   <td>{escape(match['format'])}</td>
                   <td><a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">查看详情</a></td>
@@ -3828,8 +3795,8 @@ def get_schedule_page(ctx: RequestContext) -> str:
                       <th>阶段</th>
                       <th>轮次</th>
                       <th>局次</th>
-                      <th>参赛战队</th>
-                      <th>桌号</th>
+                      <th>参赛分组</th>
+                      <th>房间</th>
                       <th>板型</th>
                       <th>操作</th>
                     </tr>
@@ -3882,9 +3849,9 @@ def get_schedule_page(ctx: RequestContext) -> str:
               <small>当前赛季全部场次</small>
             </div>
             <div class="hero-pill">
-              <span>参赛战队</span>
+              <span>参赛分组</span>
               <strong>{total_team_count}</strong>
-              <small>当前赛季战队</small>
+              <small>当前赛季涉及战队</small>
             </div>
             <div class="hero-pill">
               <span>参赛队员</span>
@@ -3935,7 +3902,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
         return layout("未找到比赛", '<div class="alert alert-danger">没有找到对应的比赛。</div>', ctx)
     alert = form_value(ctx.query, "alert").strip()
     if alert == "placeholder-created":
-        alert = "本场比赛涉及未注册选手，系统已自动为对应参赛ID预留档案，可稍后在绑定页认领并合并。"
+        alert = "本场比赛涉及未绑定账号的选手，系统已自动创建对应赛季档案，可稍后在绑定页完成绑定。"
 
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     player_lookup = {player["player_id"]: player for player in data["players"]}
@@ -4094,7 +4061,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
         <div>
           <div class="eyebrow mb-3">比赛详情页</div>
           <h1 class="hero-title mb-3">{escape(competition_name)} · {escape(season_name)}</h1>
-          <p class="hero-copy mb-0">这里展示单场比赛的完整信息，包括比赛编号、阶段、参赛战队以及所有上场成员的个人明细。</p>
+          <p class="hero-copy mb-0">这里展示单场比赛的完整信息，包括比赛编号、阶段、参赛分组以及所有上场成员的个人明细。</p>
           <div class="d-flex flex-wrap gap-2 mt-4">
             <span class="chip">编号 {escape(match['match_id'])}</span>
             <span class="chip">{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</span>
@@ -4114,7 +4081,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
           <div class="hero-stage-note">比赛详情页会固定当前系列赛和赛季口径，方便从战队页、队员页和赛事页继续回看单场内容。</div>
           <div class="hero-stage-grid">
             <div class="hero-stage-metric">
-              <span>桌号</span>
+              <span>房间</span>
               <strong>{escape(match['table_label'])}</strong>
               <small>{escape(match['format'])}</small>
             </div>
@@ -4129,9 +4096,9 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
               <small>本局最终结果</small>
             </div>
             <div class="hero-stage-metric">
-              <span>参赛战队</span>
-              <strong>{len(score_rows)}</strong>
-              <small>本场涉及战队</small>
+              <span>参赛分组</span>
+              <strong>{escape(str(match.get('group_label') or '未设置'))}</strong>
+              <small>本场所属分组</small>
             </div>
           </div>
         </div>
@@ -4205,13 +4172,38 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     team_competition_name, team_season_name = get_team_scope(team)
     team_status = get_team_season_status(data, team)
     team_status_label = get_team_season_status_label(team_status)
-    can_edit_team_page = can_manage_team_profile and team_status == "ongoing"
+    can_edit_team_page = can_manage_team_profile and team_status in {"ongoing", "upcoming", "unknown"}
     guild = get_guild_by_id(data, str(team.get("guild_id") or "").strip())
+    stage_group_map = get_team_stage_group_map(team)
     team_logo_html = build_team_logo_html(team["logo"], team["name"])
+    captain_player = player_lookup.get(get_team_captain_id(team) or "")
+    captain_label = captain_player["display_name"] if captain_player else ""
+    is_unclaimed = not captain_player
+    can_request_claim = is_unclaimed and team_status != "completed"
     current_team_path = build_scoped_path(
         f"/teams/{team_id}",
         form_value(ctx.query, "competition").strip() or team_competition_name or None,
         form_value(ctx.query, "season").strip() or team_season_name or None,
+    )
+    claim_panel = (
+        f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+            <div>
+              <h2 class="section-title mb-2">认领这支战队</h2>
+              <p class="section-copy mb-0">战队名称和成员由赛季档案维护。认领后，你可以编辑战队队标、简称、介绍和赛段分组信息。</p>
+            </div>
+            <form method="post" action="/team-center" class="m-0">
+              <input type="hidden" name="action" value="request_team_claim">
+              <input type="hidden" name="team_id" value="{escape(team_id)}">
+              <input type="hidden" name="next" value="{escape(current_team_path)}">
+              <button type="submit" class="btn btn-dark">申请认领</button>
+            </form>
+          </div>
+        </section>
+        """
+        if can_request_claim
+        else ""
     )
     team_logo_panel = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -4254,12 +4246,109 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             if can_edit_team_page
             else (
               '<div class="small text-secondary">当前赛季已结束，战队资料已锁定，仅保留展示。</div>'
-              if team_status != "ongoing"
-              else '<div class="small text-secondary">只有具备战队管理权限的账号、战队队长或管理员可以更新队标。</div>'
+              if team_status == "completed"
+              else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以更新队标。</div>'
             )
           )}
         </div>
       </div>
+    </section>
+    """
+    team_profile_panel = f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">战队资料</h2>
+          <p class="section-copy mb-0">战队名称和成员名单都以赛季档案为准。认领负责人可以维护简称、介绍、队标等展示信息。</p>
+        </div>
+      </div>
+      <div class="row g-3 mb-4">
+        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">负责人状态</div><div class="stat-value mt-2">{'待认领' if is_unclaimed else '已认领'}</div></div></div>
+        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">战队简称</div><div class="stat-value mt-2">{escape(team.get('short_name') or '未设置')}</div></div></div>
+        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">认领负责人</div><div class="stat-value mt-2">{escape(captain_label or '暂未认领')}</div></div></div>
+        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">所属门派</div><div class="stat-value mt-2">{escape(guild['name']) if guild else '未加入门派'}</div></div></div>
+      </div>
+      <div class="form-panel p-3 p-lg-4">
+        {(
+          f'''
+          <form method="post" action="/team-center">
+            <input type="hidden" name="action" value="update_team_profile">
+            <input type="hidden" name="team_id" value="{escape(team_id)}">
+            <input type="hidden" name="next" value="{escape(current_team_path)}">
+            <div class="row g-3">
+              <div class="col-12 col-lg-4">
+                <label class="form-label">战队简称</label>
+                <input class="form-control" name="short_name" value="{escape(team.get('short_name') or '')}" maxlength="24">
+              </div>
+              <div class="col-12">
+                <label class="form-label">战队介绍</label>
+                <textarea class="form-control" name="notes" rows="4">{escape(team.get('notes') or '')}</textarea>
+              </div>
+            </div>
+            <button type="submit" class="btn btn-dark mt-4">保存战队资料</button>
+          </form>
+          '''
+          if can_edit_team_page
+          else (
+            '<div class="small text-secondary">当前赛季已结束，战队资料已锁定。</div>'
+            if team_status == "completed"
+            else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以编辑战队资料。</div>'
+          )
+        )}
+      </div>
+    </section>
+    """
+    stage_group_rows_html = "".join(
+        f"""
+        <tr>
+          <td>{escape(stage_label)}</td>
+          <td>{escape(stage_group_map.get(stage_key, '未设置'))}</td>
+        </tr>
+        """
+        for stage_key, stage_label in STAGE_OPTIONS.items()
+        if stage_group_map.get(stage_key)
+    )
+    stage_group_form_fields_html = "".join(
+        f"""
+        <div class="col-12 col-md-6 col-xl-4">
+          <label class="form-label">{escape(stage_label)}</label>
+          <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
+        </div>
+        """
+        for stage_key, stage_label in STAGE_OPTIONS.items()
+    )
+    team_stage_group_panel = f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">战队分组信息</h2>
+          <p class="section-copy mb-0">同一支战队在不同赛段可以配置不同分组，例如常规赛 A 组、季后赛淘汰组。这里保存的是战队资料，不会自动覆盖已录入比赛的分组。</p>
+        </div>
+      </div>
+      <div class="table-responsive mb-4">
+        <table class="table align-middle">
+          <thead><tr><th>赛段</th><th>分组</th></tr></thead>
+          <tbody>{stage_group_rows_html or '<tr><td colspan="2" class="text-secondary">当前还没有配置任何赛段分组。</td></tr>'}</tbody>
+        </table>
+      </div>
+      {(
+        f'''
+        <form method="post" action="/team-center">
+          <input type="hidden" name="action" value="update_team_stage_groups">
+          <input type="hidden" name="team_id" value="{escape(team_id)}">
+          <div class="row g-3">
+            {stage_group_form_fields_html}
+          </div>
+          <button type="submit" class="btn btn-dark mt-4">保存战队分组</button>
+        </form>
+        '''
+        if can_edit_team_page
+        else (
+          '<div class="small text-secondary">当前赛季已结束，战队分组信息已锁定。</div>'
+          if team_status == "completed"
+          else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以维护战队分组。</div>'
+        )
+      )}
     </section>
     """
 
@@ -4364,7 +4453,10 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
           </div>
           <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
         </section>
+        {claim_panel}
         {team_logo_panel}
+        {team_profile_panel}
+        {team_stage_group_panel}
         <section class="panel shadow-sm p-3 p-lg-4">
           <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
             <div>
@@ -4385,24 +4477,36 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     team_rows = {
         row["team_id"]: row for row in build_team_rows(data, selected_competition, selected_season)
     }
-    team_stats = team_rows[team_id]
     roster_player_ids = resolve_team_player_ids(
         data, team_id, selected_competition, selected_season
+    )
+    roster_count = len(roster_player_ids)
+    team_stats = team_rows.get(
+        team_id,
+        {
+            "team_id": team_id,
+            "win_rate": 0.0,
+            "stance_rate": 0.0,
+            "points_earned_total": 0.0,
+            "player_count": roster_count,
+            "matches_represented": 0,
+        },
     )
     players = []
     for player_id in roster_player_ids:
         player = player_lookup.get(player_id)
         player_stats = player_rows.get(player_id)
-        if not player or not player_stats:
+        if not player:
             continue
         players.append(
             {
                 **player,
-                "win_rate": format_pct(player_stats["win_rate"]),
-                "stance_rate": format_pct(player_stats["stance_rate"]),
-                "points_total": f"{player_stats['points_earned_total']:.2f}",
-                "games_played": player_stats["games_played"],
-                "average_points": player_stats["average_points"],
+                "win_rate": format_pct(player_stats["win_rate"]) if player_stats else "0.0%",
+                "stance_rate": format_pct(player_stats["stance_rate"]) if player_stats else "0.0%",
+                "points_total": f"{player_stats['points_earned_total']:.2f}" if player_stats else "0.00",
+                "games_played": player_stats["games_played"] if player_stats else 0,
+                "average_points": player_stats["average_points"] if player_stats else 0.0,
+                "has_stats": bool(player_stats),
             }
         )
 
@@ -4478,7 +4582,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                       <th>轮次</th>
                       <th>局次</th>
                       <th>对手</th>
-                      <th>桌号</th>
+                      <th>房间</th>
                       <th>板型</th>
                       <th>胜利阵营</th>
                       <th>{escape(team['short_name'])} 得分</th>
@@ -4502,7 +4606,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
           <div class="d-flex justify-content-between align-items-start gap-3">
             <div>
               <div class="fw-semibold mb-1">{escape(player["display_name"])}</div>
-              <div class="small text-secondary">出场 {player["games_played"]} 次 · 场均得分 {player["average_points"]:.2f}</div>
+              <div class="small text-secondary">{f'出场 {player["games_played"]} 次 · 场均得分 {player["average_points"]:.2f}' if player["has_stats"] else '赛季档案已建档，等待补录比赛数据'}</div>
             </div>
             <span class="chip">查看队员</span>
           </div>
@@ -4541,7 +4645,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         guild_panel = f"""
         <section class="panel shadow-sm p-3 p-lg-4 mb-4">
           <h2 class="section-title mb-2">申请加入门派</h2>
-          <p class="section-copy mb-4">当前赛季战队还没有门派归属。具备战队管理权限的账号或战队队长可以从这里向某个门派提交加入申请，等待门主或门派管理员审核。</p>
+          <p class="section-copy mb-4">当前赛季战队还没有门派归属。管理员、具备战队管理权限的账号或已认领该战队的负责人可以从这里向某个门派提交加入申请，等待门主或门派管理员审核。</p>
           <form method="post" action="/guilds">
             <input type="hidden" name="action" value="request_team_guild_join">
             <input type="hidden" name="team_id" value="{escape(team_id)}">
@@ -4556,12 +4660,13 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
 
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
-      <div class="eyebrow mb-3">战队比赛页面</div>
+      <div class="eyebrow mb-3">战队巡礼</div>
       <h1 class="display-6 fw-semibold mb-3">{escape(team['name'])}</h1>
       <p class="mb-2 opacity-75">{escape(team_scope_label(team))}</p>
       <p class="mb-2 opacity-75">{escape(team['notes'])}</p>
       <div class="d-flex flex-wrap gap-2 mt-3">
         <span class="chip">{escape(team_status_label)}</span>
+        <span class="chip">{'待认领' if is_unclaimed else f'负责人：{escape(captain_label)}'}</span>
         {f'<a class="chip" href="/guilds/{escape(guild["guild_id"])}">关联门派：{escape(guild["name"])}</a>' if guild else '<span class="chip">未加入门派</span>'}
       </div>
       <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
@@ -4571,15 +4676,18 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         <span class="chip">胜率 {format_pct(team_stats['win_rate'])}</span>
         <span class="chip">站边率 {format_pct(team_stats['stance_rate'])}</span>
         <span class="chip">总积分 {team_stats['points_earned_total']:.2f}</span>
-        <span class="chip">队员 {team_stats['player_count']} 名</span>
+        <span class="chip">队员 {roster_count} 名</span>
       </div>
     </section>
+    {claim_panel}
     {(
       '<div class="alert alert-secondary mb-4">当前战队所属赛季已结束，战队资料和门派申请入口已关闭，页面仅保留公开展示。</div>'
-      if team_status != "ongoing"
+      if team_status == "completed"
       else ''
     )}
     {team_logo_panel}
+    {team_profile_panel}
+    {team_stage_group_panel}
     {guild_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -4633,27 +4741,20 @@ def get_team_season_status_label(status: str) -> str:
 
 
 def build_guild_honor_rows(data: dict[str, Any], guild_id: str) -> list[dict[str, str]]:
+    guild = get_guild_by_id(data, guild_id)
+    if not guild:
+        return []
     honors: list[dict[str, str]] = []
-    guild_teams = [team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild_id]
-    for team in guild_teams:
-        competition_name, season_name = get_team_scope(team)
-        if not competition_name or not season_name:
+    for item in guild.get("honors", []) or []:
+        if not isinstance(item, dict):
             continue
-        team_row = {
-            row["team_id"]: row
-            for row in build_team_rows(data, competition_name, season_name)
-        }.get(team["team_id"])
-        if not team_row:
+        title = str(item.get("title") or "").strip()
+        team_name = str(item.get("team_name") or "").strip()
+        scope = str(item.get("scope") or "").strip()
+        if not title or not team_name or not scope:
             continue
-        if team_row.get("points_rank", 9999) <= 3:
-            honors.append(
-                {
-                    "title": f"{competition_name} {season_name} 战队积分第 {team_row['points_rank']} 名",
-                    "team_name": team["name"],
-                    "scope": f"{competition_name} / {season_name}",
-                }
-            )
-    honors.sort(key=lambda item: (item["scope"], item["title"]), reverse=True)
+        honors.append({"title": title, "team_name": team_name, "scope": scope})
+    honors.sort(key=lambda item: (item["scope"], item["title"], item["team_name"]), reverse=True)
     return honors
 
 
@@ -5043,8 +5144,16 @@ def build_player_edit_form(
     username: str = "",
     password_note: str = "",
     show_account_fields: bool = False,
+    player_section_copy: str = "可以修改队员名称、别名、备注，并上传新的队员照片。",
+    photo_field_label: str = "上传照片",
+    photo_help_text: str = "支持 PNG、JPG、JPEG、WEBP、GIF、SVG，大小不超过 5 MB。",
+    photo_preview_path: str = "",
+    photo_preview_name: str = "",
+    photo_preview_path_label: str = "当前照片路径",
 ) -> str:
     aliases_value = "、".join(player.get("aliases", []))
+    current_photo_path = photo_preview_path or str(player.get("photo") or DEFAULT_PLAYER_PHOTO)
+    current_photo_name = photo_preview_name or str(player.get("display_name") or "")
     account_fields = ""
     if show_account_fields:
         account_fields = f"""
@@ -5093,7 +5202,7 @@ def build_player_edit_form(
         <div class="col-12 {'col-xl-6' if show_account_fields else 'col-xl-7'}">
           <div class="form-panel h-100 p-3 p-lg-4">
             <h2 class="section-title mb-2">队员资料</h2>
-            <p class="section-copy mb-4">可以修改队员名称、别名、备注，并上传新的队员照片。</p>
+            <p class="section-copy mb-4">{escape(player_section_copy)}</p>
             <div class="mb-3">
               <label class="form-label">队员名称</label>
               <input class="form-control" name="player_display_name" value="{escape(player['display_name'])}">
@@ -5107,17 +5216,17 @@ def build_player_edit_form(
               <textarea class="form-control" name="notes" rows="4">{escape(player['notes'])}</textarea>
             </div>
             <div class="mb-0">
-              <label class="form-label">上传照片</label>
+              <label class="form-label">{escape(photo_field_label)}</label>
               <input class="form-control" name="photo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
-              <div class="small text-secondary mt-2">支持 PNG、JPG、JPEG、WEBP、GIF、SVG，大小不超过 5 MB。</div>
+              <div class="small text-secondary mt-2">{escape(photo_help_text)}</div>
             </div>
           </div>
         </div>
         <div class="col-12 {'col-xl-6' if show_account_fields else 'col-xl-5'}">
           <div class="panel h-100 shadow-sm p-3 p-lg-4">
             <h2 class="section-title mb-3">当前照片预览</h2>
-            <div class="mb-3">{build_player_photo_html(player['photo'], player['display_name'])}</div>
-            <div class="mb-2"><strong>当前照片路径：</strong>{escape(player['photo'])}</div>
+            <div class="mb-3">{build_player_photo_html(current_photo_path, current_photo_name)}</div>
+            <div class="mb-2"><strong>{escape(photo_preview_path_label)}：</strong>{escape(current_photo_path)}</div>
             <div class="mb-2"><strong>所属战队：</strong>{escape(player['team_id'])}</div>
             <div class="mb-0"><strong>入库日期：</strong>{escape(player['joined_on'])}</div>
           </div>
@@ -5658,12 +5767,21 @@ def add_user_linked_player_id(
         if user["username"] != username:
             updated_users.append(user)
             continue
-        linked_player_ids = get_user_bound_player_ids(user)
-        if normalized_player_id and normalized_player_id not in linked_player_ids:
-            linked_player_ids.append(normalized_player_id)
+        existing_bound_ids = get_user_bound_player_ids(user)
+        current_primary = str(user.get("player_id") or "").strip()
+        linked_player_ids = [
+            item for item in existing_bound_ids if item and item != current_primary
+        ]
+        next_primary = current_primary or None
+        if normalized_player_id and normalized_player_id not in existing_bound_ids:
+            if not next_primary:
+                next_primary = normalized_player_id
+            else:
+                linked_player_ids.append(normalized_player_id)
         updated_users.append(
             {
                 **user,
+                "player_id": next_primary,
                 "linked_player_ids": linked_player_ids,
             }
         )
@@ -5757,10 +5875,55 @@ def validate_match_awards(match: dict[str, Any]) -> str:
     participant_map = {
         str(participant["player_id"]).strip(): participant for participant in participants
     }
-    mvp_player_id = str(match.get("mvp_player_id") or "").strip()
-    svp_player_id = str(match.get("svp_player_id") or "").strip()
-    scapegoat_player_id = str(match.get("scapegoat_player_id") or "").strip()
+    participant_name_map = {
+        str(participant.get("player_name") or "").strip(): str(participant.get("player_id") or "").strip()
+        for participant in participants
+        if str(participant.get("player_name") or "").strip() and str(participant.get("player_id") or "").strip()
+    }
+
+    def resolve_award_player_id(
+        player_id_key: str,
+        player_name_key: str,
+        player_ref_key: str,
+    ) -> str:
+        explicit_player_id = str(match.get(player_id_key) or "").strip()
+        if explicit_player_id:
+            return explicit_player_id
+        raw_ref = str(match.get(player_ref_key) or "").strip()
+        if raw_ref.isdigit():
+            ref_index = int(raw_ref)
+            if 0 <= ref_index < len(match.get("players", [])):
+                candidate_player_id = str(match["players"][ref_index].get("player_id") or "").strip()
+                if candidate_player_id:
+                    return candidate_player_id
+        return participant_name_map.get(str(match.get(player_name_key) or "").strip(), "")
+
+    mvp_player_id = resolve_award_player_id("mvp_player_id", "mvp_player_name", "mvp_player_ref")
+    svp_player_id = resolve_award_player_id("svp_player_id", "svp_player_name", "svp_player_ref")
+    scapegoat_player_id = resolve_award_player_id(
+        "scapegoat_player_id",
+        "scapegoat_player_name",
+        "scapegoat_player_ref",
+    )
     winning_camp = str(match.get("winning_camp") or "").strip()
+    participant_count = len(participants)
+
+    # Allow progressive data entry: partial rosters can be saved first.
+    # When the roster is still incomplete, awards are optional; if already
+    # provided, they still need to point to currently recorded participants.
+    if participant_count < 12:
+        if mvp_player_id and mvp_player_id not in participant_map:
+            return "MVP 必须从当前已录入的参赛选手中选择。"
+        if svp_player_id and svp_player_id not in participant_map:
+            return "SVP 必须从当前已录入的参赛选手中选择。"
+        if mvp_player_id and svp_player_id and mvp_player_id == svp_player_id:
+            return "MVP 和 SVP 不能选择同一位选手。"
+        if scapegoat_player_id:
+            if scapegoat_player_id not in participant_map:
+                return "背锅选手必须从当前已录入的参赛选手中选择。"
+            if winning_camp and str(participant_map[scapegoat_player_id].get("camp") or "").strip() == winning_camp:
+                return "背锅选手需要从失利阵营中选择。"
+        return ""
 
     if not mvp_player_id:
         return "请选择本场 MVP。"
@@ -5789,6 +5952,10 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
     score_model = normalize_match_score_model(form_value(form, "score_model"))
     participants = []
     for index in range(len(existing_match["players"])):
+        player_name = form_value(form, f"player_name_{index}").strip()
+        team_name = form_value(form, f"team_name_{index}").strip()
+        if not player_name and not team_name:
+            continue
         score_breakdown = {
             field_name: parse_float_value(
                 form_value(form, f"{field_name}_{index}", "0") or "0",
@@ -5805,9 +5972,9 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
         participants.append(
             {
                 "player_id": "",
-                "player_name": form_value(form, f"player_name_{index}").strip(),
+                "player_name": player_name,
                 "team_id": "",
-                "team_name": form_value(form, f"team_name_{index}").strip(),
+                "team_name": team_name,
                 "seat": int(form_value(form, f"seat_{index}", "0") or "0"),
                 "role": form_value(form, f"role_{index}"),
                 "camp": form_value(form, f"camp_{index}"),
@@ -5828,6 +5995,7 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
         "game_no": int(form_value(form, "game_no", "0") or "0"),
         "score_model": score_model,
         "played_on": form_value(form, "played_on").strip(),
+        "group_label": form_value(form, "group_label").strip(),
         "table_label": form_value(form, "table_label").strip(),
         "format": form_value(form, "format").strip(),
         "duration_minutes": int(form_value(form, "duration_minutes", "0") or "0"),
@@ -5835,6 +6003,9 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
         "mvp_player_id": "",
         "svp_player_id": "",
         "scapegoat_player_id": "",
+        "mvp_player_ref": form_value(form, "mvp_player_ref").strip(),
+        "svp_player_ref": form_value(form, "svp_player_ref").strip(),
+        "scapegoat_player_ref": form_value(form, "scapegoat_player_ref").strip(),
         "mvp_player_name": form_value(form, "mvp_player_name").strip(),
         "svp_player_name": form_value(form, "svp_player_name").strip(),
         "scapegoat_player_name": form_value(form, "scapegoat_player_name").strip(),
@@ -5898,13 +6069,17 @@ def build_empty_match(competition_name: str = "", season_name: str = "") -> dict
         "game_no": 1,
         "score_model": MATCH_SCORE_MODEL_STANDARD,
         "played_on": china_today_label(),
-        "table_label": "一号桌",
+        "group_label": "A组",
+        "table_label": "1号房",
         "format": "经典十二人局",
         "duration_minutes": 60,
         "winning_camp": "villagers",
         "mvp_player_id": "",
         "svp_player_id": "",
         "scapegoat_player_id": "",
+        "mvp_player_ref": "",
+        "svp_player_ref": "",
+        "scapegoat_player_ref": "",
         "mvp_player_name": "",
         "svp_player_name": "",
         "scapegoat_player_name": "",
@@ -5941,10 +6116,15 @@ def build_match_competition_field(
 def build_match_season_field(
     current_competition_name: str,
     current_season_name: str,
+    include_non_ongoing: bool = False,
 ) -> str:
     from web.features.matches import build_match_season_field as impl
 
-    return impl(current_competition_name, current_season_name)
+    return impl(
+        current_competition_name,
+        current_season_name,
+        include_non_ongoing=include_non_ongoing,
+    )
 
 
 def render_match_form_page(
@@ -6194,24 +6374,15 @@ def handle_register(ctx: RequestContext, start_response):
         "manager_scope_keys": [],
         "permissions": [],
         "role": "member",
-        "is_placeholder_account": False,
-        "placeholder_source_player_id": None,
         "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
         "region_name": normalized_region or "广州市",
         "gender": normalize_user_gender(gender) or "prefer_not_to_say",
         "bio": bio,
+        "photo": DEFAULT_PLAYER_PHOTO,
     }
-    users, merged_player_ids = merge_placeholder_users_for_registration(
-        users,
-        display_name,
-        new_user,
-    )
+    users, merged_player_ids = merge_placeholder_users_for_registration(users, display_name, new_user)
     save_users(users)
     success_message = "注册成功，请使用新账号登录。"
-    if merged_player_ids:
-        success_message = (
-            f"注册成功，系统已自动合并 {len(merged_player_ids)} 个未注册参赛账号的数据，请使用新账号登录。"
-        )
     return start_response_html(
         start_response,
         "200 OK",
@@ -6272,6 +6443,7 @@ def update_user_account_fields(
     gender: str,
     bio: str,
     password: str,
+    photo: str | None = None,
 ) -> list[dict[str, Any]]:
     updated_users = []
     for user in users:
@@ -6295,6 +6467,8 @@ def update_user_account_fields(
             password_salt, password_hash = hash_password(password)
             next_user["password_salt"] = password_salt
             next_user["password_hash"] = password_hash
+        if photo:
+            next_user["photo"] = photo
         updated_users.append(next_user)
     return updated_users
 
@@ -6392,7 +6566,7 @@ def handle_team_logo_update(ctx: RequestContext, start_response, team_id: str):
         )
 
     current_player = get_user_player(data, ctx.current_user)
-    if get_team_season_status(data, team) != "ongoing":
+    if get_team_season_status(data, team) == "completed":
         return start_response_html(
             start_response,
             "200 OK",
@@ -6402,7 +6576,7 @@ def handle_team_logo_update(ctx: RequestContext, start_response, team_id: str):
         return start_response_html(
             start_response,
             "403 Forbidden",
-            layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、战队队长或管理员可以更新队标。</div>', ctx),
+            layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、已认领该战队的负责人或管理员可以更新队标。</div>', ctx),
         )
 
     upload = file_value(ctx.files, "logo_file")

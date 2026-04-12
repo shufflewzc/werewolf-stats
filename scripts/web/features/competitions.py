@@ -34,6 +34,7 @@ get_selected_season = legacy.get_selected_season
 get_series_entries_by_slug = legacy.get_series_entries_by_slug
 get_match_competition_name = legacy.get_match_competition_name
 get_nearest_match_day_label = legacy.get_nearest_match_day_label
+get_scheduled_match_day_label = legacy.get_scheduled_match_day_label
 is_match_counted_as_played = legacy.is_match_counted_as_played
 get_season_entry = legacy.get_season_entry
 get_season_status = legacy.get_season_status
@@ -59,6 +60,199 @@ team_matches_scope = legacy.team_matches_scope
 urlencode = legacy.urlencode
 
 
+def competition_latest_day_sort_key(row: dict[str, Any]) -> tuple[int, str, str]:
+    latest_played_on = str(row.get("latest_played_on") or "").strip()
+    try:
+        datetime.strptime(latest_played_on, "%Y-%m-%d")
+        return (1, latest_played_on, str(row.get("competition_name") or ""))
+    except ValueError:
+        return (0, "", str(row.get("competition_name") or ""))
+
+
+def build_group_team_rows(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+) -> list[dict[str, Any]]:
+    played_matches = [
+        match
+        for match in data["matches"]
+        if match_in_scope(match, competition_name, season_name)
+        and is_match_counted_as_played(match)
+    ]
+    team_lookup = {team["team_id"]: team for team in data["teams"]}
+    group_rows: dict[tuple[str, str], dict[str, Any]] = {}
+    represented_players: dict[tuple[str, str], set[str]] = {}
+
+    for match in played_matches:
+        group_label = str(match.get("group_label") or "").strip() or "未分组"
+        team_ids_in_match = {
+            entry["team_id"]
+            for entry in match["players"]
+            if entry["team_id"] in team_lookup
+        }
+        for team_id in team_ids_in_match:
+            key = (group_label, team_id)
+            if key not in group_rows:
+                team = team_lookup[team_id]
+                group_rows[key] = {
+                    "group_label": group_label,
+                    "team_id": team_id,
+                    "team_name": team["name"],
+                    "matches_represented": 0,
+                    "player_count": 0,
+                    "points_earned_total": 0.0,
+                    "wins": 0,
+                }
+                represented_players[key] = set()
+            group_rows[key]["matches_represented"] += 1
+
+        for entry in match["players"]:
+            key = (group_label, entry["team_id"])
+            if key not in group_rows:
+                continue
+            group_rows[key]["points_earned_total"] += float(entry["points_earned"])
+            group_rows[key]["wins"] += 1 if entry["result"] == "win" else 0
+            represented_players[key].add(entry["player_id"])
+
+    summary: list[dict[str, Any]] = []
+    for key, row in group_rows.items():
+        row["player_count"] = len(represented_players[key])
+        row["points_earned_total"] = round(row["points_earned_total"], 2)
+        row["points_per_match"] = (
+            round(row["points_earned_total"] / row["matches_represented"], 2)
+            if row["matches_represented"]
+            else 0.0
+        )
+        row["win_rate"] = (
+            legacy.safe_rate(row["wins"], row["player_count"] and row["matches_represented"] * max(row["player_count"], 1))
+            if row["matches_represented"]
+            else 0.0
+        )
+        summary.append(row)
+
+    summary.sort(
+        key=lambda item: (
+            item.get("stage_label", ""),
+            item["group_label"],
+            -item["points_earned_total"],
+            -item["matches_represented"],
+            item["team_name"],
+        )
+    )
+    return summary
+
+
+def build_stage_group_team_rows(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+) -> dict[str, dict[str, list[dict[str, Any]]]]:
+    stage_group_rows: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    for stage_key in STAGE_OPTIONS:
+        stage_matches = [
+            match
+            for match in data["matches"]
+            if match_in_scope(match, competition_name, season_name)
+            and is_match_counted_as_played(match)
+            and str(match.get("stage") or "").strip() == stage_key
+        ]
+        if not stage_matches:
+            continue
+        stage_data = {
+            "teams": data["teams"],
+            "players": data["players"],
+            "matches": stage_matches,
+        }
+        grouped_rows = build_group_team_rows(stage_data, competition_name, season_name)
+        group_map: dict[str, list[dict[str, Any]]] = {}
+        for row in grouped_rows:
+            group_map.setdefault(row["group_label"], []).append(row)
+        if group_map:
+            stage_group_rows[stage_key] = group_map
+    return stage_group_rows
+
+
+def build_stage_team_rows(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+) -> dict[str, list[dict[str, Any]]]:
+    stage_rows: dict[str, list[dict[str, Any]]] = {}
+    for stage_key in STAGE_OPTIONS:
+        stage_matches = [
+            match
+            for match in data["matches"]
+            if match_in_scope(match, competition_name, season_name)
+            and is_match_counted_as_played(match)
+            and str(match.get("stage") or "").strip() == stage_key
+        ]
+        scoped_data = {
+            "teams": data["teams"],
+            "players": data["players"],
+            "matches": stage_matches,
+        }
+        rows = [
+            row
+            for row in build_team_rows(scoped_data, competition_name, season_name)
+            if row["matches_represented"] > 0
+        ]
+        rows.sort(
+            key=lambda row: (
+                row.get("points_rank", 9999),
+                -row["points_earned_total"],
+                row["name"],
+            )
+        )
+        if rows:
+            stage_rows[stage_key] = rows
+    return stage_rows
+
+
+def build_player_mvp_rows(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+) -> list[dict[str, Any]]:
+    played_matches = [
+        match
+        for match in data["matches"]
+        if match_in_scope(match, competition_name, season_name)
+        and is_match_counted_as_played(match)
+    ]
+    player_lookup = {player["player_id"]: player for player in data["players"]}
+    team_lookup = {team["team_id"]: team for team in data["teams"]}
+    counts: dict[str, dict[str, Any]] = {}
+    for match in played_matches:
+        mvp_player_id = str(match.get("mvp_player_id") or "").strip()
+        if not mvp_player_id or mvp_player_id not in player_lookup:
+            continue
+        participant = next(
+            (entry for entry in match["players"] if entry["player_id"] == mvp_player_id),
+            None,
+        )
+        team_id = str(participant.get("team_id") or "").strip() if participant else ""
+        row = counts.setdefault(
+            mvp_player_id,
+            {
+                "player_id": mvp_player_id,
+                "display_name": player_lookup[mvp_player_id]["display_name"],
+                "team_name": team_lookup.get(team_id, {}).get("name", team_id or "未知战队"),
+                "mvp_count": 0,
+                "latest_awarded_on": "",
+            },
+        )
+        row["mvp_count"] += 1
+        row["latest_awarded_on"] = max(row["latest_awarded_on"], str(match.get("played_on") or ""))
+
+    rows = sorted(counts.values(), key=lambda item: item["display_name"])
+    rows.sort(key=lambda item: item["latest_awarded_on"], reverse=True)
+    rows.sort(key=lambda item: item["mvp_count"], reverse=True)
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    return rows
+
+
 def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -76,7 +270,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     featured_competition = max(
         filtered_rows or region_rows or competition_rows,
-        key=lambda row: (row["latest_played_on"], row["competition_name"]),
+        key=competition_latest_day_sort_key,
         default=None,
     )
     region_switcher = build_region_switcher("/competitions", scope["region_names"], selected_region, selected_series_slug)
@@ -138,11 +332,32 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     can_manage_selected_seasons = bool(selected_competition and can_manage_competition_seasons(ctx.current_user, data, selected_competition))
     _, current_user_team = get_user_captained_team_for_scope(data, ctx.current_user, selected_competition, selected_season) if selected_competition and selected_season else (None, None)
     season_entry = get_season_entry(season_catalog, selected_series_slug, selected_season, competition_name=selected_competition) if selected_series_slug and selected_season else None
-    team_rows = [row for row in build_team_rows(data, selected_competition, selected_season) if row["matches_represented"] > 0]
-    player_rows = [row for row in build_player_rows(data, selected_competition, selected_season) if row["games_played"] > 0]
+    played_match_rows = [
+        match
+        for match in data["matches"]
+        if match_in_scope(match, selected_competition, selected_season)
+        and is_match_counted_as_played(match)
+    ]
+    stats_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": played_match_rows,
+    }
+    team_rows = [row for row in build_team_rows(stats_data, selected_competition, selected_season) if row["matches_represented"] > 0]
+    player_rows = [row for row in build_player_rows(stats_data, selected_competition, selected_season) if row["games_played"] > 0]
+    stage_team_rows = build_stage_team_rows(data, selected_competition, selected_season or "")
+    stage_group_team_rows = build_stage_group_team_rows(data, selected_competition, selected_season or "")
+    mvp_rows = build_player_mvp_rows(data, selected_competition, selected_season or "")
     team_rows.sort(key=lambda row: (row.get("points_rank", 9999), -row["points_earned_total"], row["name"]))
     player_rows.sort(key=lambda row: (row["rank"], -row["points_earned_total"], row["display_name"]))
-    match_rows = [match for match in sorted(data["matches"], key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]), reverse=True) if match_in_scope(match, selected_competition, selected_season)]
+    match_rows = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+        )
+        if match_in_scope(match, selected_competition, selected_season)
+    ]
     player_count = len({entry["player_id"] for match in match_rows for entry in match["players"]})
     scope_label = " / ".join(item for item in [selected_competition, selected_season] if item) or "比赛总览"
     season_switcher_html = f'<div class="hero-switchers mt-3">{season_switcher}</div>' if season_switcher else ""
@@ -158,8 +373,8 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     series_topic_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_topic_path(competition_meta["series_slug"], selected_season))}">查看系列专题页</a>' if competition_meta else ""
     edit_competition_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_manage_path(selected_competition, current_competition_path, None, "catalog"))}">编辑赛事页信息</a>' if can_edit_selected_competition else ""
     season_manage_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_manage_path(selected_competition, current_competition_path, selected_season, "season"))}">管理赛季档期</a>' if can_manage_selected_seasons else ""
-    latest_played_on = get_nearest_match_day_label(
-        [match["played_on"] for match in match_rows],
+    latest_played_on = get_scheduled_match_day_label(
+        match_rows,
         legacy.china_today_label(),
     )
     registered_team_ids = season_entry.get("registered_team_ids", []) if season_entry else []
@@ -187,23 +402,112 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
             registration_form_html = f"""<form method="post" action="/competitions"><input type="hidden" name="action" value="register_team_for_season"><input type="hidden" name="competition_name" value="{escape(selected_competition)}"><input type="hidden" name="season_name" value="{escape(selected_season or '')}"><input type="hidden" name="next" value="{escape(current_competition_path)}"><div class="small text-secondary mb-3">管理员可代任意战队提交报名。</div><div class="d-flex flex-column gap-3"><select class="form-select" name="team_id">{team_options_html}</select><button type="submit" class="btn btn-dark"{'' if get_season_status(season_entry) == 'ongoing' else ' disabled'}>为所选战队报名</button></div></form>"""
     season_registration_panel = ""
     if selected_season:
-        season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期与战队报名</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛事负责人可以维护赛季起止时间，具备战队管理权限的账号或战队队长可以为自己的战队报名正在进行中的赛季。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="row g-3 mb-4"><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></div><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">报名概览</div><h3 class="h5 mb-2">已报名 {len(registered_team_cards)} 支战队</h3><div class="small-muted mb-2">仅进行中的赛季允许新增或取消报名</div><p class="section-copy mb-0">报名成功后，战队会出现在本赛季赛事页的已报名名单中，方便赛程安排前统一确认参赛队伍。</p></div></div><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">我的战队操作</div><h3 class="h5 mb-2">{escape(current_user_team['name']) if current_user_team else '未绑定战队'}</h3><div class="small-muted mb-2">{'队长或管理员可执行报名' if current_user_team else ('管理员可代战队报名' if is_admin_user(ctx.current_user) else '当前账号还没有加入战队')}</div>{registration_form_html or '<div class="section-copy">当前账号没有可用于报名的战队，或你不是该战队的队长。</div>'}</div></div></div><div class="row g-3">{''.join(registered_team_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前赛季还没有战队报名。</div></div>'}</div></section>"""
-    team_points_rows = [f"""<tr><td>{row.get('points_rank', '-')}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['name'])}</a></td><td>{row['matches_represented']}</td><td>{row['player_count']}</td><td>{row['points_earned_total']:.2f}</td><td>{row.get('points_per_match', 0.0):.2f}</td><td>{format_pct(row['win_rate'])}</td></tr>""" for row in team_rows]
+        season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期与战队报名</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛事负责人可以维护赛季起止时间，具备战队管理权限的账号、已认领战队的负责人或管理员可以为自己的战队报名正在进行中的赛季。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="row g-3 mb-4"><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></div><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">报名概览</div><h3 class="h5 mb-2">已报名 {len(registered_team_cards)} 支战队</h3><div class="small-muted mb-2">仅进行中的赛季允许新增或取消报名</div><p class="section-copy mb-0">报名成功后，战队会出现在本赛季赛事页的已报名名单中，方便赛程安排前统一确认参赛队伍。</p></div></div><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">我的已认领战队</div><h3 class="h5 mb-2">{escape(current_user_team['name']) if current_user_team else '暂无已认领战队'}</h3><div class="small-muted mb-2">{'认领负责人或管理员可执行报名' if current_user_team else ('管理员可代战队报名' if is_admin_user(ctx.current_user) else '当前账号在本赛季还没有已认领战队')}</div>{registration_form_html or '<div class="section-copy">当前账号没有可用于报名的战队，或你还不是该战队的认领负责人。</div>'}</div></div></div><div class="row g-3">{''.join(registered_team_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前赛季还没有战队报名。</div></div>'}</div></section>"""
+    stage_team_sections: list[str] = []
+    for stage_key, rows in stage_team_rows.items():
+        stage_table_rows = "".join(
+            f"""<tr><td>{row.get('points_rank', '-')}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['name'])}</a></td><td>{row['matches_represented']}</td><td>{row['player_count']}</td><td>{row['points_earned_total']:.2f}</td><td>{row.get('points_per_match', 0.0):.2f}</td><td>{format_pct(row['win_rate'])}</td></tr>"""
+            for row in rows
+        )
+        stage_team_sections.append(
+            f"""<div class="col-12 col-xxl-6"><div class="panel h-100 shadow-sm p-3"><h3 class="h5 mb-3">{escape(STAGE_OPTIONS.get(stage_key, stage_key))}</h3><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均积分</th><th>胜率</th></tr></thead><tbody>{stage_table_rows}</tbody></table></div></div></div>"""
+        )
+    grouped_team_sections: list[str] = []
+    for stage_key, group_map in stage_group_team_rows.items():
+        stage_group_blocks: list[str] = []
+        for group_label, rows in group_map.items():
+            group_table_rows = "".join(
+                f"""<tr><td>{index}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['team_name'])}</a></td><td>{row['matches_represented']}</td><td>{row['player_count']}</td><td>{row['points_earned_total']:.2f}</td><td>{row['points_per_match']:.2f}</td></tr>"""
+                for index, row in enumerate(rows, start=1)
+            )
+            stage_group_blocks.append(
+                f"""<div class="col-12 col-xxl-6"><div class="panel h-100 shadow-sm p-3"><h4 class="h6 mb-3">{escape(group_label)}</h4><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均积分</th></tr></thead><tbody>{group_table_rows or '<tr><td colspan="6" class="text-secondary">当前分组还没有积分数据。</td></tr>'}</tbody></table></div></div></div>"""
+            )
+        grouped_team_sections.append(
+            f"""<section class="panel shadow-sm p-3 p-lg-4 mb-3"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h3 class="h5 mb-2">{escape(STAGE_OPTIONS.get(stage_key, stage_key))}</h3><p class="section-copy mb-0">该赛段内再按比赛实际录入的分组拆分统计战队积分。</p></div></div><div class="row g-3">{''.join(stage_group_blocks)}</div></section>"""
+        )
     player_points_rows = [f"""<tr><td>{row['rank']}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td><td>{escape(row['team_name'])}</td><td>{row['games_played']}</td><td>{escape(row['record'])}</td><td>{row['points_earned_total']:.2f}</td><td>{row['average_points']:.2f}</td><td>{format_pct(row['win_rate'])}</td></tr>""" for row in player_rows]
+    mvp_table_rows = "".join(
+        f"""<tr><td>{row['rank']}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td><td>{escape(row['team_name'])}</td><td>{row['mvp_count']}</td><td>{escape(row['latest_awarded_on'] or '待更新')}</td></tr>"""
+        for row in mvp_rows
+    )
+    leaderboard_sections = f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">积分榜</h2>
+          <p class="section-copy mb-0">默认先展示战队积分榜；如需查看分组战队榜、个人积分榜或个人 MVP 榜，可通过下拉菜单自由切换。</p>
+        </div>
+        <div style="min-width: 240px;">
+          <label class="form-label mb-2" for="season-leaderboard-select">选择榜单</label>
+          <select class="form-select" id="season-leaderboard-select" data-season-leaderboard-select>
+            <option value="team" selected>战队积分榜</option>
+            <option value="group-team">分组战队积分榜</option>
+            <option value="player">个人积分榜</option>
+            <option value="mvp">个人 MVP 榜</option>
+          </select>
+        </div>
+      </div>
+      <div data-season-leaderboard-panel="team">
+        <div class="mb-3">
+          <h3 class="h5 mb-2">战队积分榜</h3>
+          <p class="section-copy mb-0">战队积分按赛段分别统计。每个赛段只累计该赛段下已录入完成比赛的战队总积分。</p>
+        </div>
+        <div class="row g-3">{''.join(stage_team_sections) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前赛季还没有可统计的赛段战队积分数据。</div></div>'}</div>
+      </div>
+      <div data-season-leaderboard-panel="group-team" hidden>
+        <div class="mb-3">
+          <h3 class="h5 mb-2">分组战队积分榜</h3>
+          <p class="section-copy mb-0">分组战队积分榜同样按赛段统计，因为不同赛段的战队分组可能不同。每个赛段内再按比赛实际录入的分组分别展示。</p>
+        </div>
+        {''.join(grouped_team_sections) or '<div class="alert alert-secondary mb-0">当前赛季还没有可统计的分组战队积分数据。</div>'}
+      </div>
+      <div data-season-leaderboard-panel="player" hidden>
+        <div class="mb-3">
+          <h3 class="h5 mb-2">个人积分榜</h3>
+          <p class="section-copy mb-0">个人积分榜按当前赛事与赛季下全部已录入完成的比赛累计，不再按赛段拆分，方便直接看整个赛季的个人表现。</p>
+        </div>
+        <div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>赛季总积分</th><th>场均得分</th><th>胜率</th></tr></thead><tbody>{''.join(player_points_rows) or '<tr><td colspan="8" class="text-secondary">当前赛季还没有选手积分数据。</td></tr>'}</tbody></table></div>
+      </div>
+      <div data-season-leaderboard-panel="mvp" hidden>
+        <div class="mb-3">
+          <h3 class="h5 mb-2">个人 MVP 榜</h3>
+          <p class="section-copy mb-0">按当前赛事与赛季下全部已录入完成的比赛累计 MVP 次数。若同次数，则最近获奖日期更晚的选手排在前面。</p>
+        </div>
+        <div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>MVP 次数</th><th>最近获奖</th></tr></thead><tbody>{mvp_table_rows or '<tr><td colspan="5" class="text-secondary">当前赛季还没有 MVP 数据。</td></tr>'}</tbody></table></div>
+      </div>
+      <script>
+        (() => {{
+          const select = document.querySelector("[data-season-leaderboard-select]");
+          if (!select) return;
+          const panels = Array.from(document.querySelectorAll("[data-season-leaderboard-panel]"));
+          const syncPanels = () => {{
+            const selectedValue = select.value;
+            panels.forEach((panel) => {{
+              panel.hidden = panel.getAttribute("data-season-leaderboard-panel") !== selectedValue;
+            }});
+          }};
+          select.addEventListener("change", syncPanels);
+          syncPanels();
+        }})();
+      </script>
+    </section>
+    """
     team_cards = [f"""<div class="col-12 col-md-6"><a class="team-link-card shadow-sm p-4 h-100" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}"><div class="card-kicker mb-2">Team Access</div><h2 class="h4 mb-2">{escape(row['name'])}</h2><div class="small-muted mb-3">当前赛季积分榜第 {row.get('points_rank', row['rank'])} 名 · {row['player_count']} 名队员 · 对局 {row['matches_represented']} 场</div><div class="row g-3"><div class="col-4"><div class="small text-secondary">总积分</div><div class="fw-semibold">{row['points_earned_total']:.2f}</div></div><div class="col-4"><div class="small text-secondary">场均积分</div><div class="fw-semibold">{row.get('points_per_match', 0.0):.2f}</div></div><div class="col-4"><div class="small text-secondary">胜率</div><div class="fw-semibold">{format_pct(row['win_rate'])}</div></div></div></a></div>""" for row in team_rows]
     match_table_rows = []
     for match in match_rows:
         team_names = "、".join(sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"]}))
+        group_label = str(match.get("group_label") or "").strip() or team_names or "未设置"
+        room_label = str(match.get("table_label") or "").strip() or "未设置"
         match_detail_path = f"/matches/{match['match_id']}?next={quote(build_scoped_path('/competitions', selected_competition, selected_season, selected_region, selected_series_slug))}"
         day_path = build_match_day_path(match["played_on"], build_scoped_path("/competitions", selected_competition, selected_season, selected_region, selected_series_slug))
-        match_table_rows.append(f"""<tr><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(match_detail_path)}">{escape(match['match_id'])}</a></td><td>{escape(match['season'])}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(day_path)}">{escape(match['played_on'])}</a></td><td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td><td>第 {match['round']} 轮</td><td>第 {match['game_no']} 局</td><td>{escape(team_names)}</td><td>{escape(match['table_label'])}</td><td>{escape(match['format'])}</td><td><a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">查看详情</a></td></tr>""")
+        match_table_rows.append(f"""<tr><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(match_detail_path)}">{escape(match['match_id'])}</a></td><td>{escape(match['season'])}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(day_path)}">{escape(match['played_on'])}</a></td><td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td><td>第 {match['round']} 轮</td><td>第 {match['game_no']} 局</td><td>{escape(group_label)}</td><td>{escape(room_label)}</td><td>{escape(match['format'])}</td><td><a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">查看详情</a></td></tr>""")
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">{escape(page_badge)}</div><h1 class="hero-title mb-3">{escape(hero_title)}</h1><p class="hero-copy mb-0">{escape(hero_intro)}</p>{region_switcher_html}{series_switcher_html}<div class="hero-switchers mt-3">{competition_switcher}</div>{season_switcher_html}<div class="hero-kpis"><div class="hero-pill"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>{escape(selected_season or '当前赛季')} 真实参赛</small></div><div class="hero-pill"><span>参赛队员</span><strong>{player_count}</strong><small>{escape(selected_season or '当前赛季')} 已上场</small></div><div class="hero-pill"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>{escape(scope_label)} 完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Official Event Sheet</div><div class="hero-stage-label">Season Overview</div><div class="hero-stage-title">{escape(scope_label)}</div><div class="hero-stage-note">{escape(hero_note)}</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(selected_season or (' / '.join(competition_meta['seasons'][:2]) if competition_meta and competition_meta['seasons'] else '赛季待录入'))}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>该赛季参赛战队</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{player_count}</strong><small>该赛季实际出场</small></div><div class="hero-stage-metric"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>该赛季完整赛程</small></div></div></div></div></section>
     {season_registration_panel}
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">战队积分排行榜</h2><p class="section-copy mb-0">本榜单按当前赛事与赛季下所有上场队员的个人积分累计而成。也就是说，队员个人积分会直接计入战队赛季积分。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>赛季总积分</th><th>场均积分</th><th>胜率</th></tr></thead><tbody>{''.join(team_points_rows) or '<tr><td colspan="7" class="text-secondary">当前赛季还没有战队积分数据。</td></tr>'}</tbody></table></div></section>
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">选手积分排行榜</h2><p class="section-copy mb-0">这里按当前赛事与赛季统计个人积分排名，方便直接查看这个小赛季下的选手表现。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>赛季总积分</th><th>场均得分</th><th>胜率</th></tr></thead><tbody>{''.join(player_points_rows) or '<tr><td colspan="8" class="text-secondary">当前赛季还没有选手积分数据。</td></tr>'}</tbody></table></div></section>
+    {leaderboard_sections}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季战队入口</h2><p class="section-copy mb-0">这里只列出这个系列赛当前赛季真实参赛的战队，避免和其他赛季混在一起。点进战队卡片后，会继续看到同一赛季口径下的统计。</p></div><div class="d-flex flex-wrap gap-2">{create_match_button}{edit_competition_button}{series_topic_button}{schedule_page_button}<a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', None, None, selected_region, selected_series_slug))}">返回地区赛事列表</a></div></div><div class="row g-3 g-lg-4">{''.join(team_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前赛季还没有战队数据。</div></div>'}</div></section>
-    <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季完整赛程</h2><p class="section-copy mb-0">先在这里确认当前赛季的轮次和参赛战队，再从上面的战队入口继续查看更深一层的数据页面。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>编号</th><th>赛季</th><th>日期</th><th>阶段</th><th>轮次</th><th>局次</th><th>参赛战队</th><th>桌号</th><th>板型</th><th>操作</th></tr></thead><tbody>{''.join(match_table_rows)}</tbody></table></div></section>
+    <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季完整赛程</h2><p class="section-copy mb-0">先在这里确认当前赛季的轮次、参赛分组和房间安排，再从上面的战队入口继续查看更深一层的数据页面。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>编号</th><th>赛季</th><th>日期</th><th>阶段</th><th>轮次</th><th>局次</th><th>参赛分组</th><th>房间</th><th>板型</th><th>操作</th></tr></thead><tbody>{''.join(match_table_rows)}</tbody></table></div></section>
     """
     return layout(scope_label, body, ctx, alert=alert)
 
@@ -231,8 +535,8 @@ def get_series_page(ctx: RequestContext, series_slug: str) -> str:
     season_switcher = build_series_season_switcher(series_slug, season_names, selected_season)
     season_switcher_html = f'<div class="hero-switchers mt-4">{season_switcher}</div>' if season_switcher else ""
     region_names = "、".join(sorted({row["region_name"] for row in series_rows}))
-    latest_played_on = get_nearest_match_day_label(
-        [match["played_on"] for match in filtered_matches],
+    latest_played_on = get_scheduled_match_day_label(
+        filtered_matches,
         legacy.china_today_label(),
     )
     top_player = player_rows[0] if player_rows else None
@@ -486,7 +790,7 @@ def handle_competitions(ctx: RequestContext, start_response):
         return start_response_html(
             start_response,
             "403 Forbidden",
-            layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、战队队长或管理员可以为战队报名赛季。</div>', ctx),
+            layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、已认领该战队的负责人或管理员可以为战队报名赛季。</div>', ctx),
         )
     series_slug = legacy.build_series_context_from_competition(
         competition_name,

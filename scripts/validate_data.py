@@ -79,13 +79,12 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
         "short_name",
         "logo",
         "active",
-        "is_placeholder_team",
-        "placeholder_source_name",
         "founded_on",
         "competition_name",
         "season_name",
         "guild_id",
         "captain_player_id",
+        "stage_groups",
         "members",
         "notes",
     }
@@ -115,10 +114,6 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
 
         if not isinstance(team.get("active"), bool):
             errors.append(f"{label}.active: expected boolean")
-        if not isinstance(team.get("is_placeholder_team"), bool):
-            errors.append(f"{label}.is_placeholder_team: expected boolean")
-        if team.get("placeholder_source_name") is not None and not isinstance(team.get("placeholder_source_name"), str):
-            errors.append(f"{label}.placeholder_source_name: expected string or null")
 
         errors.extend(validate_iso_date(team.get("founded_on"), f"{label}.founded_on"))
         errors.extend(
@@ -164,6 +159,25 @@ def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]
                 errors.append(
                     f"{label}.captain_player_id: captain must also appear in team members"
                 )
+        stage_groups = team.get("stage_groups")
+        if not isinstance(stage_groups, list):
+            errors.append(f"{label}.stage_groups: expected array")
+        else:
+            seen_stages: set[str] = set()
+            for group_index, group in enumerate(stage_groups):
+                group_label = f"{label}.stage_groups[{group_index}]"
+                if not isinstance(group, dict):
+                    errors.append(f"{group_label}: expected object")
+                    continue
+                errors.extend(expect_keys(group, {"stage", "group_label"}, group_label))
+                stage = group.get("stage")
+                if stage not in VALID_STAGES:
+                    errors.append(f"{group_label}.stage: expected one of {sorted(VALID_STAGES)}")
+                elif stage in seen_stages:
+                    errors.append(f"{group_label}.stage: duplicate stage {stage!r}")
+                else:
+                    seen_stages.add(stage)
+                errors.extend(validate_non_empty_string(group.get("group_label"), f"{group_label}.group_label"))
 
         if not isinstance(team.get("notes"), str):
             errors.append(f"{label}.notes: expected string")
@@ -189,6 +203,7 @@ def validate_guilds(
         "founded_on",
         "leader_username",
         "manager_usernames",
+        "honors",
         "notes",
     }
 
@@ -235,6 +250,19 @@ def validate_guilds(
                     errors.append(f"{manager_label}: duplicate username {username!r}")
                 else:
                     seen_usernames.add(username)
+        honors = guild.get("honors")
+        if not isinstance(honors, list):
+            errors.append(f"{label}.honors: expected array")
+        else:
+            for honor_index, honor in enumerate(honors):
+                honor_label = f"{label}.honors[{honor_index}]"
+                if not isinstance(honor, dict):
+                    errors.append(f"{honor_label}: expected object")
+                    continue
+                errors.extend(expect_keys(honor, {"title", "team_name", "scope"}, honor_label))
+                errors.extend(validate_non_empty_string(honor.get("title"), f"{honor_label}.title"))
+                errors.extend(validate_non_empty_string(honor.get("team_name"), f"{honor_label}.team_name"))
+                errors.extend(validate_non_empty_string(honor.get("scope"), f"{honor_label}.scope"))
         if not isinstance(guild.get("notes"), str):
             errors.append(f"{label}.notes: expected string")
 
@@ -359,6 +387,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "game_no",
         "score_model",
         "played_on",
+        "group_label",
         "table_label",
         "format",
         "duration_minutes",
@@ -432,6 +461,9 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             )
 
         errors.extend(validate_iso_date(match.get("played_on"), f"{label}.played_on"))
+        errors.extend(
+            validate_non_empty_string(match.get("group_label"), f"{label}.group_label")
+        )
         errors.extend(
             validate_non_empty_string(match.get("table_label"), f"{label}.table_label")
         )
@@ -509,9 +541,9 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                 else:
                     seen_seats.add(seat)
 
-                errors.extend(
-                    validate_non_empty_string(participant.get("role"), f"{participant_label}.role")
-                )
+                role = participant.get("role")
+                if not isinstance(role, str):
+                    errors.append(f"{participant_label}.role: expected string")
 
                 camp = participant.get("camp")
                 if camp not in VALID_CAMPS:

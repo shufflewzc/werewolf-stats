@@ -19,10 +19,7 @@ get_team_by_id = legacy.get_team_by_id
 get_user_bound_player_ids = legacy.get_user_bound_player_ids
 get_user_by_player_id = legacy.get_user_by_player_id
 get_user_badge_label = legacy.get_user_badge_label
-get_user_captained_team_ids = legacy.get_user_captained_team_ids
 is_admin_user = legacy.is_admin_user
-is_placeholder_user = legacy.is_placeholder_user
-is_team_captain_user = legacy.is_team_captain_user
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
 load_users = legacy.load_users
@@ -38,17 +35,25 @@ user_has_permission = legacy.user_has_permission
 def can_review_binding_requests(data, acting_user, target_user, source_player) -> bool:
     if not acting_user or not target_user or not source_player:
         return False
-    if is_admin_user(acting_user) or user_has_permission(acting_user, "player_binding_manage"):
-        return True
-    captained_team_ids = get_user_captained_team_ids(data, acting_user)
-    return bool(captained_team_ids and source_player.get("team_id") in captained_team_ids)
+    del data, target_user, source_player
+    return bool(
+        is_admin_user(acting_user)
+        or user_has_permission(acting_user, "player_binding_manage")
+    )
 
 
-def remove_placeholder_owner(users, player_id: str):
-    placeholder_owner = get_user_by_player_id(users, player_id)
-    if not placeholder_owner or not is_placeholder_user(placeholder_owner):
-        return users
-    return [user for user in users if user["username"] != placeholder_owner["username"]]
+def can_manage_other_binding_accounts(data, acting_user) -> bool:
+    del data
+    if not acting_user:
+        return False
+    return (
+        is_admin_user(acting_user)
+        or user_has_permission(acting_user, "player_binding_manage")
+    )
+
+
+def can_direct_bind_player_ids(acting_user) -> bool:
+    return bool(acting_user and is_admin_user(acting_user))
 
 
 def get_player_bindings_page(
@@ -66,12 +71,23 @@ def get_player_bindings_page(
         (player for player in data["players"] if player["player_id"] == selected_player_id),
         None,
     )
-    target_name = target_username.strip() or form_value(ctx.query, "username").strip() or ctx.current_user["username"]
+    requested_target_name = (
+        target_username.strip()
+        or form_value(ctx.query, "username").strip()
+    )
+    target_name = ctx.current_user["username"]
+    if requested_target_name and can_manage_other_binding_accounts(data, ctx.current_user):
+        target_name = requested_target_name
     target_user = next((user for user in users if user["username"] == target_name), None)
     if not target_user:
         return layout("未找到账号", '<div class="alert alert-danger">没有找到要绑定的账号。</div>', ctx)
     if not can_manage_player_bindings(data, ctx.current_user, target_user, selected_player):
         return layout("没有权限", '<div class="alert alert-danger">你没有权限管理该账号的赛事绑定。</div>', ctx)
+    target_username_input = (
+        f'<input type="hidden" name="target_username" value="{escape(target_user["username"])}">'
+        if target_user["username"] != ctx.current_user["username"]
+        else ""
+    )
     summary = build_bound_player_summary(data, target_user)
     candidates = build_player_binding_candidates(data, users, target_user)
     requests = load_membership_requests()
@@ -96,7 +112,7 @@ def get_player_bindings_page(
             else f"""
             <form method="post" action="/bindings" class="m-0">
               <input type="hidden" name="action" value="unbind_player_id">
-              <input type="hidden" name="target_username" value="{escape(target_user['username'])}">
+              {target_username_input}
               <input type="hidden" name="player_id" value="{escape(player_id)}">
               <button type="submit" class="btn btn-sm btn-outline-danger">解绑</button>
             </form>
@@ -117,25 +133,32 @@ def get_player_bindings_page(
     for item in candidates:
         owner_hint = ""
         if item["owner_username"] and item["owner_username"] != target_user["username"]:
-            owner_hint = (
-                f'<div class="small text-secondary">当前归属：{escape(item["owner_username"])}'
-                + ("（未注册账号）" if item.get("owner_is_placeholder") else "")
-                + "</div>"
-            )
+            owner_hint = f'<div class="small text-secondary">当前归属：{escape(item["owner_username"])}</div>'
         action_html = (
             '<span class="small text-secondary">已绑定到当前账号</span>'
             if item["already_bound"]
             else (
+                f"""
+                <form method="post" action="/bindings" class="m-0">
+                  <input type="hidden" name="action" value="direct_bind_player_id">
+                  {target_username_input}
+                  <input type="hidden" name="player_id" value="{escape(item['player_id'])}">
+                  <button type="submit" class="btn btn-sm btn-dark">直接绑定</button>
+                </form>
+                """
+                if can_direct_bind_player_ids(ctx.current_user)
+                else (
                 '<span class="small text-secondary">绑定申请审批中</span>'
                 if item["player_id"] in pending_request_map
                 else f"""
                 <form method="post" action="/bindings" class="m-0">
                   <input type="hidden" name="action" value="request_bind_player_id">
-                  <input type="hidden" name="target_username" value="{escape(target_user['username'])}">
+                  {target_username_input}
                   <input type="hidden" name="player_id" value="{escape(item['player_id'])}">
                   <button type="submit" class="btn btn-sm btn-dark">提交绑定申请</button>
                 </form>
                 """
+                )
             )
         )
         row_class = "table-active" if item["player_id"] == selected_player_id else ""
@@ -188,42 +211,20 @@ def get_player_bindings_page(
             </tr>
             """
         )
-    username_picker_html = ""
-    if (
-        is_admin_user(ctx.current_user)
-        or user_has_permission(ctx.current_user, "player_binding_manage")
-        or is_team_captain_user(data, ctx.current_user)
-    ):
-        username_picker_html = f"""
-        <form method="get" action="/bindings" class="row g-3 align-items-end mb-4">
-          <div class="col-12 col-lg-5">
-            <label class="form-label">目标账号</label>
-            <input class="form-control" name="username" value="{escape(target_user['username'])}" placeholder="输入用户名">
-          </div>
-          <div class="col-12 col-lg-4">
-            <label class="form-label">预选参赛ID</label>
-            <input class="form-control" name="player_id" value="{escape(selected_player_id)}" placeholder="例如 p001-s1">
-          </div>
-          <div class="col-12 col-lg-3">
-            <button type="submit" class="btn btn-outline-dark w-100">切换绑定对象</button>
-          </div>
-        </form>
-        """
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">赛事数据绑定</div>
       <h1 class="display-6 fw-semibold mb-3">管理参赛ID与账号绑定</h1>
-      <p class="mb-0 opacity-75">比赛录入时如果选手还没注册，系统会先为赛季参赛ID预留档案。后续只要把该赛季ID绑定一次，这个赛季下的全部比赛就会自动归到该账号名下；不同赛季则可以继续绑定不同ID。</p>
+      <p class="mb-0 opacity-75">比赛录入时，系统会先为选手创建赛季参赛档案。账号注册后只需要把账号绑定到这些赛季档案上，个人生涯数据就会按已绑定档案聚合展示；赛季原始档案会一直保留。</p>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
-          <h2 class="section-title mb-2">目标账号</h2>
-          <p class="section-copy mb-0">当前正在为 <strong>{escape(target_user['username'])}</strong> 维护绑定关系。</p>
+          <h2 class="section-title mb-2">当前账号</h2>
+          <p class="section-copy mb-0">当前正在为 <strong>{escape(target_user['username'])}</strong> 维护绑定关系。页面只保留绑定与解绑操作；管理员或具备权限的账号可通过指定用户名进入他人的绑定页。</p>
         </div>
         <a class="btn btn-outline-dark" href="/profile">返回个人中心</a>
       </div>
-      {username_picker_html}
       {build_profile_binding_summary(summary) if summary else '<div class="alert alert-secondary mb-0">该账号暂时还没有已绑定的赛事数据。</div>'}
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -245,7 +246,7 @@ def get_player_bindings_page(
     </section>
     <section class="panel shadow-sm p-3 p-lg-4">
       <h2 class="section-title mb-2">可绑定的赛季参赛ID</h2>
-      <p class="section-copy mb-3">这里只展示已有比赛记录、且尚未绑定到其他正式账号的赛季参赛ID档案。注册后先提交绑定申请，再由赛事管理员或相关战队队长审批。</p>
+      <p class="section-copy mb-3">这里只展示已有比赛记录、且尚未绑定到其他账号的赛季参赛ID档案。提交绑定申请后，再由管理员或具备绑定权限的赛事管理员审批。</p>
       <div class="table-responsive">
         <table class="table align-middle">
           <thead>
@@ -308,7 +309,10 @@ def handle_player_bindings(ctx: RequestContext, start_response):
     data = load_validated_data()
     users = load_users()
     action = form_value(ctx.form, "action").strip()
-    target_username = form_value(ctx.form, "target_username").strip() or ctx.current_user["username"]
+    target_username = ctx.current_user["username"]
+    requested_target_username = form_value(ctx.form, "target_username").strip()
+    if requested_target_username and can_manage_other_binding_accounts(data, ctx.current_user):
+        target_username = requested_target_username
     player_id = form_value(ctx.form, "player_id").strip()
     target_user = next((user for user in users if user["username"] == target_username), None)
     if not target_user:
@@ -337,7 +341,7 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                 layout("没有权限", '<div class="alert alert-danger">你没有权限操作这条绑定关系。</div>', ctx),
             )
         owner_user = get_user_by_player_id(users, player_id)
-        if owner_user and not is_placeholder_user(owner_user) and owner_user["username"] != target_user["username"]:
+        if owner_user and owner_user["username"] != target_user["username"]:
             return start_response_html(
                 start_response,
                 "200 OK",
@@ -402,7 +406,93 @@ def handle_player_bindings(ctx: RequestContext, start_response):
             "200 OK",
             get_player_bindings_page(
                 ctx,
-                alert="绑定申请已提交，等待赛事管理员或相关战队队长审批。",
+                alert="绑定申请已提交，等待管理员或具备绑定权限的赛事管理员审批。",
+                target_username=target_username,
+                selected_player_id=player_id,
+            ),
+        )
+
+    if action == "direct_bind_player_id":
+        if not can_direct_bind_player_ids(ctx.current_user):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">只有管理员可以直接绑定参赛ID。</div>', ctx),
+            )
+        source_player = next((player for player in data["players"] if player["player_id"] == player_id), None)
+        if not source_player:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_player_bindings_page(
+                    ctx,
+                    alert="没有找到对应的参赛ID档案。",
+                    target_username=target_username,
+                ),
+            )
+        if not can_manage_player_bindings(data, ctx.current_user, target_user, source_player):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">你没有权限操作这条绑定关系。</div>', ctx),
+            )
+        season_conflict = find_season_binding_conflict(data, target_user, player_id)
+        if season_conflict:
+            conflict_player_id, conflict_scopes = season_conflict
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_player_bindings_page(
+                    ctx,
+                    alert=(
+                        f"账号 {target_username} 已经绑定赛季参赛ID {conflict_player_id}，"
+                        f"覆盖范围：{'、'.join(conflict_scopes)}。同一赛季只需要绑定一个ID。"
+                    ),
+                    target_username=target_username,
+                    selected_player_id=player_id,
+                ),
+            )
+        owner_user = get_user_by_player_id(users, player_id)
+        if owner_user and owner_user["username"] != target_user["username"]:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_player_bindings_page(
+                    ctx,
+                    alert=f"参赛ID {player_id} 已经绑定到账号 {get_user_badge_label(owner_user)}。",
+                    target_username=target_username,
+                    selected_player_id=player_id,
+                ),
+            )
+        users = add_user_linked_player_id(users, target_username, player_id)
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_player_bindings_page(
+                    ctx,
+                    alert="直接绑定失败：" + "；".join(errors[:3]),
+                    target_username=target_username,
+                    selected_player_id=player_id,
+                ),
+            )
+        requests = [
+            item
+            for item in load_membership_requests()
+            if not (
+                item.get("request_type") == "player_binding"
+                and item.get("username") == target_username
+                and item.get("player_id") == player_id
+            )
+        ]
+        save_membership_requests(requests)
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_bindings_page(
+                ctx,
+                alert=f"已直接为账号 {target_username} 绑定参赛ID {player_id}。",
                 target_username=target_username,
                 selected_player_id=player_id,
             ),
@@ -459,7 +549,7 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                 ),
             )
         owner_user = get_user_by_player_id(users, request_player_id)
-        if owner_user and not is_placeholder_user(owner_user) and owner_user["username"] != request_target_user["username"]:
+        if owner_user and owner_user["username"] != request_target_user["username"]:
             return start_response_html(
                 start_response,
                 "200 OK",
@@ -470,7 +560,6 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                     selected_player_id=request_player_id,
                 ),
             )
-        users = remove_placeholder_owner(users, request_player_id)
         users = add_user_linked_player_id(users, request_target_user["username"], request_player_id)
         errors = save_repository_state(data, users)
         if errors:

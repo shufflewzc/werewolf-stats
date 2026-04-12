@@ -1,5 +1,268 @@
 {
-  "generated_at": "2026-04-09T20:58:37+08:00",
-  "leaderboard": [],
-  "player_details": {}
+  "generated_at": "2026-04-10T18:31:48+08:00",
+  "leaderboard": [
+    {
+      "player_id": "player-111",
+      "display_name": "111",
+      "team_id": "lal-gz-cj-001",
+      "team_name": "111",
+      "team_names": [
+        "111"
+      ],
+      "current_team_id": "lal-gz-cj-001",
+      "current_team_name": "111",
+      "photo": "assets/players/default-player.svg",
+      "games_played": 1,
+      "wins": 1,
+      "losses": 0,
+      "villagers_games": 1,
+      "villagers_wins": 1,
+      "werewolves_games": 0,
+      "werewolves_wins": 0,
+      "stance_calls": 0,
+      "correct_stance_calls": 0,
+      "incorrect_stance_calls": 0,
+      "points_earned_total": 0.0,
+      "win_rate": 1.0,
+      "villagers_win_rate": 1.0,
+      "werewolves_win_rate": 0.0,
+      "stance_rate": 0.0,
+      "average_points": 0.0,
+      "record": "1-0",
+      "rank": 1
+    },
+    {
+      "player_id": "player-222",
+      "display_name": "222",
+      "team_id": "lal-gz-cj-002",
+      "team_name": "222",
+      "team_names": [
+        "222"
+      ],
+      "current_team_id": "lal-gz-cj-002",
+      "current_team_name": "222",
+      "photo": "assets/players/default-player.svg",
+      "games_played": 1,
+      "wins": 1,
+      "losses": 0,
+      "villagers_games": 1,
+      "villagers_wins": 1,
+      "werewolves_games": 0,
+      "werewolves_wins": 0,
+      "stance_calls": 0,
+      "correct_stance_calls": 0,
+      "incorrect_stance_calls": 0,
+      "points_earned_total": 0.0,
+      "win_rate": 1.0,
+      "villagers_win_rate": 1.0,
+      "werewolves_win_rate": 0.0,
+      "stance_rate": 0.0,
+      "average_points": 0.0,
+      "record": "1-0",
+      "rank": 2
+    },
+    {
+      "player_id": "player-admin",
+      "display_name": "管理员",
+      "team_id": "lal-gz-cj-001",
+      "team_name": "111",
+      "team_names": [
+        "111"
+      ],
+      "current_team_id": "lal-gz-cj-001",
+      "current_team_name": "111",
+      "photo": "assets/players/default-player.svg",
+      "games_played": 0,
+      "wins": 0,
+      "losses": 0,
+      "villagers_games": 0,
+      "villagers_wins": 0,
+      "werewolves_games": 0,
+      "werewolves_wins": 0,
+      "stance_calls": 0,
+      "correct_stance_calls": 0,
+      "incorrect_stance_calls": 0,
+      "points_earned_total": 0.0,
+      "win_rate": 0.0,
+      "villagers_win_rate": 0.0,
+      "werewolves_win_rate": 0.0,
+      "stance_rate": 0.0,
+      "average_points": 0.0,
+      "record": "0-0",
+      "rank": 3
+    }
+  ],
+  "player_details": {
+    "player-111": {
+      "player_id": "player-111",
+      "display_name": "111",
+      "team_name": "111",
+      "rank": 1,
+      "aliases": [],
+      "joined_on": "2026-04-10",
+      "photo": "assets/players/default-player.svg",
+      "notes": "比赛录入时自动创建的赛季队员档案：LAL广州公开赛 · 2026春季联赛。 后续可由账号绑定到该赛季档案。",
+      "record": "1-0",
+      "games_played": 1,
+      "wins": 1,
+      "losses": 0,
+      "overall_win_rate": "100.0%",
+      "villagers_win_rate": "100.0%",
+      "werewolves_win_rate": "0.0%",
+      "stance_rate": "0.0%",
+      "average_points": "0.00",
+      "points_total": "0.00",
+      "correct_stances": 0,
+      "incorrect_stances": 0,
+      "stance_calls": 0,
+      "roles": [
+        {
+          "role": "",
+          "games": 1
+        }
+      ],
+      "season_stats": [
+        {
+          "competition_name": "LAL广州公开赛",
+          "season_name": "2026春季联赛",
+          "games_played": 1,
+          "record": "1-0",
+          "overall_win_rate": "100.0%",
+          "villagers_win_rate": "100.0%",
+          "werewolves_win_rate": "0.0%",
+          "points_total": "0.00",
+          "average_points": "0.00"
+        }
+      ],
+      "history": [
+        {
+          "match_id": "gz-cj-260430-03",
+          "competition_name": "LAL广州公开赛",
+          "season": "2026春季联赛",
+          "stage_label": "常规赛",
+          "round": 21,
+          "game_no": 3,
+          "played_on": "2026-04-30",
+          "table_label": "1号房",
+          "role": "",
+          "camp_label": "好人阵营",
+          "result_label": "胜",
+          "points_earned": 0.0,
+          "stance_result_label": "未填写",
+          "notes": ""
+        }
+      ],
+      "competition_stats": [
+        {
+          "competition_name": "LAL广州公开赛",
+          "team_name": "111",
+          "games_played": 1,
+          "record": "1-0",
+          "win_rate": "100.0%",
+          "stance_rate": "0.0%",
+          "points_total": "0.00",
+          "average_points": "0.00"
+        }
+      ]
+    },
+    "player-222": {
+      "player_id": "player-222",
+      "display_name": "222",
+      "team_name": "222",
+      "rank": 2,
+      "aliases": [],
+      "joined_on": "2026-04-10",
+      "photo": "assets/players/default-player.svg",
+      "notes": "比赛录入时自动创建的赛季队员档案：LAL广州公开赛 · 2026春季联赛。 后续可由账号绑定到该赛季档案。",
+      "record": "1-0",
+      "games_played": 1,
+      "wins": 1,
+      "losses": 0,
+      "overall_win_rate": "100.0%",
+      "villagers_win_rate": "100.0%",
+      "werewolves_win_rate": "0.0%",
+      "stance_rate": "0.0%",
+      "average_points": "0.00",
+      "points_total": "0.00",
+      "correct_stances": 0,
+      "incorrect_stances": 0,
+      "stance_calls": 0,
+      "roles": [
+        {
+          "role": "",
+          "games": 1
+        }
+      ],
+      "season_stats": [
+        {
+          "competition_name": "LAL广州公开赛",
+          "season_name": "2026春季联赛",
+          "games_played": 1,
+          "record": "1-0",
+          "overall_win_rate": "100.0%",
+          "villagers_win_rate": "100.0%",
+          "werewolves_win_rate": "0.0%",
+          "points_total": "0.00",
+          "average_points": "0.00"
+        }
+      ],
+      "history": [
+        {
+          "match_id": "gz-cj-260430-03",
+          "competition_name": "LAL广州公开赛",
+          "season": "2026春季联赛",
+          "stage_label": "常规赛",
+          "round": 21,
+          "game_no": 3,
+          "played_on": "2026-04-30",
+          "table_label": "1号房",
+          "role": "",
+          "camp_label": "好人阵营",
+          "result_label": "胜",
+          "points_earned": 0.0,
+          "stance_result_label": "未填写",
+          "notes": ""
+        }
+      ],
+      "competition_stats": [
+        {
+          "competition_name": "LAL广州公开赛",
+          "team_name": "222",
+          "games_played": 1,
+          "record": "1-0",
+          "win_rate": "100.0%",
+          "stance_rate": "0.0%",
+          "points_total": "0.00",
+          "average_points": "0.00"
+        }
+      ]
+    },
+    "player-admin": {
+      "player_id": "player-admin",
+      "display_name": "管理员",
+      "team_name": "111",
+      "rank": 3,
+      "aliases": [],
+      "joined_on": "2026-04-10",
+      "photo": "assets/players/default-player.svg",
+      "notes": "网站账号创建战队时自动生成的队员档案。",
+      "record": "0-0",
+      "games_played": 0,
+      "wins": 0,
+      "losses": 0,
+      "overall_win_rate": "0.0%",
+      "villagers_win_rate": "0.0%",
+      "werewolves_win_rate": "0.0%",
+      "stance_rate": "0.0%",
+      "average_points": "0.00",
+      "points_total": "0.00",
+      "correct_stances": 0,
+      "incorrect_stances": 0,
+      "stance_calls": 0,
+      "roles": [],
+      "season_stats": [],
+      "history": [],
+      "competition_stats": []
+    }
+  }
 }

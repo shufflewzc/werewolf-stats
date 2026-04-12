@@ -19,6 +19,7 @@ PERMISSION_GROUPS = [
         "copy": "用于门派和战队日常管理，管理员始终拥有全部权限。",
         "keys": [
             "guild_manage",
+            "guild_honor_manage",
             "team_manage",
         ],
     },
@@ -35,6 +36,7 @@ PERMISSION_LABELS = {
     "competition_season_manage": "管理赛季档期",
     "match_manage": "录入和编辑比赛",
     "guild_manage": "门派管理",
+    "guild_honor_manage": "维护门派历届荣誉",
     "team_manage": "战队管理",
     "player_binding_manage": "参赛 ID 绑定管理",
 }
@@ -43,6 +45,7 @@ PERMISSION_DESCRIPTIONS = {
     "competition_season_manage": "可创建、编辑、改名和删除对应地区系列赛下的赛季。",
     "match_manage": "可为对应地区系列赛录入、编辑比赛结果与比赛详情。",
     "guild_manage": "可创建门派，并对所有门派执行管理操作。",
+    "guild_honor_manage": "可手动编辑所有门派的历届荣誉展示内容。",
     "team_manage": "可管理战队图标、战队资料，以及战队中心内的管理操作。",
     "player_binding_manage": "可帮助选手绑定赛季参赛 ID，并整理历史赛事数据。",
 }

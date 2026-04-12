@@ -1,4 +1,59 @@
 {
-  "generated_at": "2026-04-09T20:58:37+08:00",
-  "summary": []
+  "generated_at": "2026-04-10T18:31:48+08:00",
+  "summary": [
+    {
+      "team_id": "lal-gz-cj-001",
+      "name": "111",
+      "short_name": "1111",
+      "logo": "assets/teams/default-team.svg",
+      "competition_name": "LAL广州公开赛",
+      "season_name": "2026春季联赛",
+      "guild_id": "guild-1",
+      "player_count": 1,
+      "matches_represented": 1,
+      "player_appearances": 1,
+      "wins": 1,
+      "losses": 0,
+      "stance_calls": 0,
+      "correct_stance_calls": 0,
+      "incorrect_stance_calls": 0,
+      "points_earned_total": 0.0,
+      "represented_player_ids": [
+        "player-111"
+      ],
+      "win_rate": 1.0,
+      "stance_rate": 0.0,
+      "average_points": 0.0,
+      "rank": 1,
+      "points_rank": 1,
+      "points_per_match": 0.0
+    },
+    {
+      "team_id": "lal-gz-cj-002",
+      "name": "222",
+      "short_name": "222",
+      "logo": "assets/teams/default-team.svg",
+      "competition_name": "LAL广州公开赛",
+      "season_name": "2026春季联赛",
+      "guild_id": "",
+      "player_count": 1,
+      "matches_represented": 1,
+      "player_appearances": 1,
+      "wins": 1,
+      "losses": 0,
+      "stance_calls": 0,
+      "correct_stance_calls": 0,
+      "incorrect_stance_calls": 0,
+      "points_earned_total": 0.0,
+      "represented_player_ids": [
+        "player-222"
+      ],
+      "win_rate": 1.0,
+      "stance_rate": 0.0,
+      "average_points": 0.0,
+      "rank": 2,
+      "points_rank": 2,
+      "points_per_match": 0.0
+    }
+  ]
 }

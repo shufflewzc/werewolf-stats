@@ -8,7 +8,6 @@ import web_app as legacy
 
 ACCOUNT_ROLE_OPTIONS = legacy.ACCOUNT_ROLE_OPTIONS
 ADMIN_USERNAME = legacy.ADMIN_USERNAME
-DEFAULT_EVENT_MANAGER_PERMISSION_KEYS = legacy.DEFAULT_EVENT_MANAGER_PERMISSION_KEYS
 DEFAULT_PROVINCE_NAME = legacy.DEFAULT_PROVINCE_NAME
 PERMISSION_LABELS = legacy.PERMISSION_LABELS
 RequestContext = legacy.RequestContext
@@ -145,7 +144,7 @@ def get_accounts_page(
 
     account_form_title = "编辑账号" if editing_account else "新增账号"
     account_form_copy = (
-        "可以在这里调整赛事负责人权限范围、所在地区和登录密码。"
+        "可以在这里调整赛事负责人负责范围、所在地区和登录密码。具体赛事权限请到“权限控制”里按地区系列赛授权。"
         if editing_account
         else "新增后即可使用新账号登录当前网站。"
     )
@@ -194,12 +193,12 @@ def get_accounts_page(
                 <select class="form-select" name="role">
                   {option_tags({k: v for k, v in ACCOUNT_ROLE_OPTIONS.items() if k != 'admin'}, current_form['role'])}
                 </select>
-                <div class="small text-secondary mt-2">赛事负责人只能管理自己被分配到的“地区系列赛”范围；普通账号不能操作比赛结果。</div>
+                <div class="small text-secondary mt-2">赛事负责人只表示可被授予赛事类权限；真正能管理哪些功能，要到“权限控制”里按地区 + 系列赛单独勾选，可多选。</div>
               </div>
               <div class="mb-3">
                 <label class="form-label">赛事负责人管辖范围</label>
                 {build_manager_scope_options(ctx.current_user, current_form.get('manager_scope_keys', []))}
-                <div class="small text-secondary mt-2">仅当账号类型选择“赛事负责人”时生效，可多选。</div>
+                <div class="small text-secondary mt-2">仅当账号类型选择“赛事负责人”时生效，可多选。后续权限控制页会在这个范围内授予赛事权限。</div>
               </div>
               <div class="mb-3">
                 <label class="form-label">所在地区</label>
@@ -327,7 +326,7 @@ def get_permission_control_page(
               <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
                 <div>
                   <h2 class="section-title mb-2">编辑账号权限</h2>
-                  <p class="section-copy mb-0">勾选后会立即更新该账号的实际权限。赛事类权限还需要配合下方“负责范围”一起保存。</p>
+                  <p class="section-copy mb-0">赛事类权限必须配合下方“地区 + 系列赛负责范围”一起保存。你可以给同一账号勾选多个系列赛范围，但它只能在这些范围内生效。</p>
                 </div>
                 <div class="small text-secondary">
                   目标账号：{escape(target_user['username'])}<br>
@@ -340,7 +339,7 @@ def get_permission_control_page(
                 {legacy.build_permission_options(current_form['permission_keys'])}
                 <div class="mb-4">
                   <h3 class="h6 mb-2">赛事负责范围</h3>
-                  <p class="small text-secondary mb-3">只有勾选了赛事权限的账号才会用到这里的范围。范围口径为“地区 + 系列赛”。</p>
+                  <p class="small text-secondary mb-3">范围口径为“地区 + 系列赛”，可多选。赛事类权限只会在这些已选范围内生效。</p>
                   {build_manager_scope_options(ctx.current_user, current_form['manager_scope_keys'])}
                 </div>
                 <div class="d-flex flex-wrap gap-2">
@@ -434,11 +433,7 @@ def handle_accounts(ctx: RequestContext, start_response):
                 "player_id": None,
                 "linked_player_ids": [],
                 "manager_scope_keys": manager_scope_keys if role == "event_manager" else [],
-                "permissions": (
-                    list(DEFAULT_EVENT_MANAGER_PERMISSION_KEYS)
-                    if role == "event_manager"
-                    else []
-                ),
+                "permissions": [],
                 "role": role,
                 "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
                 "region_name": normalized_region or "广州市",
@@ -517,10 +512,9 @@ def handle_accounts(ctx: RequestContext, start_response):
                     else list(user.get("manager_scope_keys", []))
                 ),
                 "permissions": (
-                    list(DEFAULT_EVENT_MANAGER_PERMISSION_KEYS)
+                    normalize_permission_keys(user.get("permissions", []))
                     if role == "event_manager"
-                    and not normalize_permission_keys(user.get("permissions", []))
-                    else normalize_permission_keys(user.get("permissions", []))
+                    else [key for key in normalize_permission_keys(user.get("permissions", [])) if key not in legacy.EVENT_SCOPE_PERMISSION_KEYS]
                 ),
                 "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
                 "region_name": normalized_region or "广州市",

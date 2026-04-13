@@ -4185,6 +4185,8 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         form_value(ctx.query, "competition").strip() or team_competition_name or None,
         form_value(ctx.query, "season").strip() or team_season_name or None,
     )
+    requested_competition = form_value(ctx.query, "competition").strip()
+    requested_season = form_value(ctx.query, "season").strip()
     claim_panel = (
         f"""
         <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -4415,6 +4417,15 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         competition_groups.setdefault(competition_name, []).append(
             summarize_team_match(team_id, match, team_lookup)
         )
+    team_match_player_score_section = build_team_match_player_score_section(
+        ctx,
+        data,
+        team_id,
+        player_lookup,
+        team_lookup,
+        requested_competition,
+        requested_season,
+    )
 
     if not selected_competition:
         competition_cards = []
@@ -4457,6 +4468,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         {team_logo_panel}
         {team_profile_panel}
         {team_stage_group_panel}
+        {team_match_player_score_section}
         <section class="panel shadow-sm p-3 p-lg-4">
           <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
             <div>
@@ -4524,7 +4536,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         for item in sorted(
             scoped_matches,
             key=lambda row: (row["played_on"], row["round"], row["game_no"]),
-            reverse=True,
         ):
             match_detail_path = (
                 f"/matches/{item['match_id']}?next="
@@ -4689,6 +4700,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     {team_profile_panel}
     {team_stage_group_panel}
     {guild_panel}
+    {team_match_player_score_section}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
@@ -4738,6 +4750,214 @@ def get_team_season_status_label(status: str) -> str:
         "completed": "已结束",
         "unknown": "未配置",
     }.get(status, "未配置")
+
+
+def build_team_match_player_score_section(
+    ctx: RequestContext,
+    data: dict[str, Any],
+    team_id: str,
+    player_lookup: dict[str, dict[str, Any]],
+    team_lookup: dict[str, dict[str, Any]],
+    selected_competition: str = "",
+    selected_season: str = "",
+) -> str:
+    completed_matches = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (
+                get_match_competition_name(item),
+                str(item.get("season") or "").strip(),
+                item["played_on"],
+                item["round"],
+                item["game_no"],
+                item["match_id"],
+            ),
+            reverse=True,
+        )
+        if is_match_counted_as_played(match)
+        and any(str(entry.get("team_id") or "").strip() == team_id for entry in match["players"])
+        and (not selected_competition or get_match_competition_name(match) == selected_competition)
+        and (not selected_season or str(match.get("season") or "").strip() == selected_season)
+    ]
+    if not completed_matches:
+        return f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">战队比赛队员成绩</h2>
+              <p class="section-copy mb-0">这里只展示已完成补录的比赛，进行中的赛季会优先展示。</p>
+            </div>
+          </div>
+          <div class="alert alert-secondary mb-0">当前筛选口径下，这支战队还没有已完成补录的比赛成绩。</div>
+        </section>
+        """
+
+    grouped_matches: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for match in completed_matches:
+        scope_key = (
+            get_match_competition_name(match),
+            str(match.get("season") or "").strip(),
+        )
+        grouped_matches.setdefault(scope_key, []).append(match)
+
+    def scope_sort_key(item: tuple[tuple[str, str], list[dict[str, Any]]]) -> tuple[int, int, int, str, str]:
+        (competition_name, season_name), matches = item
+        status = get_team_season_status(
+            data,
+            {
+                "competition_name": competition_name,
+                "season_name": season_name,
+            },
+        )
+        latest_played_on = max(
+            (str(match.get("played_on") or "").strip() for match in matches),
+            default="",
+        )
+        latest_match_day = parse_match_day(latest_played_on)
+        return (
+            get_team_season_status_rank(status),
+            0 if (competition_name, season_name) == (selected_competition, selected_season) else 1,
+            -(latest_match_day.toordinal() if latest_match_day else 0),
+            competition_name,
+            season_name,
+        )
+
+    scope_sections: list[str] = []
+    for (competition_name, season_name), matches in sorted(
+        grouped_matches.items(),
+        key=scope_sort_key,
+        reverse=False,
+    ):
+        status = get_team_season_status(
+            data,
+            {
+                "competition_name": competition_name,
+                "season_name": season_name,
+            },
+        )
+        scope_path = build_scoped_path(
+            f"/teams/{team_id}",
+            competition_name,
+            season_name,
+        )
+        match_cards: list[str] = []
+        for match in sorted(
+            matches,
+            key=lambda item: (
+                item["played_on"],
+                item["round"],
+                item["game_no"],
+                item["match_id"],
+            ),
+            reverse=True,
+        ):
+            summary = summarize_team_match(team_id, match, team_lookup)
+            participant_rows: list[str] = []
+            for participant in sorted(
+                [
+                    entry
+                    for entry in match["players"]
+                    if str(entry.get("team_id") or "").strip() == team_id
+                ],
+                key=lambda entry: (
+                    int(entry.get("seat") or 0),
+                    str(entry.get("player_id") or ""),
+                ),
+            ):
+                player_id = str(participant.get("player_id") or "").strip()
+                player = player_lookup.get(player_id)
+                player_name = (
+                    str(player.get("display_name") or "").strip()
+                    if player
+                    else str(participant.get("player_name") or player_id or "未命名队员").strip()
+                )
+                stance_result = normalize_stance_result(participant)
+                participant_rows.append(
+                    f"""
+                    <tr>
+                      <td>{int(participant.get('seat') or 0)}</td>
+                      <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + player_id, competition_name, season_name))}">{escape(player_name)}</a></td>
+                      <td>{escape(str(participant.get('role') or '未填写'))}</td>
+                      <td>{escape(to_chinese_camp(str(participant.get('camp') or '')) or '未填写')}</td>
+                      <td>{escape(RESULT_OPTIONS.get(str(participant.get('result') or ''), str(participant.get('result') or '未填写')))}</td>
+                      <td>{escape(STANCE_OPTIONS.get(stance_result, stance_result))}</td>
+                      <td>{float(participant.get('points_earned') or 0.0):.2f}</td>
+                    </tr>
+                    """
+                )
+            team_page_path = build_scoped_path(
+                f"/teams/{team_id}",
+                competition_name,
+                season_name,
+            )
+            match_detail_path = (
+                f"/matches/{match['match_id']}?next="
+                f"{quote(team_page_path)}"
+            )
+            match_cards.append(
+                f"""
+                <div class="col-12">
+                  <div class="stat-card h-100 p-3 shadow-sm border-0">
+                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
+                      <div>
+                        <div class="small text-secondary mb-1">{escape(summary['played_on'])} · {escape(summary['stage'])}</div>
+                        <h3 class="h5 mb-2">{escape(summary['match_id'])}</h3>
+                        <div class="small text-secondary">第 {summary['round']} 轮 · 第 {summary['game_no']} 局 · {escape(summary['table_label'])} · 对手 {escape(summary['opponents'])}</div>
+                      </div>
+                      <div class="d-flex flex-wrap gap-2">
+                        <span class="chip">{escape(summary['winning_camp'])}</span>
+                        <span class="chip">本队 {summary['team_score']:.2f}</span>
+                        <span class="chip">对手 {summary['opponent_score']:.2f}</span>
+                        <a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">比赛详情</a>
+                      </div>
+                    </div>
+                    <div class="table-responsive">
+                      <table class="table align-middle mb-0">
+                        <thead>
+                          <tr>
+                            <th>座位</th>
+                            <th>队员</th>
+                            <th>角色</th>
+                            <th>阵营</th>
+                            <th>结果</th>
+                            <th>站边</th>
+                            <th>得分</th>
+                          </tr>
+                        </thead>
+                        <tbody>{''.join(participant_rows) or '<tr><td colspan="7" class="text-secondary">当前还没有这支战队的队员成绩明细。</td></tr>'}</tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+                """
+            )
+        scope_sections.append(
+            f"""
+            <div class="form-panel p-3 p-lg-4">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+                <div>
+                  <h3 class="h5 mb-2">{escape(competition_name)} · {escape(season_name or '未命名赛季')}</h3>
+                  <p class="section-copy mb-0">{escape(get_team_season_status_label(status))} · 已完成补录 {len(matches)} 场比赛。</p>
+                </div>
+                <a class="btn btn-outline-dark" href="{escape(scope_path)}">切换到这个赛季</a>
+              </div>
+              <div class="row g-3">{''.join(match_cards)}</div>
+            </div>
+            """
+        )
+
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">战队比赛队员成绩</h2>
+          <p class="section-copy mb-0">这里只展示已完成补录的比赛，按赛季状态排序，进行中的赛季优先展示。</p>
+        </div>
+      </div>
+      <div class="d-grid gap-3">{''.join(scope_sections)}</div>
+    </section>
+    """
 
 
 def build_guild_honor_rows(data: dict[str, Any], guild_id: str) -> list[dict[str, str]]:

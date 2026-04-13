@@ -888,7 +888,7 @@ def import_matches_from_excel(
     except Exception as exc:
         return None, f"解析 Excel 失败：{exc}"
     if not parsed_matches and not match_rows:
-        return None, "Excel 中没有读取到可导入的数据，请检查 records 或 matches 工作表。"
+        return None, "Excel 中没有读取到可导入的数据，请检查 records 工作表。"
 
     players_by_key: dict[str, list[dict[str, str]]] = {}
     for row in player_rows:

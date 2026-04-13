@@ -32,6 +32,7 @@ from generate_stats import (
     get_match_competition_name,
     list_competitions,
     list_seasons as stats_list_seasons,
+    safe_rate,
 )
 from competition_meta import (
     build_city_code,
@@ -3769,7 +3770,6 @@ def get_schedule_page(ctx: RequestContext) -> str:
                   <td>{escape(match['season'])}</td>
                   <td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td>
                   <td>第 {match['round']} 轮</td>
-                  <td>第 {match['game_no']} 局</td>
                   <td>{escape(str(match.get('group_label') or team_names or '未设置'))}</td>
                   <td>{escape(match['table_label'])}</td>
                   <td>{escape(match['format'])}</td>
@@ -3794,7 +3794,6 @@ def get_schedule_page(ctx: RequestContext) -> str:
                       <th>赛季</th>
                       <th>阶段</th>
                       <th>轮次</th>
-                      <th>局次</th>
                       <th>参赛分组</th>
                       <th>房间</th>
                       <th>板型</th>
@@ -4065,7 +4064,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
           <div class="d-flex flex-wrap gap-2 mt-4">
             <span class="chip">编号 {escape(match['match_id'])}</span>
             <span class="chip">{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</span>
-            <span class="chip">第 {match['round']} 轮 · 第 {match['game_no']} 局</span>
+            <span class="chip">第 {match['round']} 轮</span>
             <span class="chip">计分模型 {escape(score_model_label)}</span>
             <a class="switcher-chip" href="{escape(build_match_day_path(match['played_on'], build_scoped_path('/matches/' + match_id, competition_name, season_name)))}">{escape(match['played_on'])}</a>
           </div>
@@ -4558,7 +4557,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                   <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(day_path)}">{escape(item['played_on'])}</a></td>
                   <td>{escape(item['stage'])}</td>
                   <td>第 {item['round']} 轮</td>
-                  <td>第 {item['game_no']} 局</td>
                   <td>{escape(item['opponents'])}</td>
                   <td>{escape(item['table_label'])}</td>
                   <td>{escape(item['format'])}</td>
@@ -4591,7 +4589,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                       <th>日期</th>
                       <th>阶段</th>
                       <th>轮次</th>
-                      <th>局次</th>
                       <th>对手</th>
                       <th>房间</th>
                       <th>板型</th>
@@ -4903,7 +4900,7 @@ def build_team_match_player_score_section(
                       <div>
                         <div class="small text-secondary mb-1">{escape(summary['played_on'])} · {escape(summary['stage'])}</div>
                         <h3 class="h5 mb-2">{escape(summary['match_id'])}</h3>
-                        <div class="small text-secondary">第 {summary['round']} 轮 · 第 {summary['game_no']} 局 · {escape(summary['table_label'])} · 对手 {escape(summary['opponents'])}</div>
+                        <div class="small text-secondary">第 {summary['round']} 轮 · {escape(summary['table_label'])} · 对手 {escape(summary['opponents'])}</div>
                       </div>
                       <div class="d-flex flex-wrap gap-2">
                         <span class="chip">{escape(summary['winning_camp'])}</span>
@@ -5112,7 +5109,6 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
               <td>{escape(item['season'])}</td>
               <td>{escape(item['stage_label'])}</td>
               <td>第 {item['round']} 轮</td>
-              <td>第 {item['game_no']} 局</td>
               <td>{escape(item['role'])}</td>
               <td>{escape(item['camp_label'])}</td>
               <td>{escape(item['result_label'])}</td>
@@ -5332,7 +5328,6 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
               <th>赛季</th>
               <th>阶段</th>
               <th>轮次</th>
-              <th>局次</th>
               <th>角色</th>
               <th>阵营</th>
               <th>结果</th>
@@ -6126,43 +6121,19 @@ def validate_match_awards(match: dict[str, Any]) -> str:
         "scapegoat_player_ref",
     )
     winning_camp = str(match.get("winning_camp") or "").strip()
-    participant_count = len(participants)
 
-    # Allow progressive data entry: partial rosters can be saved first.
-    # When the roster is still incomplete, awards are optional; if already
-    # provided, they still need to point to currently recorded participants.
-    if participant_count < 12:
-        if mvp_player_id and mvp_player_id not in participant_map:
-            return "MVP 必须从当前已录入的参赛选手中选择。"
-        if svp_player_id and svp_player_id not in participant_map:
-            return "SVP 必须从当前已录入的参赛选手中选择。"
-        if mvp_player_id and svp_player_id and mvp_player_id == svp_player_id:
-            return "MVP 和 SVP 不能选择同一位选手。"
-        if scapegoat_player_id:
-            if scapegoat_player_id not in participant_map:
-                return "背锅选手必须从当前已录入的参赛选手中选择。"
-            if winning_camp and str(participant_map[scapegoat_player_id].get("camp") or "").strip() == winning_camp:
-                return "背锅选手需要从失利阵营中选择。"
-        return ""
-
-    if not mvp_player_id:
-        return "请选择本场 MVP。"
-    if mvp_player_id not in participant_map:
+    if mvp_player_id and mvp_player_id not in participant_map:
         return "MVP 必须从本场参赛选手中选择。"
-    if not svp_player_id:
-        return "请选择本场 SVP。"
-    if svp_player_id not in participant_map:
+    if svp_player_id and svp_player_id not in participant_map:
         return "SVP 必须从本场参赛选手中选择。"
-    if mvp_player_id == svp_player_id:
+    if mvp_player_id and svp_player_id and mvp_player_id == svp_player_id:
         return "MVP 和 SVP 不能选择同一位选手。"
-    if winning_camp in {"villagers", "third_party", "draw"}:
-        if scapegoat_player_id:
-            return "只有狼人胜利时才设置背锅选手。"
-        return ""
     if not scapegoat_player_id:
-        return "狼人胜利时请选择本场背锅选手。"
+        return ""
     if scapegoat_player_id not in participant_map:
         return "背锅选手必须从本场参赛选手中选择。"
+    if winning_camp in {"villagers", "third_party", "draw"}:
+        return "只有狼人胜利时才设置背锅选手。"
     if str(participant_map[scapegoat_player_id].get("camp") or "").strip() == winning_camp:
         return "背锅选手需要从失利阵营中选择。"
     return ""

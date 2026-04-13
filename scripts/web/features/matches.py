@@ -5,6 +5,7 @@ from html import escape
 from io import BytesIO
 import json
 from pathlib import Path
+import re
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -60,6 +61,41 @@ STAGE_LABELS = STAGE_OPTIONS
 ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_DOWNLOAD_PATH = "/assets/templates/match-result-upload-template-generic.xlsx"
 EXCEL_NS = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+MATCH_SEQUENCE_PATTERN = re.compile(r"-(\d{2})$")
+EXCEL_HEADER_ALIASES = {
+    "比赛编号": "match_id",
+    "局号": "match_id",
+    "赛事名称": "competition_name",
+    "赛季": "season_name",
+    "日期": "played_on",
+    "局次": "game_no",
+    "赛段": "stage",
+    "分组": "group_label",
+    "房间": "room_label",
+    "板型": "format",
+    "时长": "duration_minutes",
+    "胜利阵营": "winning_camp",
+    "MVP": "mvp_player_name",
+    "SVP": "svp_player_name",
+    "背锅": "scapegoat_player_name",
+    "座位号": "seat",
+    "战队": "team_name",
+    "战队名": "team_name",
+    "选手": "player_name",
+    "身份": "role",
+    "阵营": "camp",
+    "结果": "result",
+    "胜负分": "result_points",
+    "投票分": "vote_points",
+    "行为分": "behavior_points",
+    "特殊分": "special_points",
+    "违规分": "adjustment_points",
+    "单局积分": "points_earned",
+    "当日总分": "daily_total",
+    "站边": "stance_result",
+    "积分模型": "score_model",
+    "备注": "notes",
+}
 
 
 def parse_date_input(value: str) -> datetime | None:
@@ -84,10 +120,8 @@ def resolve_match_template_download_name(series_slug: str) -> str:
             continue
         try:
             with ZipFile(template_file) as archive:
-                sheet_xml = archive.read("xl/worksheets/sheet1.xml").decode("utf-8", errors="ignore")
+                archive.getinfo("xl/worksheets/sheet1.xml")
         except Exception:
-            continue
-        if "match_id" in sheet_xml or "import_mode" in sheet_xml:
             continue
         return file_name
     return ""
@@ -160,7 +194,6 @@ def build_batch_create_form(
         "end_date": legacy.china_today_label(),
         "matches_per_day": "3",
         "round_start": "1",
-        "group_label": "A组",
         "room_label": "1号房",
     }
     competition_field_html = build_match_competition_field(
@@ -176,7 +209,7 @@ def build_batch_create_form(
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
           <h2 class="section-title mb-2">批量创建待补录比赛</h2>
-          <p class="section-copy mb-0">先在指定赛季下批量生成赛程壳子，后续再逐场补录版型、时长、阵容和结果。适合一次创建整月赛程。</p>
+          <p class="section-copy mb-0">先在指定赛季下批量生成赛程壳子，后续再逐场补录版型、时长、阵容、分组和结果。适合一次创建整月赛程。</p>
         </div>
       </div>
       <form method="post" action="/matches/new">
@@ -204,19 +237,16 @@ def build_batch_create_form(
             <label class="form-label">每天场数</label>
             <input class="form-control" name="matches_per_day" type="number" min="1" max="12" value="{escape(current['matches_per_day'])}">
           </div>
-          <div class="col-12 col-md-6 col-xl-2">
-            <label class="form-label">参赛分组</label>
-            <input class="form-control" name="group_label" value="{escape(current['group_label'])}">
-          </div>
-          <div class="col-12 col-md-6 col-xl-2">
+          <div class="col-12 col-md-6 col-xl-3">
             <label class="form-label">房间</label>
             <input class="form-control" name="room_label" value="{escape(current['room_label'])}">
+            <div class="small text-secondary mt-2">分组信息可以先留到补录比赛详情时再填写。</div>
           </div>
-          <div class="col-12 col-md-6 col-xl-3">
+          <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">开始日期</label>
             <input class="form-control" name="start_date" type="date" value="{escape(current['start_date'])}">
           </div>
-          <div class="col-12 col-md-6 col-xl-3">
+          <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">结束日期</label>
             <input class="form-control" name="end_date" type="date" value="{escape(current['end_date'])}">
           </div>
@@ -261,7 +291,7 @@ def build_excel_import_panel() -> str:
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
           <h2 class="section-title mb-2">Excel 批量补录比赛详情</h2>
-          <p class="section-copy mb-0">支持一次上传多场比赛详情。模板为单工作表，单行就是一个选手在一局里的记录；系统会按已预创建的赛事、赛季、日期和局次定位比赛。</p>
+          <p class="section-copy mb-0">支持一次上传多场比赛详情。模板为单工作表，单行就是一个选手在一局里的记录；系统会优先按比赛编号定位已预创建比赛。</p>
         </div>
         <div class="d-flex flex-wrap gap-2">{''.join(template_links)}</div>
       </div>
@@ -271,7 +301,7 @@ def build_excel_import_panel() -> str:
           <label class="form-label">选择 Excel 文件</label>
           <input class="form-control" type="file" name="match_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
         </div>
-        <div class="small text-secondary">模板只用于补录已经批量创建好的比赛。系统会按 `competition_name + season_name + played_on + game_no` 定位比赛，并沿用系统里已有的赛段与轮次；选手、战队、奖项都按名称填写，不需要手填内部 ID。</div>
+        <div class="small text-secondary">模板只用于补录已经批量创建好的比赛。系统会优先按 `match_id` 定位比赛；如果没有比赛编号，才会回退到赛事、赛季、日期这些信息辅助匹配。战队分组、赛段、房间都沿用预创建比赛，Excel 里都不需要填写；MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入</button>
         </div>
@@ -319,7 +349,6 @@ def build_match_management_panel(
         for match in sorted(
             data["matches"],
             key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
-            reverse=True,
         )
         if (
             not competition_name
@@ -345,7 +374,7 @@ def build_match_management_panel(
           <td>{escape(str(match.get('season') or ''))}</td>
           <td>{escape(match['played_on'])}</td>
           <td>{escape(STAGE_LABELS.get(match['stage'], match['stage']))}</td>
-          <td>第 {match['round']} 轮 / 第 {match['game_no']} 局</td>
+          <td>第 {match['round']} 轮</td>
           <td>{escape(str(match.get('group_label') or '未设置'))}</td>
           <td>{escape(str(match.get('table_label') or '未设置'))}</td>
           <td>{escape(match['format'])}</td>
@@ -416,7 +445,7 @@ def build_match_management_panel(
                 <th>赛季</th>
                 <th>日期</th>
                 <th>赛段</th>
-                <th>轮局</th>
+                <th>轮次</th>
                 <th>分组</th>
                 <th>房间</th>
                 <th>板型</th>
@@ -499,7 +528,10 @@ def read_excel_sheet_rows(upload: UploadedFile, sheet_name: str) -> list[dict[st
         rows.append(values)
     if not rows:
         return []
-    headers = [str(item or "").strip() for item in rows[0]]
+    headers = [
+        EXCEL_HEADER_ALIASES.get(str(item or "").strip(), str(item or "").strip())
+        for item in rows[0]
+    ]
     return [
         {
             headers[index]: (row[index].strip() if index < len(row) else "")
@@ -553,6 +585,44 @@ def parse_excel_optional_int(value: str, default: int) -> int:
         raise ValueError("需要填写整数。") from exc
 
 
+def parse_game_no_from_match_id(match_id: str) -> int | None:
+    matched = MATCH_SEQUENCE_PATTERN.search(match_id.strip())
+    if not matched:
+        return None
+    try:
+        game_no = int(matched.group(1))
+    except ValueError:
+        return None
+    return game_no if game_no > 0 else None
+
+
+def resolve_excel_game_no(row: dict[str, str]) -> int:
+    raw_game_no = row.get("game_no", "").strip()
+    if raw_game_no:
+        return parse_excel_int(raw_game_no, "game_no")
+    match_id = row.get("match_id", "").strip()
+    parsed_game_no = parse_game_no_from_match_id(match_id)
+    if parsed_game_no is not None:
+        return parsed_game_no
+    raise ValueError("请填写比赛编号，或补充可解析尾号的编号。")
+
+
+def parse_excel_award_name(
+    player_rows: list[dict[str, str]],
+    player_name_key: str,
+    award_label: str,
+) -> str:
+    selected_names = [
+        row.get("player_name", "").strip()
+        for row in player_rows
+        if row.get(player_name_key, "").strip()
+    ]
+    selected_names = [name for name in selected_names if name]
+    if len(selected_names) > 1:
+        raise ValueError(f"{award_label} 每局比赛只能标记一位选手。")
+    return selected_names[0] if selected_names else ""
+
+
 def build_match_from_excel_rows(
     match_row: dict[str, str],
     player_rows: list[dict[str, str]],
@@ -566,7 +636,7 @@ def build_match_from_excel_rows(
     match["season"] = match_row.get("season_name", "").strip()
     match["stage"] = match_row.get("stage", "").strip()
     match["round"] = parse_excel_optional_int(match_row.get("round", ""), 1)
-    match["game_no"] = parse_excel_int(match_row.get("game_no", ""), "game_no")
+    match["game_no"] = resolve_excel_game_no(match_row)
     raw_score_model = match_row.get("score_model", "").strip()
     match["score_model"] = normalize_match_score_model(raw_score_model) if raw_score_model else ""
     match["played_on"] = match_row.get("played_on", "").strip()
@@ -579,7 +649,7 @@ def build_match_from_excel_rows(
     is_placeholder_match = match["format"] == "待补录"
     match["duration_minutes"] = parse_excel_optional_int(
         match_row.get("duration_minutes", ""),
-        0,
+        0 if is_placeholder_match else 60,
     )
     match["winning_camp"] = (
         match_row.get("winning_camp", "").strip() or ("draw" if is_placeholder_match else "")
@@ -587,18 +657,6 @@ def build_match_from_excel_rows(
     match["mvp_player_id"] = ""
     match["svp_player_id"] = ""
     match["scapegoat_player_id"] = ""
-    match["mvp_player_name"] = (
-        match_row.get("mvp_player_name", "").strip()
-        or match_row.get("mvp_player_id", "").strip()
-    )
-    match["svp_player_name"] = (
-        match_row.get("svp_player_name", "").strip()
-        or match_row.get("svp_player_id", "").strip()
-    )
-    match["scapegoat_player_name"] = (
-        match_row.get("scapegoat_player_name", "").strip()
-        or match_row.get("scapegoat_player_id", "").strip()
-    )
     match["notes"] = match_row.get("notes", "").strip()
     participants = []
     for player_row in sorted(player_rows, key=lambda item: parse_excel_int(item.get("seat", ""), "seat")):
@@ -632,6 +690,9 @@ def build_match_from_excel_rows(
                 "notes": player_row.get("notes", "").strip(),
             }
         )
+    match["mvp_player_name"] = parse_excel_award_name(player_rows, "mvp_player_name", "MVP")
+    match["svp_player_name"] = parse_excel_award_name(player_rows, "svp_player_name", "SVP")
+    match["scapegoat_player_name"] = parse_excel_award_name(player_rows, "scapegoat_player_name", "背锅")
     match["players"] = participants
     return match
 
@@ -658,6 +719,9 @@ def build_matches_from_flat_excel_rows(
                     "seat": row.get("seat", "").strip(),
                     "player_name": player_name,
                     "team_name": team_name,
+                    "mvp_player_name": row.get("mvp_player_name", "").strip(),
+                    "svp_player_name": row.get("svp_player_name", "").strip(),
+                    "scapegoat_player_name": row.get("scapegoat_player_name", "").strip(),
                     "role": row.get("role", "").strip(),
                     "camp": row.get("camp", "").strip(),
                     "result": row.get("result", "").strip(),
@@ -679,6 +743,19 @@ def build_excel_match_group_key(row: dict[str, str]) -> str:
     competition_name = row.get("competition_name", "").strip()
     season_name = row.get("season_name", "").strip()
     played_on = row.get("played_on", "").strip()
+    match_id = row.get("match_id", "").strip()
+    if match_id:
+        if not competition_name or not season_name or not played_on:
+            raise ValueError(
+                "records 工作表缺少归组字段。填写比赛编号时，至少还要补全 competition_name、season_name、played_on。"
+            )
+        stage = row.get("stage", "").strip()
+        group_label = row.get("group_label", "").strip()
+        room_label = row.get("room_label", "").strip() or row.get("table_label", "").strip()
+        round_no = row.get("round", "").strip()
+        return "|".join(
+            [competition_name, season_name, played_on, match_id, stage, group_label, room_label, round_no]
+        )
     game_no = row.get("game_no", "").strip()
     if not competition_name or not season_name or not played_on or not game_no:
         raise ValueError(
@@ -705,7 +782,7 @@ def build_match_from_wide_excel_row(
     match["season"] = row.get("season_name", "").strip()
     match["stage"] = row.get("stage", "").strip()
     match["round"] = parse_excel_optional_int(row.get("round", ""), 1)
-    match["game_no"] = parse_excel_int(row.get("game_no", ""), "game_no")
+    match["game_no"] = resolve_excel_game_no(row)
     raw_score_model = row.get("score_model", "").strip()
     match["score_model"] = normalize_match_score_model(raw_score_model) if raw_score_model else ""
     match["played_on"] = row.get("played_on", "").strip()
@@ -715,7 +792,7 @@ def build_match_from_wide_excel_row(
     is_placeholder_match = match["format"] == "待补录"
     match["duration_minutes"] = parse_excel_optional_int(
         row.get("duration_minutes", ""),
-        0,
+        0 if is_placeholder_match else 60,
     )
     match["winning_camp"] = row.get("winning_camp", "").strip() or ("draw" if is_placeholder_match else "")
     match["mvp_player_id"] = ""
@@ -765,15 +842,22 @@ def build_match_from_wide_excel_row(
 def describe_excel_import_match(match: dict[str, object]) -> str:
     competition_name = str(match.get("competition_name") or "").strip() or "未填写赛事"
     season_name = str(match.get("season") or match.get("season_name") or "").strip() or "未填写赛季"
+    match_id = str(match.get("match_id") or "").strip()
+    if match_id and match_id != "pending-new-match":
+        return f"{competition_name} / {season_name} / {match_id}"
     played_on = str(match.get("played_on") or "").strip() or "未填写日期"
-    game_no = str(match.get("game_no") or "").strip() or "未填写局次"
-    return f"{competition_name} / {season_name} / {played_on} / 第 {game_no} 局"
+    return f"{competition_name} / {season_name} / {played_on}"
 
 
 def find_existing_match_for_excel_import(
     matches: list[dict[str, object]],
     imported_match: dict[str, object],
 ) -> dict[str, object]:
+    match_id = str(imported_match.get("match_id") or "").strip()
+    if match_id and match_id != "pending-new-match":
+        matched_by_id = get_match_by_id(matches, match_id)
+        if matched_by_id is not None:
+            return matched_by_id
     competition_name = str(imported_match.get("competition_name") or "").strip()
     season_name = str(imported_match.get("season") or imported_match.get("season_name") or "").strip()
     played_on = str(imported_match.get("played_on") or "").strip()
@@ -815,7 +899,6 @@ def find_existing_match_for_excel_import(
             " / ".join(
                 [
                     str(match.get("stage") or "").strip() or "未填赛段",
-                    str(match.get("group_label") or "").strip() or "未填分组",
                     str(match.get("table_label") or "").strip() or "未填房间",
                 ]
             )
@@ -823,10 +906,10 @@ def find_existing_match_for_excel_import(
     hint = "；".join(candidate_labels)
     if hint:
         raise ValueError(
-            "找到了多场同日期同局次的比赛，请在 Excel 中补充赛段、参赛分组或房间后重试。"
+            "找到了多场同日期比赛，请在 Excel 中补充比赛编号、赛段或房间后重试。"
             f" 当前候选：{hint}"
         )
-    raise ValueError("找到了多场同日期同局次的比赛，请检查赛程数据后重试。")
+    raise ValueError("找到了多场同日期比赛，请优先填写比赛编号后重试。")
 
 
 def merge_excel_import_match(
@@ -836,7 +919,6 @@ def merge_excel_import_match(
     merged_match = dict(existing_match)
     for field in (
         "score_model",
-        "group_label",
         "table_label",
         "format",
         "winning_camp",
@@ -991,8 +1073,6 @@ def batch_create_matches(
         raise ValueError("起始轮次必须大于 0。")
     if matches_per_day <= 0:
         raise ValueError("每天场数必须大于 0。")
-    if not group_label.strip():
-        raise ValueError("请填写参赛分组。")
     if not room_label.strip():
         raise ValueError("请填写房间。")
 
@@ -1312,7 +1392,7 @@ def render_match_form_page(
       <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
         <div>
           <h1 class="section-title mb-2">{escape(heading)}</h1>
-          <p class="section-copy mb-0">这里可以录入或修改一场比赛的基础信息和全部上场选手数据。比赛编号会按“城市缩写-赛季缩写-六位日期-局序号”自动生成，赛季为必填项。</p>
+          <p class="section-copy mb-0">这里可以录入或修改一场比赛的基础信息和全部上场选手数据。比赛编号会按“城市缩写-赛季缩写-六位日期-两位序号”自动生成，赛季为必填项。</p>
         </div>
         <div class="d-flex gap-2">
           <a class="btn btn-outline-dark" href="{escape(next_path)}">返回上一页</a>
@@ -1350,10 +1430,7 @@ def render_match_form_page(
             <label class="form-label">轮次</label>
             <input class="form-control" name="round" type="number" value="{escape(str(current['round']))}">
           </div>
-          <div class="col-6 col-md-3 col-xl-1">
-            <label class="form-label">局次</label>
-            <input class="form-control" name="game_no" type="number" value="{escape(str(current['game_no']))}">
-          </div>
+          <input type="hidden" name="game_no" value="{escape(str(current['game_no']))}">
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">日期</label>
             <input class="form-control" name="played_on" type="date" value="{escape(str(current['played_on']))}">
@@ -1559,7 +1636,6 @@ def get_batch_create_form_values(
         "end_date": legacy.china_today_label(),
         "matches_per_day": "3",
         "round_start": "1",
-        "group_label": "A组",
         "room_label": "1号房",
     }
 
@@ -1821,7 +1897,7 @@ def handle_match_create(ctx: RequestContext, start_response):
         end_date = form_value(ctx.form, "end_date").strip()
         round_start_raw = form_value(ctx.form, "round_start", "1").strip()
         matches_per_day_raw = form_value(ctx.form, "matches_per_day", "1").strip()
-        group_label = form_value(ctx.form, "group_label", "A组").strip()
+        group_label = form_value(ctx.form, "group_label").strip()
         room_label = form_value(ctx.form, "room_label", "1号房").strip()
         batch_form_values = {
             "competition_name": competition_name,
@@ -1831,7 +1907,6 @@ def handle_match_create(ctx: RequestContext, start_response):
             "end_date": end_date,
             "round_start": round_start_raw or "1",
             "matches_per_day": matches_per_day_raw or "1",
-            "group_label": group_label or "A组",
             "room_label": room_label or "1号房",
         }
         permission_guard = require_competition_manager(

@@ -65,6 +65,12 @@ def validate_non_empty_string(value: Any, label: str) -> list[str]:
     return []
 
 
+def validate_string(value: Any, label: str) -> list[str]:
+    if not isinstance(value, str):
+        return [f"{label}: expected string"]
+    return []
+
+
 def validate_teams(teams: Any) -> tuple[list[str], set[str], dict[str, set[str]]]:
     errors: list[str] = []
     team_ids: set[str] = set()
@@ -461,9 +467,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             )
 
         errors.extend(validate_iso_date(match.get("played_on"), f"{label}.played_on"))
-        errors.extend(
-            validate_non_empty_string(match.get("group_label"), f"{label}.group_label")
-        )
+        errors.extend(validate_string(match.get("group_label"), f"{label}.group_label"))
         errors.extend(
             validate_non_empty_string(match.get("table_label"), f"{label}.table_label")
         )

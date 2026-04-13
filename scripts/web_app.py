@@ -4443,9 +4443,8 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                     <h2 class="h4 mb-2">{escape(competition_name)}</h2>
                     <div class="small-muted mb-3">赛季 {escape('、'.join(list_seasons({'matches': team_matches}, competition_name, include_non_ongoing=True)) or '未设置')} · 对局 {competition_team_stats['matches_represented']} 场 · 队员 {competition_team_stats['player_count']} 名</div>
                     <div class="row g-3">
-                      <div class="col-4"><div class="small text-secondary">胜率</div><div class="fw-semibold">{format_pct(competition_team_stats['win_rate'])}</div></div>
-                      <div class="col-4"><div class="small text-secondary">站边率</div><div class="fw-semibold">{format_pct(competition_team_stats['stance_rate'])}</div></div>
-                      <div class="col-4"><div class="small text-secondary">总积分</div><div class="fw-semibold">{competition_team_stats['points_earned_total']:.2f}</div></div>
+                      <div class="col-6"><div class="small text-secondary">胜率</div><div class="fw-semibold">{format_pct(competition_team_stats['win_rate'])}</div></div>
+                      <div class="col-6"><div class="small text-secondary">总积分</div><div class="fw-semibold">{competition_team_stats['points_earned_total']:.2f}</div></div>
                     </div>
                   </a>
                 </div>
@@ -4619,15 +4618,11 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             <span class="chip">查看队员</span>
           </div>
           <div class="row g-2 mt-2">
-            <div class="col-4">
+            <div class="col-6">
               <div class="small text-secondary">胜率</div>
               <div class="fw-semibold">{player["win_rate"]}</div>
             </div>
-            <div class="col-4">
-              <div class="small text-secondary">站边率</div>
-              <div class="fw-semibold">{player["stance_rate"]}</div>
-            </div>
-            <div class="col-4">
+            <div class="col-6">
               <div class="small text-secondary">总积分</div>
               <div class="fw-semibold">{player["points_total"]}</div>
             </div>
@@ -4682,7 +4677,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
       <div class="d-flex flex-wrap gap-3">
         <span class="chip">{escape(selected_season or '当前赛季')}</span>
         <span class="chip">胜率 {format_pct(team_stats['win_rate'])}</span>
-        <span class="chip">站边率 {format_pct(team_stats['stance_rate'])}</span>
         <span class="chip">总积分 {team_stats['points_earned_total']:.2f}</span>
         <span class="chip">队员 {roster_count} 名</span>
       </div>
@@ -5130,7 +5124,6 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
               <td>{item['games_played']}</td>
               <td>{escape(item['record'])}</td>
               <td>{escape(item['win_rate'])}</td>
-              <td>{escape(item['stance_rate'])}</td>
               <td>{escape(item['points_total'])}</td>
               <td>{escape(item['average_points'])}</td>
             </tr>
@@ -5173,7 +5166,6 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
             <span class="chip">总胜率 {escape(detail['overall_win_rate'])}</span>
             <span class="chip">好人胜率 {escape(detail['villagers_win_rate'])}</span>
             <span class="chip">狼人胜率 {escape(detail['werewolves_win_rate'])}</span>
-            <span class="chip">站边率 {escape(detail['stance_rate'])}</span>
             <span class="chip">总积分 {escape(detail['points_total'])}</span>
           </div>
         </div>
@@ -5301,13 +5293,12 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
               <th>出场</th>
               <th>战绩</th>
               <th>胜率</th>
-              <th>站边率</th>
               <th>总积分</th>
               <th>场均得分</th>
             </tr>
           </thead>
           <tbody>
-            {''.join(competition_rows) or '<tr><td colspan="8" class="text-secondary">暂无分赛事统计。</td></tr>'}
+            {''.join(competition_rows) or '<tr><td colspan="7" class="text-secondary">暂无分赛事统计。</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -5499,7 +5490,6 @@ def build_profile_binding_summary(summary: dict[str, Any]) -> str:
         <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">总出场</div><div class="stat-value mt-2">{summary['games_played']}</div></div></div>
         <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">战绩</div><div class="stat-value mt-2">{escape(summary['record'])}</div></div></div>
         <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">总积分</div><div class="stat-value mt-2">{escape(summary['points_total'])}</div></div></div>
-        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">站边率</div><div class="stat-value mt-2">{escape(summary['stance_rate'])}</div></div></div>
       </div>
       <div class="table-responsive mt-4">
         <table class="table align-middle">

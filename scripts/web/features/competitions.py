@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+import calendar
+from datetime import datetime, date
 
 import web_app as legacy
 
@@ -253,6 +254,93 @@ def build_player_mvp_rows(
     return rows
 
 
+def parse_compact_date(value: str) -> date | None:
+    text = str(value or "").strip()
+    if len(text) >= 10:
+        text = text[:10]
+    try:
+        return datetime.strptime(text, "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def iter_month_starts(start_day: date, end_day: date) -> list[date]:
+    months: list[date] = []
+    cursor = date(start_day.year, start_day.month, 1)
+    last = date(end_day.year, end_day.month, 1)
+    while cursor <= last:
+        months.append(cursor)
+        if cursor.month == 12:
+            cursor = date(cursor.year + 1, 1, 1)
+        else:
+            cursor = date(cursor.year, cursor.month + 1, 1)
+    return months
+
+
+def build_season_schedule_calendar(
+    matches: list[dict[str, Any]],
+    next_path: str,
+    season_entry: dict[str, Any] | None = None,
+) -> str:
+    match_counts_by_day: dict[date, int] = {}
+    for match in matches:
+        played_day = parse_compact_date(str(match.get("played_on") or ""))
+        if played_day is None:
+            continue
+        match_counts_by_day[played_day] = match_counts_by_day.get(played_day, 0) + 1
+
+    start_day = parse_compact_date(str((season_entry or {}).get("start_at") or ""))
+    end_day = parse_compact_date(str((season_entry or {}).get("end_at") or ""))
+    scheduled_days = sorted(match_counts_by_day)
+    if scheduled_days:
+        start_day = start_day or scheduled_days[0]
+        end_day = end_day or scheduled_days[-1]
+    if start_day is None or end_day is None:
+        return '<div class="alert alert-secondary mb-0">当前赛季还没有可展示的比赛日期。</div>'
+
+    if start_day > end_day:
+        start_day, end_day = end_day, start_day
+
+    weekday_labels = ["一", "二", "三", "四", "五", "六", "日"]
+    month_blocks: list[str] = []
+    month_calendar = calendar.Calendar(firstweekday=0)
+    for month_start in iter_month_starts(start_day, end_day):
+        header_html = "".join(
+            f'<div class="schedule-calendar-weekday">{escape(label)}</div>'
+            for label in weekday_labels
+        )
+        day_cells: list[str] = []
+        for day in month_calendar.itermonthdates(month_start.year, month_start.month):
+            classes = ["schedule-calendar-day"]
+            inner_html = f'<span class="schedule-calendar-day-no">{day.day}</span>'
+            if day.month != month_start.month:
+                classes.append("is-outside")
+            else:
+                match_count = match_counts_by_day.get(day, 0)
+                if match_count > 0:
+                    classes.append("has-match")
+                    day_path = build_match_day_path(day.isoformat(), next_path)
+                    count_text = "1 场" if match_count == 1 else f"{match_count} 场"
+                    inner_html = (
+                        f'<a class="schedule-calendar-day-link" href="{escape(day_path)}">'
+                        f'<span class="schedule-calendar-day-no">{day.day}</span>'
+                        f'<span class="schedule-calendar-day-count">{count_text}</span>'
+                        f'</a>'
+                    )
+            day_cells.append(f'<div class="{" ".join(classes)}">{inner_html}</div>')
+        month_blocks.append(
+            f"""
+            <div class="schedule-calendar-month">
+              <div class="schedule-calendar-month-title">{month_start.year} 年 {month_start.month} 月</div>
+              <div class="schedule-calendar-weekdays">{header_html}</div>
+              <div class="schedule-calendar-days">{''.join(day_cells)}</div>
+            </div>
+            """
+        )
+
+    return f'<div class="schedule-calendar-grid">{"".join(month_blocks)}</div>'
+
+
 def build_match_day_leaderboards(
     data: dict[str, Any],
     played_on: str,
@@ -319,7 +407,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         for row in filtered_rows or region_rows:
             topic_path = build_series_topic_path(row["series_slug"])
             competition_path = build_scoped_path("/competitions", row["competition_name"], None, row["region_name"], row["series_slug"])
-            card_summary = row["summary"] or f"{row['region_name']}赛区的 {row['series_name']} 官方赛事页。"
+            card_summary = row["summary"] or f"{row['region_name']}赛区的 {row['series_name']} 赛事页。"
             cards.append(
                 f"""
                 <div class="col-12 col-lg-6">
@@ -356,7 +444,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         )
         manage_button = '<a class="btn btn-dark" href="/series-manage">创建或维护系列赛</a>' if can_access_series_management(ctx.current_user) else ""
         body = f"""
-        <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">地区赛事站点</div><h1 class="hero-title mb-3">{escape(selected_region or DEFAULT_REGION_NAME)}赛区官方入口</h1><p class="hero-copy mb-0">先选择地区，再筛选系列赛。每张卡片都同时提供系列赛专题页和该地区的独立赛事站点，方便按赛区管理和按品牌汇总浏览。</p><div class="hero-switchers mt-4">{region_switcher}</div><div class="hero-switchers mt-3">{series_switcher}</div><div class="hero-kpis"><div class="hero-pill"><span>地区站点</span><strong>{len(filtered_rows or region_rows)}</strong><small>{escape(selected_region or DEFAULT_REGION_NAME)} 当前可见</small></div><div class="hero-pill"><span>覆盖战队</span><strong>{total_team_count}</strong><small>当前地区口径</small></div><div class="hero-pill"><span>累计对局</span><strong>{total_match_count}</strong><small>当前筛选下完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Official Event Portal</div><div class="hero-stage-label">Featured Regional Event</div><div class="hero-stage-title">{escape(featured_name)}</div><div class="hero-stage-note">未登录时首页默认展示广州赛区；登录后会优先按账号所在地区进入对应赛区。进入单个地区赛事页后，你会继续看到该站自己的战队入口、赛程表和赛季切换，不会和其他地区混排。</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(featured_latest)}</strong><small>{escape(featured_seasons)}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{featured_competition['team_count'] if featured_competition else 0}</strong><small>当前特色赛事</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{featured_competition['player_count'] if featured_competition else 0}</strong><small>当前特色赛事</small></div><div class="hero-stage-metric"><span>赛事场次</span><strong>{featured_competition['match_count'] if featured_competition else 0}</strong><small>当前特色地区站点</small></div></div></div></div></section>
+        <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">地区赛事站点</div><h1 class="hero-title mb-3">{escape(selected_region or DEFAULT_REGION_NAME)}赛区入口</h1><p class="hero-copy mb-0">先选择地区，再筛选系列赛。每张卡片都同时提供系列赛专题页和该地区的独立赛事站点，方便按赛区管理和按品牌汇总浏览。</p><div class="hero-switchers mt-4">{region_switcher}</div><div class="hero-switchers mt-3">{series_switcher}</div><div class="hero-kpis"><div class="hero-pill"><span>地区站点</span><strong>{len(filtered_rows or region_rows)}</strong><small>{escape(selected_region or DEFAULT_REGION_NAME)} 当前可见</small></div><div class="hero-pill"><span>覆盖战队</span><strong>{total_team_count}</strong><small>当前地区口径</small></div><div class="hero-pill"><span>累计对局</span><strong>{total_match_count}</strong><small>当前筛选下完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Event Portal</div><div class="hero-stage-label">Featured Regional Event</div><div class="hero-stage-title">{escape(featured_name)}</div><div class="hero-stage-note">未登录时首页默认展示广州赛区；登录后会优先按账号所在地区进入对应赛区。进入单个地区赛事页后，你会继续看到该站自己的战队入口、赛程表和赛季切换，不会和其他地区混排。</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(featured_latest)}</strong><small>{escape(featured_seasons)}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{featured_competition['team_count'] if featured_competition else 0}</strong><small>当前特色赛事</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{featured_competition['player_count'] if featured_competition else 0}</strong><small>当前特色赛事</small></div><div class="hero-stage-metric"><span>赛事场次</span><strong>{featured_competition['match_count'] if featured_competition else 0}</strong><small>当前特色地区站点</small></div></div></div></div></section>
         <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4"><div><h2 class="section-title mb-2">该地区系列赛站点</h2><p class="section-copy mb-0">同一系列赛可以进入专题页查看跨地区汇总，也可以单独进入当前地区赛事页查看该站独立赛季。</p></div><div class="d-flex flex-wrap gap-2">{manage_button}</div></div><div class="row g-3 g-lg-4">{''.join(cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前地区还没有系列赛站点，请先创建系列赛。</div></div>'}</div></section>
         """
         return layout("比赛页面", body, ctx, alert=alert)
@@ -416,11 +504,6 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         legacy.china_today_label(),
     )
     registered_team_ids = season_entry.get("registered_team_ids", []) if season_entry else []
-    registered_team_cards = [
-        f"""<div class="col-12 col-md-6 col-xl-4"><a class="team-link-card shadow-sm p-3 h-100" href="{escape(build_scoped_path('/teams/' + registered_team_id, selected_competition, selected_season, selected_region, selected_series_slug))}"><div class="d-flex justify-content-between align-items-start gap-3"><div><div class="card-kicker mb-2">已报名战队</div><div class="fw-semibold">{escape(team_lookup[registered_team_id]['name'])}</div></div><span class="chip">查看战队</span></div></a></div>"""
-        for registered_team_id in registered_team_ids
-        if registered_team_id in team_lookup
-    ]
     registration_form_html = ""
     season_status_text = "待配置"
     season_period_text = "请先设置赛季起止时间"
@@ -428,7 +511,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     if season_entry:
         season_status_text = season_status_label(season_entry)
         season_period_text = f"{format_datetime_local_label(season_entry.get('start_at', ''))} - {format_datetime_local_label(season_entry.get('end_at', ''))}"
-        season_note_text = season_entry.get("notes") or "可以在这里查看本赛季的进行状态，并管理已报名战队。"
+        season_note_text = season_entry.get("notes") or "可以在这里查看本赛季的进行状态，并管理赛季报名。"
         if current_user_team and can_manage_team(ctx, current_user_team, current_player):
             is_registered = current_user_team["team_id"] in registered_team_ids
             action_name = "cancel_team_registration" if is_registered else "register_team_for_season"
@@ -440,7 +523,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
             registration_form_html = f"""<form method="post" action="/competitions"><input type="hidden" name="action" value="register_team_for_season"><input type="hidden" name="competition_name" value="{escape(selected_competition)}"><input type="hidden" name="season_name" value="{escape(selected_season or '')}"><input type="hidden" name="next" value="{escape(current_competition_path)}"><div class="small text-secondary mb-3">管理员可代任意战队提交报名。</div><div class="d-flex flex-column gap-3"><select class="form-select" name="team_id">{team_options_html}</select><button type="submit" class="btn btn-dark"{'' if get_season_status(season_entry) == 'ongoing' else ' disabled'}>为所选战队报名</button></div></form>"""
     season_registration_panel = ""
     if selected_season:
-        season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期与战队报名</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛事负责人可以维护赛季起止时间，具备战队管理权限的账号、已认领战队的负责人或管理员可以为自己的战队报名正在进行中的赛季。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="row g-3 mb-4"><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></div><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">报名概览</div><h3 class="h5 mb-2">已报名 {len(registered_team_cards)} 支战队</h3><div class="small-muted mb-2">仅进行中的赛季允许新增或取消报名</div><p class="section-copy mb-0">报名成功后，战队会出现在本赛季赛事页的已报名名单中，方便赛程安排前统一确认参赛队伍。</p></div></div><div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">我的已认领战队</div><h3 class="h5 mb-2">{escape(current_user_team['name']) if current_user_team else '暂无已认领战队'}</h3><div class="small-muted mb-2">{'认领负责人或管理员可执行报名' if current_user_team else ('管理员可代战队报名' if is_admin_user(ctx.current_user) else '当前账号在本赛季还没有已认领战队')}</div>{registration_form_html or '<div class="section-copy">当前账号没有可用于报名的战队，或你还不是该战队的认领负责人。</div>'}</div></div></div><div class="row g-3">{''.join(registered_team_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前赛季还没有战队报名。</div></div>'}</div></section>"""
+        season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期与战队报名</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛事负责人可以维护赛季起止时间，具备战队管理权限的账号、已认领战队的负责人或管理员可以为自己的战队报名正在进行中的赛季。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="row g-3"><div class="col-12 col-lg-6"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></div><div class="col-12 col-lg-6"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">我的已认领战队</div><h3 class="h5 mb-2">{escape(current_user_team['name']) if current_user_team else '暂无已认领战队'}</h3><div class="small-muted mb-2">{'认领负责人或管理员可执行报名' if current_user_team else ('管理员可代战队报名' if is_admin_user(ctx.current_user) else '当前账号在本赛季还没有已认领战队')}</div>{registration_form_html or '<div class="section-copy">当前账号没有可用于报名的战队，或你还不是该战队的认领负责人。</div>'}</div></div></div></section>"""
     stage_team_sections: list[str] = []
     for stage_key, rows in stage_team_rows.items():
         stage_table_rows = "".join(
@@ -531,21 +614,21 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
       </script>
     </section>
     """
-    team_cards = [f"""<div class="col-12 col-md-6"><a class="team-link-card shadow-sm p-4 h-100" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}"><div class="card-kicker mb-2">Team Access</div><h2 class="h4 mb-2">{escape(row['name'])}</h2><div class="small-muted mb-3">当前赛季积分榜第 {row.get('points_rank', row['rank'])} 名 · {row['player_count']} 名队员 · 对局 {row['matches_represented']} 场</div><div class="row g-3"><div class="col-4"><div class="small text-secondary">总积分</div><div class="fw-semibold">{row['points_earned_total']:.2f}</div></div><div class="col-4"><div class="small text-secondary">场均积分</div><div class="fw-semibold">{row.get('points_per_match', 0.0):.2f}</div></div><div class="col-4"><div class="small text-secondary">胜率</div><div class="fw-semibold">{format_pct(row['win_rate'])}</div></div></div></a></div>""" for row in team_rows]
-    match_table_rows = []
-    for match in match_rows:
-        team_names = "、".join(sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"]}))
-        group_label = str(match.get("group_label") or "").strip() or team_names or "未设置"
-        room_label = str(match.get("table_label") or "").strip() or "未设置"
-        match_detail_path = f"/matches/{match['match_id']}?next={quote(build_scoped_path('/competitions', selected_competition, selected_season, selected_region, selected_series_slug))}"
-        day_path = build_match_day_path(match["played_on"], build_scoped_path("/competitions", selected_competition, selected_season, selected_region, selected_series_slug))
-        match_table_rows.append(f"""<tr><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(match_detail_path)}">{escape(match['match_id'])}</a></td><td>{escape(match['season'])}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(day_path)}">{escape(match['played_on'])}</a></td><td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td><td>第 {match['round']} 轮</td><td>第 {match['game_no']} 局</td><td>{escape(group_label)}</td><td>{escape(room_label)}</td><td>{escape(match['format'])}</td><td><a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">查看详情</a></td></tr>""")
+    team_links_html = "".join(
+        f"""<a class="switcher-chip" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['name'])}</a>"""
+        for row in team_rows
+    )
+    season_schedule_calendar = build_season_schedule_calendar(
+        match_rows,
+        build_scoped_path("/competitions", selected_competition, selected_season, selected_region, selected_series_slug),
+        season_entry,
+    )
     body = f"""
-    <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">{escape(page_badge)}</div><h1 class="hero-title mb-3">{escape(hero_title)}</h1><p class="hero-copy mb-0">{escape(hero_intro)}</p>{region_switcher_html}{series_switcher_html}<div class="hero-switchers mt-3">{competition_switcher}</div>{season_switcher_html}<div class="hero-kpis"><div class="hero-pill"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>{escape(selected_season or '当前赛季')} 真实参赛</small></div><div class="hero-pill"><span>参赛队员</span><strong>{player_count}</strong><small>{escape(selected_season or '当前赛季')} 已上场</small></div><div class="hero-pill"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>{escape(scope_label)} 完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Official Event Sheet</div><div class="hero-stage-label">Season Overview</div><div class="hero-stage-title">{escape(scope_label)}</div><div class="hero-stage-note">{escape(hero_note)}</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(selected_season or (' / '.join(competition_meta['seasons'][:2]) if competition_meta and competition_meta['seasons'] else '赛季待录入'))}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>该赛季参赛战队</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{player_count}</strong><small>该赛季实际出场</small></div><div class="hero-stage-metric"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>该赛季完整赛程</small></div></div></div></div></section>
+    <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">{escape(page_badge)}</div><h1 class="hero-title mb-3">{escape(hero_title)}</h1><p class="hero-copy mb-0">{escape(hero_intro)}</p>{region_switcher_html}{series_switcher_html}<div class="hero-switchers mt-3">{competition_switcher}</div>{season_switcher_html}<div class="hero-kpis"><div class="hero-pill"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>{escape(selected_season or '当前赛季')} 真实参赛</small></div><div class="hero-pill"><span>参赛队员</span><strong>{player_count}</strong><small>{escape(selected_season or '当前赛季')} 已上场</small></div><div class="hero-pill"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>{escape(scope_label)} 完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Event Sheet</div><div class="hero-stage-label">Season Overview</div><div class="hero-stage-title">{escape(scope_label)}</div><div class="hero-stage-note">{escape(hero_note)}</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(selected_season or (' / '.join(competition_meta['seasons'][:2]) if competition_meta and competition_meta['seasons'] else '赛季待录入'))}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>该赛季参赛战队</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{player_count}</strong><small>该赛季实际出场</small></div><div class="hero-stage-metric"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>该赛季完整赛程</small></div></div></div></div></section>
     {season_registration_panel}
     {leaderboard_sections}
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季战队入口</h2><p class="section-copy mb-0">这里只列出这个系列赛当前赛季真实参赛的战队，避免和其他赛季混在一起。点进战队卡片后，会继续看到同一赛季口径下的统计。</p></div><div class="d-flex flex-wrap gap-2">{create_match_button}{edit_competition_button}{series_topic_button}{schedule_page_button}<a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', None, None, selected_region, selected_series_slug))}">返回地区赛事列表</a></div></div><div class="row g-3 g-lg-4">{''.join(team_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前赛季还没有战队数据。</div></div>'}</div></section>
-    <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季完整赛程</h2><p class="section-copy mb-0">先在这里确认当前赛季的轮次、参赛分组和房间安排，再从上面的战队入口继续查看更深一层的数据页面。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>编号</th><th>赛季</th><th>日期</th><th>阶段</th><th>轮次</th><th>局次</th><th>参赛分组</th><th>房间</th><th>板型</th><th>操作</th></tr></thead><tbody>{''.join(match_table_rows)}</tbody></table></div></section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季战队入口</h2><p class="section-copy mb-0">这里只保留当前赛季的战队名称入口，点进后继续看同一赛季口径下的战队详情。</p></div><div class="d-flex flex-wrap gap-2">{create_match_button}{edit_competition_button}{series_topic_button}{schedule_page_button}<a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', None, None, selected_region, selected_series_slug))}">返回地区赛事列表</a></div></div><div class="d-flex flex-wrap gap-2">{team_links_html or '<div class="alert alert-secondary mb-0 w-100">当前赛季还没有战队数据。</div>'}</div></section>
+    <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季完整赛程</h2><p class="section-copy mb-0">按日历展示当前赛季的比赛日期；有比赛的日期会高亮显示，点击即可进入当天比赛结果页。</p></div></div>{season_schedule_calendar}</section>
     """
     return layout(scope_label, body, ctx, alert=alert)
 
@@ -597,7 +680,7 @@ def get_series_page(ctx: RequestContext, series_slug: str) -> str:
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">系列赛专题页</div><h1 class="hero-title mb-3">{escape(series_rows[0]['series_name'])}</h1><p class="hero-copy mb-0">这里会把同一系列赛在不同地区的比赛放到同一个专题页下浏览。你可以继续切换赛季，再进入任一地区赛事页查看该站独立数据。</p>{season_switcher_html}<div class="hero-kpis"><div class="hero-pill"><span>覆盖地区</span><strong>{len(series_rows)}</strong><small>{escape(region_names)}</small></div><div class="hero-pill"><span>专题场次</span><strong>{len(filtered_matches)}</strong><small>{escape(selected_season or '全部赛季')}</small></div><div class="hero-pill"><span>专题榜首</span><strong>{escape(top_player['display_name'] if top_player else '待更新')}</strong><small>{escape(top_player['team_name'] if top_player else '暂无数据')}</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Cross Region Series</div><div class="hero-stage-label">Series Snapshot</div><div class="hero-stage-title">{escape(selected_season or '全部赛季')}</div><div class="hero-stage-note">这个专题页按系列赛品牌聚合，不按单一地区拆分。需要查看某个地区独立赛程时，可直接进入下面的地区赛事页。</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(region_names)}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>当前专题战队</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{len(player_rows)}</strong><small>当前专题出场</small></div><div class="hero-stage-metric"><span>地区站点</span><strong>{len(series_rows)}</strong><small>系列赛覆盖地区</small></div></div></div></div></section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">地区赛事页</h2><p class="section-copy mb-0">同一系列赛的不同地区站点会一起列在这里，点击后可进入各地区自己的赛季页与战队页。</p></div><div class="d-flex flex-wrap gap-2">{manage_button}<a class="btn btn-outline-dark" href="{escape(build_scoped_path('/dashboard', None, None, DEFAULT_REGION_NAME, None))}">返回首页</a></div></div><div class="row g-3 g-lg-4">{''.join(region_cards)}</div></section>
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">专题战队积分排行榜</h2><p class="section-copy mb-0">这里会把同一系列赛下不同地区、同一赛季的战队积分合并统计，形成该系列赛赛季口径的官方战队积分榜。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>赛季总积分</th><th>场均积分</th><th>胜率</th></tr></thead><tbody>{''.join(team_points_rows) or '<tr><td colspan="7" class="text-secondary">当前赛季还没有战队积分数据。</td></tr>'}</tbody></table></div></section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">专题战队积分排行榜</h2><p class="section-copy mb-0">这里会把同一系列赛下不同地区、同一赛季的战队积分合并统计，形成该系列赛赛季口径的战队积分榜。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>赛季总积分</th><th>场均积分</th><th>胜率</th></tr></thead><tbody>{''.join(team_points_rows) or '<tr><td colspan="7" class="text-secondary">当前赛季还没有战队积分数据。</td></tr>'}</tbody></table></div></section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">专题选手积分排行榜</h2><p class="section-copy mb-0">该榜单会把同系列赛下不同地区、同一赛季的比赛一起统计，形成该系列赛赛季口径的选手积分榜。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>赛季总积分</th><th>场均得分</th><th>胜率</th></tr></thead><tbody>{''.join(leaderboard_rows) or '<tr><td colspan="8" class="text-secondary">当前赛季还没有选手积分数据。</td></tr>'}</tbody></table></div></section>
     <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">系列赛全部场次</h2><p class="section-copy mb-0">这里展示当前专题页下最近的场次，方便跨地区追踪同系列赛进展。</p></div></div><div class="table-responsive"><table class="table align-middle"><thead><tr><th>编号</th><th>地区</th><th>赛事页</th><th>日期</th><th>阶段</th><th>轮次</th><th>参赛战队</th><th>操作</th></tr></thead><tbody>{''.join(match_rows_html) or '<tr><td colspan="8" class="text-secondary">当前赛季还没有比赛记录。</td></tr>'}</tbody></table></div></section>
     """
@@ -690,7 +773,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
             meta_parts = [f"参赛战队 {team_links}" if team_links else "参赛战队待补全"]
             table_label = str(match.get("table_label") or "").strip()
             if table_label:
-                meta_parts.append(table_label)
+                meta_parts.append(legacy.escape(table_label))
             duration_minutes = int(match.get("duration_minutes") or 0)
             if duration_minutes:
                 meta_parts.append(f"{duration_minutes} 分钟")
@@ -705,7 +788,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
                         <div class="card-kicker mb-2">比赛结果</div>
                         <h3 class="h5 mb-2">{legacy.escape(match['match_id'])}</h3>
                         <div class="small-muted">赛季 {legacy.escape(season_name)} · {legacy.escape(STAGE_OPTIONS.get(match['stage'], match['stage']))} · 第 {match['round']} 轮 / 第 {match['game_no']} 局</div>
-                        <div class="small-muted mt-1">{legacy.escape(' · '.join(meta_parts))}</div>
+                        <div class="small-muted mt-1">{' · '.join(meta_parts)}</div>
                       </div>
                       <div class="d-flex flex-wrap gap-2">
                         <a class="btn btn-sm btn-outline-dark" href="{legacy.escape(match_detail_path)}">查看详情</a>
@@ -769,7 +852,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
           </div>
         </div>
         <div class="hero-stage-card">
-          <div class="official-mark">Official Match Day</div>
+          <div class="official-mark">Match Day</div>
           <div class="hero-stage-label">Daily Overview</div>
           <div class="hero-stage-title">{legacy.escape(played_on)}</div>
           <div class="hero-stage-note">当天所有比赛按系列赛分块展示，页面下方只保留当日各场比赛结果。</div>

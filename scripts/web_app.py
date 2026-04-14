@@ -1379,6 +1379,82 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         content: attr(data-label);
         display: none;
       }}
+      .schedule-calendar-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 0.9rem;
+      }}
+      .schedule-calendar-month {{
+        padding: 0.9rem;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 249, 255, 0.82));
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow-soft);
+      }}
+      .schedule-calendar-month-title {{
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+        margin-bottom: 0.7rem;
+      }}
+      .schedule-calendar-weekdays,
+      .schedule-calendar-days {{
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        gap: 0.35rem;
+      }}
+      .schedule-calendar-weekday {{
+        text-align: center;
+        font-size: 0.72rem;
+        color: var(--muted);
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        padding-bottom: 0.15rem;
+      }}
+      .schedule-calendar-day {{
+        min-height: 60px;
+        border-radius: 14px;
+        border: 1px solid rgba(15, 23, 42, 0.06);
+        background: rgba(255, 255, 255, 0.52);
+        padding: 0.45rem;
+      }}
+      .schedule-calendar-day.is-outside {{
+        opacity: 0.28;
+      }}
+      .schedule-calendar-day.has-match {{
+        background: linear-gradient(160deg, rgba(45, 127, 249, 0.16), rgba(152, 205, 255, 0.26));
+        border-color: rgba(45, 127, 249, 0.18);
+      }}
+      .schedule-calendar-day-link {{
+        display: flex;
+        flex-direction: column;
+        gap: 0.2rem;
+        width: 100%;
+        min-height: 100%;
+        color: inherit;
+        text-decoration: none;
+      }}
+      .schedule-calendar-day-no {{
+        display: block;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.92rem;
+        font-weight: 800;
+        line-height: 1;
+      }}
+      .schedule-calendar-day-count {{
+        display: inline-flex;
+        align-self: flex-start;
+        margin-top: auto;
+        font-size: 0.68rem;
+        color: var(--accent-dark);
+        background: rgba(255, 255, 255, 0.7);
+        border-radius: 999px;
+        padding: 0.16rem 0.45rem;
+        border: 1px solid rgba(45, 127, 249, 0.12);
+      }}
       .small-muted {{
         color: var(--muted);
       }}
@@ -1617,6 +1693,29 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         .section-title {{
           font-size: clamp(1.08rem, 5vw, 1.42rem);
         }}
+        .schedule-calendar-grid {{
+          grid-template-columns: 1fr;
+          gap: 0.75rem;
+        }}
+        .schedule-calendar-month {{
+          padding: 0.75rem;
+        }}
+        .schedule-calendar-weekdays,
+        .schedule-calendar-days {{
+          gap: 0.25rem;
+        }}
+        .schedule-calendar-day {{
+          min-height: 48px;
+          padding: 0.3rem;
+          border-radius: 12px;
+        }}
+        .schedule-calendar-day-no {{
+          font-size: 0.82rem;
+        }}
+        .schedule-calendar-day-count {{
+          font-size: 0.62rem;
+          padding: 0.12rem 0.34rem;
+        }}
         .table-responsive {{
           overflow: visible;
           background: transparent;
@@ -1684,7 +1783,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         <div class="topbar shadow-sm px-3 px-lg-4 py-2 py-lg-3 mb-4">
           <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-center">
             <div>
-              <div class="brand-kicker">Official League Site</div>
+              <div class="brand-kicker">League Site</div>
               <div class="brand-title">一颗小草赛事数据中心</div>
               <div class="small text-secondary">当前时间：{escape(ctx.now_label)}</div>
             </div>
@@ -3319,21 +3418,21 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     <div class="row g-3 g-lg-4 mb-4">
       <div class="col-6 col-xl-4">
         <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">官方快照 · 战队</div>
+          <div class="stat-label">快照 · 战队</div>
           <div class="stat-value mt-2">{active_team_count}</div>
           <div class="small-muted mt-2">{escape(scope_label)} 口径</div>
         </div>
       </div>
       <div class="col-6 col-xl-4">
         <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">官方快照 · 队员</div>
+          <div class="stat-label">快照 · 队员</div>
           <div class="stat-value mt-2">{active_player_count}</div>
           <div class="small-muted mt-2">当前口径下已出场队员</div>
         </div>
       </div>
       <div class="col-6 col-xl-4">
         <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">官方快照 · 对局</div>
+          <div class="stat-label">快照 · 对局</div>
           <div class="stat-value mt-2">{active_match_count}</div>
           <div class="small-muted mt-2">当前口径下比赛记录</div>
         </div>
@@ -3479,10 +3578,10 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
           </div>
         </div>
         <div class="hero-stage-card">
-          <div class="official-mark">Official Data Panel</div>
+          <div class="official-mark">Data Panel</div>
           <div class="hero-stage-label">Featured Scope</div>
           <div class="hero-stage-title">{escape(featured_label)}</div>
-          <div class="hero-stage-note">数据更新时间 {escape(ctx.now_label)}。当前视角为 {escape(scope_label)}，适合先总览官方榜单，再继续进入单个赛事页面。</div>
+          <div class="hero-stage-note">数据更新时间 {escape(ctx.now_label)}。当前视角为 {escape(scope_label)}，适合先总览榜单，再继续进入单个赛事页面。</div>
           <div class="hero-stage-grid">
             <div class="hero-stage-metric">
               <span>最近比赛日</span>
@@ -3957,7 +4056,7 @@ def get_schedule_page(ctx: RequestContext) -> str:
           </div>
         </div>
         <div class="hero-stage-card">
-          <div class="official-mark">Official Schedule Board</div>
+          <div class="official-mark">Schedule Board</div>
           <div class="hero-stage-label">All Matches</div>
           <div class="hero-stage-title">{escape(selected_season or selected_competition)}</div>
           <div class="hero-stage-note">这个页面只保留场次视角，不混入战队入口，适合连续查看该比赛全部赛程。</div>
@@ -4171,7 +4270,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
           </div>
         </div>
         <div class="hero-stage-card">
-          <div class="official-mark">Official Match Detail</div>
+          <div class="official-mark">Match Detail</div>
           <div class="hero-stage-label">Match Overview</div>
           <div class="hero-stage-title">{escape(match['match_id'])}</div>
           <div class="hero-stage-note">比赛详情页会固定当前系列赛和赛季口径，方便从战队页、队员页和赛事页继续回看单场内容。</div>

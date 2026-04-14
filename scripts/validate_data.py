@@ -687,12 +687,12 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
 
 def validate_repository() -> tuple[list[str], dict[str, Any]]:
     try:
-        data = load_repository_data()
+        repository_data = load_repository_data()
         users = load_users()
-        guilds = data.get("guilds", [])
-        teams = data["teams"]
-        players = data["players"]
-        matches = data["matches"]
+        guilds = repository_data.get("guilds", [])
+        teams = repository_data["teams"]
+        players = repository_data["players"]
+        matches = repository_data["matches"]
     except Exception as exc:
         return [str(exc)], {}
 
@@ -720,6 +720,7 @@ def validate_repository() -> tuple[list[str], dict[str, Any]]:
         *team_guild_errors,
     ]
     data = {
+        **repository_data,
         "guilds": guilds,
         "teams": teams,
         "players": players,

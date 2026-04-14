@@ -151,10 +151,149 @@ def build_sample_rows(
     return [{**common, **player_row} for player_row in player_rows]
 
 
+def build_player_dimension_sample_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "played_on": "2026-04-12",
+            "seat": 1,
+            "player_name": "AA",
+            "team_name": "O.TCLUB",
+            "daily_points": 8,
+            "games_played": 3,
+            "wins": 2,
+            "werewolf_games": 1,
+            "werewolf_wins": 1,
+            "villager_games": 2,
+            "villager_wins": 1,
+            "vote_count": 4,
+            "vote_wolf_count": 2,
+            "jump_count": 1,
+            "jump_success_count": 1,
+            "mvp_count": 1,
+            "svp_count": 0,
+            "scapegoat_count": 0,
+            "game_1_win": 1,
+            "game_2_win": 1,
+            "game_3_win": 0,
+            "game_1_camp": "好人",
+            "game_2_camp": "狼人",
+            "game_3_camp": "好人",
+            "game_1_werewolf_win": 0,
+            "game_2_werewolf_win": 1,
+            "game_3_werewolf_win": 0,
+            "game_1_villager_win": 1,
+            "game_2_villager_win": 0,
+            "game_3_villager_win": 0,
+        }
+    ]
+
+
+def build_team_dimension_sample_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "played_on": "2026-04-12",
+            "seat": 1,
+            "team_name": "O.TCLUB",
+            "daily_points": 26.5,
+            "games_played": 3,
+            "wins": 2,
+            "werewolf_games": 1,
+            "werewolf_wins": 1,
+            "villager_games": 2,
+            "villager_wins": 1,
+            "vote_count": 15,
+            "vote_wolf_count": 8,
+            "jump_count": 2,
+            "jump_success_count": 1,
+            "mvp_count": 1,
+            "svp_count": 1,
+            "scapegoat_count": 0,
+            "first_vote_correct": 2,
+            "game_1_win": 1,
+            "game_2_win": 1,
+            "game_3_win": 0,
+            "game_1_camp": "好人",
+            "game_2_camp": "狼人",
+            "game_3_camp": "好人",
+            "game_1_werewolf_win": 0,
+            "game_2_werewolf_win": 1,
+            "game_3_werewolf_win": 0,
+            "game_1_villager_win": 1,
+            "game_2_villager_win": 0,
+            "game_3_villager_win": 0,
+            "first_vote_incorrect": 1,
+            "villager_points": 16.5,
+            "werewolf_points": 10,
+            "self_elimination_count": 0,
+            "poison_used_count": 1,
+            "poisoned_werewolf_count": 1,
+        }
+    ]
+
+
 TEMPLATE_CONFIGS = [
     ("generic", "通用", "示例公开赛", "2026春季联赛", "standard", DEFAULT_TEMPLATE_COLUMNS),
     ("lal", "LAL", "LAL广州公开赛", "2026春季联赛", "standard", DEFAULT_TEMPLATE_COLUMNS),
     ("jcds", "京城大师赛", "京城大师赛广州公开赛", "2026春季联赛", "jingcheng_daily", JCDS_TEMPLATE_COLUMNS),
+]
+DIMENSION_TEMPLATE_FILE = OUTPUT_DIR / "dimension-stats-upload-template-jcds.xlsx"
+PLAYER_DIMENSION_TEMPLATE_COLUMNS = [
+    ("played_on", "比赛日期"),
+    ("seat", "座位号"),
+    ("player_name", "选手姓名"),
+    ("team_name", "所属战队"),
+    ("daily_points", "当日积分"),
+    ("games_played", "局数"),
+    ("wins", "胜场数"),
+    ("werewolf_games", "狼人局数"),
+    ("werewolf_wins", "狼人胜局数"),
+    ("villager_games", "好人局数"),
+    ("villager_wins", "好人胜局数"),
+    ("vote_count", "投票次数"),
+    ("vote_wolf_count", "投狼次数"),
+    ("jump_count", "悍跳次数"),
+    ("jump_success_count", "悍跳成功次数"),
+    ("mvp_count", "MVP次数"),
+    ("svp_count", "SVP次数"),
+    ("scapegoat_count", "背锅次数"),
+]
+TEAM_DIMENSION_TEMPLATE_COLUMNS = [
+    ("played_on", "比赛日期"),
+    ("seat", "座位号"),
+    ("team_name", "战队"),
+    ("daily_points", "当日积分"),
+    ("games_played", "局数"),
+    ("wins", "胜场数"),
+    ("werewolf_games", "狼人局数"),
+    ("werewolf_wins", "狼人胜局数"),
+    ("villager_games", "好人局数"),
+    ("villager_wins", "好人胜局数"),
+    ("vote_count", "投票次数"),
+    ("vote_wolf_count", "投狼次数"),
+    ("jump_count", "悍跳次数"),
+    ("jump_success_count", "悍跳成功次数"),
+    ("mvp_count", "MVP次数"),
+    ("svp_count", "SVP次数"),
+    ("scapegoat_count", "背锅次数"),
+    ("first_vote_correct", "首日投对"),
+    ("game_1_win", "第一局胜"),
+    ("game_2_win", "第二局胜"),
+    ("game_3_win", "第三局胜"),
+    ("game_1_camp", "第一局阵营"),
+    ("game_2_camp", "第二局阵营"),
+    ("game_3_camp", "第三局阵营"),
+    ("game_1_werewolf_win", "第一局狼胜"),
+    ("game_2_werewolf_win", "第二局狼胜"),
+    ("game_3_werewolf_win", "第三局狼胜"),
+    ("game_1_villager_win", "第一局好胜"),
+    ("game_2_villager_win", "第二局好人胜"),
+    ("game_3_villager_win", "第三局好人胜"),
+    ("first_vote_incorrect", "首日投错"),
+    ("villager_points", "好人得分"),
+    ("werewolf_points", "狼人得分"),
+    ("self_elimination_count", "自刀次数"),
+    ("poison_used_count", "开毒次数"),
+    ("poisoned_werewolf_count", "毒狼次数"),
 ]
 
 
@@ -288,23 +427,32 @@ def build_sheet_xml(columns: list[tuple[str, str]], rows: list[list[object]]) ->
 """
 
 
-def workbook_xml() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def workbook_xml(sheet_names: list[str]) -> str:
+    sheets_xml = "".join(
+        f'<sheet name="{escape(sheet_name)}" sheetId="{index}" r:id="rId{index}"/>'
+        for index, sheet_name in enumerate(sheet_names, start=1)
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
   <sheets>
-    <sheet name="records" sheetId="1" r:id="rId1"/>
+    {sheets_xml}
   </sheets>
   <calcPr calcMode="auto" fullCalcOnLoad="1" forceFullCalc="1"/>
 </workbook>
 """
 
 
-def workbook_rels_xml() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def workbook_rels_xml(sheet_count: int) -> str:
+    worksheet_rels = "".join(
+        f'<Relationship Id="rId{index}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet{index}.xml"/>'
+        for index in range(1, sheet_count + 1)
+    )
+    style_rel_id = sheet_count + 1
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
+  {worksheet_rels}
+  <Relationship Id="rId{style_rel_id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/>
 </Relationships>
 """
 
@@ -317,13 +465,17 @@ def root_rels_xml() -> str:
 """
 
 
-def content_types_xml() -> str:
-    return """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+def content_types_xml(sheet_count: int) -> str:
+    sheet_overrides = "".join(
+        f'<Override PartName="/xl/worksheets/sheet{index}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        for index in range(1, sheet_count + 1)
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
   <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
   <Default Extension="xml" ContentType="application/xml"/>
   <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
-  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+  {sheet_overrides}
   <Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>
 </Types>
 """
@@ -357,6 +509,25 @@ def build_output_path(slug: str, suffix: str = "") -> Path:
     return OUTPUT_DIR / f"match-result-upload-template-{slug}{suffix}.xlsx"
 
 
+def write_multi_sheet_workbook(
+    output_file: Path,
+    sheets: list[tuple[str, list[tuple[str, str]], list[dict[str, object]]]],
+) -> Path:
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    with ZipFile(output_file, "w", compression=ZIP_DEFLATED) as archive:
+        archive.writestr("[Content_Types].xml", content_types_xml(len(sheets)))
+        archive.writestr("_rels/.rels", root_rels_xml())
+        archive.writestr("xl/workbook.xml", workbook_xml([sheet_name for sheet_name, _, _ in sheets]))
+        archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml(len(sheets)))
+        archive.writestr("xl/styles.xml", styles_xml())
+        for index, (_sheet_name, columns, sample_rows) in enumerate(sheets, start=1):
+            archive.writestr(
+                f"xl/worksheets/sheet{index}.xml",
+                build_sheet_xml(columns, build_sheet_rows(columns, sample_rows)),
+            )
+    return output_file
+
+
 def write_workbook(
     slug: str,
     competition_name: str,
@@ -366,22 +537,28 @@ def write_workbook(
 ) -> Path:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     sample_rows = build_sample_rows(competition_name, season_name, score_model)
-    sheet_rows = build_sheet_rows(columns, sample_rows)
     for suffix in ("", "-v2"):
         output_file = build_output_path(slug, suffix)
         try:
-            with ZipFile(output_file, "w", compression=ZIP_DEFLATED) as archive:
-                archive.writestr("[Content_Types].xml", content_types_xml())
-                archive.writestr("_rels/.rels", root_rels_xml())
-                archive.writestr("xl/workbook.xml", workbook_xml())
-                archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml())
-                archive.writestr("xl/styles.xml", styles_xml())
-                archive.writestr("xl/worksheets/sheet1.xml", build_sheet_xml(columns, sheet_rows))
+            write_multi_sheet_workbook(
+                output_file,
+                [("records", columns, sample_rows)],
+            )
             return output_file
         except PermissionError:
             if suffix == "-v2":
                 raise
     raise RuntimeError(f"无法写入模板文件：{slug}")
+
+
+def write_dimension_workbook() -> Path:
+    return write_multi_sheet_workbook(
+        DIMENSION_TEMPLATE_FILE,
+        [
+            ("单日选手个人维度数据", PLAYER_DIMENSION_TEMPLATE_COLUMNS, build_player_dimension_sample_rows()),
+            ("单日选手战队维度数据 ", TEAM_DIMENSION_TEMPLATE_COLUMNS, build_team_dimension_sample_rows()),
+        ],
+    )
 
 
 def write_all_workbooks() -> list[Path]:
@@ -391,6 +568,7 @@ def write_all_workbooks() -> list[Path]:
     if outputs:
         copyfile(outputs[0], LEGACY_OUTPUT_FILE)
         outputs.append(LEGACY_OUTPUT_FILE)
+    outputs.append(write_dimension_workbook())
     return outputs
 
 

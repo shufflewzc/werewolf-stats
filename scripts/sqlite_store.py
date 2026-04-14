@@ -251,6 +251,36 @@ def create_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_match_players_match_order
         ON match_players(match_id, sort_order);
 
+        CREATE TABLE IF NOT EXISTS season_player_dimension_stats (
+            competition_name TEXT NOT NULL,
+            season_name TEXT NOT NULL,
+            played_on TEXT NOT NULL,
+            player_id TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            seat INTEGER NOT NULL DEFAULT 0,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (competition_name, season_name, played_on, player_id),
+            FOREIGN KEY (player_id) REFERENCES players(player_id) ON DELETE CASCADE,
+            FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE IF NOT EXISTS season_team_dimension_stats (
+            competition_name TEXT NOT NULL,
+            season_name TEXT NOT NULL,
+            played_on TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            seat INTEGER NOT NULL DEFAULT 0,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (competition_name, season_name, played_on, team_id),
+            FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_season_player_dimension_stats_scope
+        ON season_player_dimension_stats(competition_name, season_name, played_on, player_id);
+
+        CREATE INDEX IF NOT EXISTS idx_season_team_dimension_stats_scope
+        ON season_team_dimension_stats(competition_name, season_name, played_on, team_id);
+
         CREATE TABLE IF NOT EXISTS membership_requests (
             request_id TEXT PRIMARY KEY,
             request_type TEXT NOT NULL,
@@ -1071,6 +1101,8 @@ def load_repository_data() -> dict[str, Any]:
             "teams": load_teams(connection),
             "players": load_players(connection),
             "matches": load_matches(connection),
+            "season_player_dimension_stats": load_season_player_dimension_stats(connection),
+            "season_team_dimension_stats": load_season_team_dimension_stats(connection),
         }
 
 
@@ -1104,6 +1136,143 @@ def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | Non
             matches=data["matches"],
             users=users if users is not None else load_users(connection),
         )
+
+
+def load_season_player_dimension_stats(
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    should_close = connection is None
+    if connection is None:
+        ensure_database()
+        connection = connect_db()
+    try:
+        require_initialized_database(connection)
+        rows = connection.execute(
+            """
+            SELECT competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
+            FROM season_player_dimension_stats
+            ORDER BY played_on, competition_name, season_name, seat, player_id
+            """
+        ).fetchall()
+        return [
+            {
+                "competition_name": row["competition_name"],
+                "season_name": row["season_name"],
+                "played_on": row["played_on"],
+                "player_id": row["player_id"],
+                "team_id": row["team_id"],
+                "seat": int(row["seat"] or 0),
+                **json.loads(row["metrics_json"] or "{}"),
+            }
+            for row in rows
+        ]
+    finally:
+        if should_close:
+            connection.close()
+
+
+def load_season_team_dimension_stats(
+    connection: sqlite3.Connection | None = None,
+) -> list[dict[str, Any]]:
+    should_close = connection is None
+    if connection is None:
+        ensure_database()
+        connection = connect_db()
+    try:
+        require_initialized_database(connection)
+        rows = connection.execute(
+            """
+            SELECT competition_name, season_name, played_on, team_id, seat, metrics_json
+            FROM season_team_dimension_stats
+            ORDER BY played_on, competition_name, season_name, seat, team_id
+            """
+        ).fetchall()
+        return [
+            {
+                "competition_name": row["competition_name"],
+                "season_name": row["season_name"],
+                "played_on": row["played_on"],
+                "team_id": row["team_id"],
+                "seat": int(row["seat"] or 0),
+                **json.loads(row["metrics_json"] or "{}"),
+            }
+            for row in rows
+        ]
+    finally:
+        if should_close:
+            connection.close()
+
+
+def save_season_dimension_stats(
+    player_rows: list[dict[str, Any]],
+    team_rows: list[dict[str, Any]],
+) -> None:
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute("DELETE FROM season_player_dimension_stats")
+            connection.execute("DELETE FROM season_team_dimension_stats")
+            for row in player_rows:
+                metrics = {
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        "competition_name",
+                        "season_name",
+                        "played_on",
+                        "player_id",
+                        "team_id",
+                        "seat",
+                    }
+                }
+                connection.execute(
+                    """
+                    INSERT INTO season_player_dimension_stats (
+                        competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["competition_name"],
+                        row["season_name"],
+                        row["played_on"],
+                        row["player_id"],
+                        row["team_id"],
+                        int(row.get("seat") or 0),
+                        json.dumps(metrics, ensure_ascii=False),
+                    ),
+                )
+            for row in team_rows:
+                metrics = {
+                    key: value
+                    for key, value in row.items()
+                    if key
+                    not in {
+                        "competition_name",
+                        "season_name",
+                        "played_on",
+                        "team_id",
+                        "seat",
+                    }
+                }
+                connection.execute(
+                    """
+                    INSERT INTO season_team_dimension_stats (
+                        competition_name, season_name, played_on, team_id, seat, metrics_json
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        row["competition_name"],
+                        row["season_name"],
+                        row["played_on"],
+                        row["team_id"],
+                        int(row.get("seat") or 0),
+                        json.dumps(metrics, ensure_ascii=False),
+                    ),
+                )
 
 
 def load_membership_requests(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:

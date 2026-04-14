@@ -6,6 +6,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import mimetypes
 import re
 import secrets
@@ -961,8 +962,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         --sun-soft: rgba(255, 255, 255, 0.52);
         --line: rgba(15, 23, 42, 0.08);
         --line-strong: rgba(15, 23, 42, 0.12);
-        --shadow: 0 1.8rem 5rem rgba(15, 23, 42, 0.14);
-        --shadow-soft: 0 1rem 2.6rem rgba(15, 23, 42, 0.08);
+        --shadow: 0 1rem 2.8rem rgba(15, 23, 42, 0.12);
+        --shadow-soft: 0 0.65rem 1.6rem rgba(15, 23, 42, 0.07);
       }}
       * {{
         box-sizing: border-box;
@@ -1002,7 +1003,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         opacity: 0.18;
       }}
       .shell {{
-        max-width: 1400px;
+        max-width: 1560px;
       }}
       a {{
         color: var(--accent-dark);
@@ -1025,24 +1026,30 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .panel,
       .form-panel {{
         background: var(--surface);
-        border-radius: 30px;
+        border-radius: 22px;
       }}
       .topbar {{
         position: sticky;
-        top: 1rem;
+        top: 0.75rem;
         z-index: 40;
         background: linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(246, 249, 255, 0.88));
+      }}
+      .topbar.mb-4,
+      .hero.mb-4,
+      .panel.mb-4,
+      .form-panel.mb-4 {{
+        margin-bottom: 1rem !important;
       }}
       .brand-kicker {{
         display: inline-flex;
         align-items: center;
         gap: 0.45rem;
-        padding: 0.42rem 0.84rem;
-        margin-bottom: 0.75rem;
+        padding: 0.32rem 0.72rem;
+        margin-bottom: 0.5rem;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.74);
         color: var(--accent-dark);
-        font-size: 0.75rem;
+        font-size: 0.7rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
         font-weight: 700;
         letter-spacing: 0.14em;
@@ -1058,7 +1065,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .brand-title {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.18rem, 2.2vw, 1.45rem);
+        font-size: clamp(1.08rem, 1.8vw, 1.32rem);
         font-weight: 800;
         letter-spacing: -0.04em;
       }}
@@ -1077,7 +1084,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(255, 255, 255, 0.24));
         color: var(--ink);
         border: 1px solid rgba(255, 255, 255, 0.84);
-        border-radius: 38px;
+        border-radius: 26px;
         box-shadow: var(--shadow);
       }}
       .hero::before {{
@@ -1105,7 +1112,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .hero-layout {{
         display: grid;
         grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.92fr);
-        gap: 1.4rem;
+        gap: 1rem;
         align-items: stretch;
       }}
       .eyebrow {{
@@ -1127,29 +1134,29 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-title {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(2.3rem, 4.3vw, 4.75rem);
-        line-height: 0.98;
+        font-size: clamp(1.8rem, 3.3vw, 3.5rem);
+        line-height: 1.02;
         letter-spacing: -0.06em;
       }}
       .hero-copy {{
         max-width: 58ch;
         color: rgba(17, 24, 39, 0.74);
-        font-size: clamp(1rem, 1.25vw, 1.08rem);
+        font-size: clamp(0.92rem, 1.05vw, 1rem);
       }}
       .hero-switchers {{
         display: flex;
         flex-wrap: wrap;
-        gap: 0.72rem;
+        gap: 0.5rem;
       }}
       .hero-kpis {{
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.85rem;
-        margin-top: 1.5rem;
+        gap: 0.65rem;
+        margin-top: 1rem;
       }}
       .hero-pill {{
-        padding: 1rem 1.05rem;
-        border-radius: 24px;
+        padding: 0.72rem 0.82rem;
+        border-radius: 18px;
         background: rgba(255, 255, 255, 0.5);
         border: 1px solid rgba(255, 255, 255, 0.88);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -1165,8 +1172,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-pill strong {{
         display: block;
-        margin-top: 0.5rem;
-        font-size: clamp(1.2rem, 2vw, 1.5rem);
+        margin-top: 0.32rem;
+        font-size: clamp(1.02rem, 1.5vw, 1.25rem);
         line-height: 1.1;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
         font-weight: 800;
@@ -1174,14 +1181,15 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-pill small {{
         display: block;
-        margin-top: 0.35rem;
+        margin-top: 0.2rem;
         color: var(--muted);
+        font-size: 0.78rem;
       }}
       .hero-stage-card {{
         position: relative;
         min-height: 100%;
-        padding: 1.5rem;
-        border-radius: 30px;
+        padding: 1.05rem;
+        border-radius: 22px;
         overflow: hidden;
         color: #f8fbff;
         background:
@@ -1229,34 +1237,35 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         background: linear-gradient(135deg, #ffffff, #7cc2ff);
       }}
       .hero-stage-label {{
-        margin-top: 1rem;
+        margin-top: 0.7rem;
         font-size: 0.76rem;
         letter-spacing: 0.14em;
         text-transform: uppercase;
         color: rgba(244, 247, 255, 0.66);
       }}
       .hero-stage-title {{
-        margin-top: 0.8rem;
+        margin-top: 0.55rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.9rem, 3vw, 2.9rem);
+        font-size: clamp(1.45rem, 2.2vw, 2.2rem);
         font-weight: 800;
         line-height: 1.02;
         letter-spacing: -0.05em;
       }}
       .hero-stage-note {{
-        margin-top: 0.8rem;
+        margin-top: 0.55rem;
         color: rgba(244, 247, 255, 0.74);
-        line-height: 1.7;
+        line-height: 1.5;
+        font-size: 0.9rem;
       }}
       .hero-stage-grid {{
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.85rem;
-        margin-top: 1.35rem;
+        gap: 0.6rem;
+        margin-top: 0.9rem;
       }}
       .hero-stage-metric {{
-        padding: 1rem;
-        border-radius: 22px;
+        padding: 0.72rem 0.8rem;
+        border-radius: 16px;
         background: rgba(255, 255, 255, 0.08);
         border: 1px solid rgba(255, 255, 255, 0.1);
       }}
@@ -1269,26 +1278,29 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-stage-metric strong {{
         display: block;
-        margin-top: 0.55rem;
+        margin-top: 0.35rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: 1.36rem;
+        font-size: 1.08rem;
         font-weight: 800;
         line-height: 1.08;
         letter-spacing: -0.04em;
       }}
       .hero-stage-metric small {{
         display: block;
-        margin-top: 0.35rem;
+        margin-top: 0.18rem;
         color: rgba(244, 247, 255, 0.62);
+        font-size: 0.76rem;
       }}
       .section-title {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.4rem, 3vw, 2rem);
+        font-size: clamp(1.15rem, 2.1vw, 1.55rem);
         letter-spacing: -0.04em;
       }}
       .section-copy {{
         color: var(--muted);
         max-width: 68ch;
+        font-size: 0.92rem;
+        line-height: 1.5;
       }}
       .card-kicker {{
         font-size: 0.74rem;
@@ -1300,7 +1312,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .stat-card {{
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 249, 255, 0.78));
-        border-radius: 28px;
+        border-radius: 18px;
       }}
       .stat-label {{
         font-size: 0.76rem;
@@ -1312,7 +1324,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .stat-value {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.85rem, 4vw, 2.65rem);
+        font-size: clamp(1.35rem, 2.2vw, 1.9rem);
         line-height: 1;
         font-weight: 800;
         letter-spacing: -0.05em;
@@ -1320,19 +1332,19 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .team-link-card {{
         display: block;
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 249, 255, 0.78));
-        border-radius: 28px;
+        border-radius: 18px;
         color: inherit;
         text-decoration: none;
         transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
       }}
       .team-link-card:hover {{
-        transform: translateY(-5px);
+        transform: translateY(-2px);
         border-color: rgba(45, 127, 249, 0.2);
-        box-shadow: 0 1.4rem 3rem rgba(15, 23, 42, 0.12);
+        box-shadow: 0 0.8rem 1.8rem rgba(15, 23, 42, 0.1);
       }}
       .table-responsive {{
         overflow: auto;
-        border-radius: 28px;
+        border-radius: 18px;
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(248, 250, 255, 0.76));
       }}
       .table {{
@@ -1349,18 +1361,23 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         text-transform: uppercase;
         color: var(--muted);
         background: rgba(246, 248, 252, 0.86);
-        padding-top: 1rem;
-        padding-bottom: 1rem;
+        padding-top: 0.72rem;
+        padding-bottom: 0.72rem;
       }}
       .table tbody td {{
-        padding-top: 0.95rem;
-        padding-bottom: 0.95rem;
+        padding-top: 0.62rem;
+        padding-bottom: 0.62rem;
+        font-size: 0.92rem;
       }}
       .table tbody tr {{
         transition: background-color 0.18s ease;
       }}
       .table tbody tr:hover {{
         background: rgba(226, 238, 255, 0.44);
+      }}
+      .table.is-mobile-stack td::before {{
+        content: attr(data-label);
+        display: none;
       }}
       .small-muted {{
         color: var(--muted);
@@ -1369,10 +1386,10 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: inline-flex;
         align-items: center;
         border-radius: 999px;
-        padding: 0.42rem 0.86rem;
+        padding: 0.28rem 0.7rem;
         background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(225, 238, 255, 0.72));
         color: var(--accent-dark);
-        font-size: 0.88rem;
+        font-size: 0.8rem;
         font-weight: 600;
         border: 1px solid rgba(45, 127, 249, 0.12);
       }}
@@ -1381,20 +1398,20 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         border-color: rgba(255, 255, 255, 0.82);
       }}
       .form-panel {{
-        border-radius: 28px;
+        border-radius: 20px;
       }}
       .form-label {{
-        font-size: 0.88rem;
+        font-size: 0.82rem;
         font-weight: 600;
         color: var(--muted);
       }}
       .form-control,
       .form-select {{
-        border-radius: 18px;
+        border-radius: 14px;
         border-color: rgba(17, 24, 39, 0.08);
         background: rgba(255, 255, 255, 0.86);
         color: var(--ink);
-        padding: 0.85rem 1rem;
+        padding: 0.62rem 0.85rem;
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
       }}
       .form-control:focus,
@@ -1404,12 +1421,12 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         background: #ffffff;
       }}
       textarea.form-control {{
-        min-height: 140px;
+        min-height: 110px;
       }}
       .player-photo-frame {{
-        width: min(100%, 260px);
+        width: min(100%, 220px);
         aspect-ratio: 1 / 1;
-        border-radius: 32px;
+        border-radius: 22px;
         overflow: hidden;
         background:
           radial-gradient(circle at top, rgba(168, 208, 255, 0.3), transparent 42%),
@@ -1439,8 +1456,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 2.75rem;
-        padding: 0.6rem 1.05rem !important;
+        min-height: 2.3rem;
+        padding: 0.45rem 0.85rem !important;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.56);
         border: 1px solid rgba(255, 255, 255, 0.78);
@@ -1455,14 +1472,14 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 2.6rem;
-        padding: 0.58rem 1rem;
+        min-height: 2.2rem;
+        padding: 0.42rem 0.82rem;
         border-radius: 999px;
         border: 1px solid rgba(255, 255, 255, 0.82);
         background: rgba(255, 255, 255, 0.56);
         color: var(--ink);
         text-decoration: none;
-        font-size: 0.9rem;
+        font-size: 0.84rem;
         font-weight: 600;
         transition: transform 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
       }}
@@ -1480,14 +1497,14 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         border-radius: 999px;
         font-weight: 700;
         letter-spacing: -0.01em;
-        padding: 0.7rem 1.1rem;
+        padding: 0.5rem 0.95rem;
         transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
       }}
       .btn:hover {{
         transform: translateY(-1px);
       }}
       .btn-sm {{
-        padding: 0.48rem 0.92rem;
+        padding: 0.34rem 0.7rem;
       }}
       .btn-dark {{
         background: linear-gradient(135deg, #5aa7ff, var(--accent-dark));
@@ -1525,11 +1542,19 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         border-color: rgba(45, 127, 249, 0.12);
       }}
       .alert {{
-        border-radius: 22px;
+        border-radius: 16px;
         border: 1px solid rgba(255, 204, 102, 0.3);
         background: linear-gradient(135deg, rgba(255, 252, 243, 0.96), rgba(255, 247, 228, 0.94));
         color: #7a5b14;
         box-shadow: var(--shadow-soft);
+      }}
+      .row.g-3 {{
+        --bs-gutter-x: 0.8rem;
+        --bs-gutter-y: 0.8rem;
+      }}
+      .row.g-4 {{
+        --bs-gutter-x: 1rem;
+        --bs-gutter-y: 1rem;
       }}
       .link-dark,
       .link-dark:focus,
@@ -1548,7 +1573,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         .panel,
         .form-panel,
         .hero {{
-          border-radius: 26px;
+          border-radius: 20px;
         }}
         .topbar {{
           position: relative;
@@ -1581,7 +1606,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           border-radius: 28px;
         }}
         .hero-title {{
-          font-size: clamp(2rem, 12vw, 3rem);
+          font-size: clamp(1.6rem, 10vw, 2.4rem);
         }}
         .hero-kpis {{
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1590,10 +1615,56 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           grid-template-columns: 1fr 1fr;
         }}
         .section-title {{
-          font-size: clamp(1.24rem, 6vw, 1.72rem);
+          font-size: clamp(1.08rem, 5vw, 1.42rem);
+        }}
+        .table-responsive {{
+          overflow: visible;
+          background: transparent;
+          border: 0;
+          box-shadow: none;
+          backdrop-filter: none;
+          -webkit-backdrop-filter: none;
         }}
         .table-responsive .table {{
-          min-width: 720px;
+          min-width: 0;
+        }}
+        .table.is-mobile-stack thead {{
+          display: none;
+        }}
+        .table.is-mobile-stack tbody {{
+          display: grid;
+          gap: 0.7rem;
+        }}
+        .table.is-mobile-stack tbody tr {{
+          display: block;
+          border: 1px solid var(--line);
+          border-radius: 16px;
+          background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 249, 255, 0.84));
+          box-shadow: var(--shadow-soft);
+          padding: 0.5rem 0.75rem;
+        }}
+        .table.is-mobile-stack tbody td {{
+          display: grid;
+          grid-template-columns: minmax(5.2rem, max-content) minmax(0, 1fr);
+          gap: 0.75rem;
+          align-items: start;
+          white-space: normal;
+          word-break: break-word;
+          border: 0;
+          padding: 0.34rem 0;
+          font-size: 0.9rem;
+        }}
+        .table.is-mobile-stack tbody td::before {{
+          display: block;
+          color: var(--muted);
+          font-size: 0.72rem;
+          font-family: "Manrope", "Noto Sans SC", sans-serif;
+          font-weight: 700;
+          letter-spacing: 0.08em;
+          text-transform: uppercase;
+        }}
+        .table.is-mobile-stack tbody td:empty {{
+          display: none;
         }}
       }}
       @media (max-width: 575.98px) {{
@@ -1608,9 +1679,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
     </style>
   </head>
   <body>
-    <div class="container-fluid px-3 px-md-4 px-xl-5 py-4">
+    <div class="container-fluid px-3 px-md-4 px-xl-4 py-3">
       <div class="shell mx-auto">
-        <div class="topbar shadow-sm px-3 px-lg-4 py-3 py-lg-4 mb-4">
+        <div class="topbar shadow-sm px-3 px-lg-4 py-2 py-lg-3 mb-4">
           <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-center">
             <div>
               <div class="brand-kicker">Official League Site</div>
@@ -1627,6 +1698,32 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         {body}
       </div>
     </div>
+    <script>
+      (function () {{
+        function applyMobileTableCards() {{
+          const isMobile = window.matchMedia("(max-width: 767.98px)").matches;
+          document.querySelectorAll(".table-responsive .table").forEach((table) => {{
+            const headers = Array.from(table.querySelectorAll("thead th")).map((cell) => (cell.textContent || "").trim());
+            const bodyRows = table.querySelectorAll("tbody tr");
+            bodyRows.forEach((row) => {{
+              Array.from(row.children).forEach((cell, index) => {{
+                if (!(cell instanceof HTMLElement)) return;
+                const label = headers[index] || "";
+                if (label) {{
+                  cell.setAttribute("data-label", label);
+                }} else {{
+                  cell.removeAttribute("data-label");
+                }}
+              }});
+            }});
+            table.classList.toggle("is-mobile-stack", isMobile && headers.length > 0);
+          }});
+        }}
+        window.addEventListener("resize", applyMobileTableCards);
+        window.addEventListener("DOMContentLoaded", applyMobileTableCards);
+        applyMobileTableCards();
+      }})();
+    </script>
   </body>
 </html>
 """
@@ -4158,6 +4255,477 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
     return layout(f"{match['match_id']} 详情", body, ctx, alert=alert)
 
 
+def format_dimension_metric_value(value: Any) -> str:
+    if isinstance(value, bool):
+        return "是" if value else "否"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if value.is_integer():
+            return str(int(value))
+        return f"{value:.2f}".rstrip("0").rstrip(".")
+    if value is None:
+        return "-"
+    text = str(value).strip()
+    return text or "-"
+
+
+def get_player_dimension_history(
+    data: dict[str, Any],
+    player_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+) -> list[dict[str, Any]]:
+    rows = [
+        row
+        for row in data.get("season_player_dimension_stats", [])
+        if row.get("player_id") == player_id
+        and (not competition_name or row.get("competition_name") == competition_name)
+        and (not season_name or row.get("season_name") == season_name)
+    ]
+    rows.sort(
+        key=lambda item: (
+            str(item.get("played_on") or ""),
+            int(item.get("seat") or 0),
+            str(item.get("team_id") or ""),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def get_team_dimension_history(
+    data: dict[str, Any],
+    team_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+) -> list[dict[str, Any]]:
+    rows = [
+        row
+        for row in data.get("season_team_dimension_stats", [])
+        if row.get("team_id") == team_id
+        and (not competition_name or row.get("competition_name") == competition_name)
+        and (not season_name or row.get("season_name") == season_name)
+    ]
+    rows.sort(
+        key=lambda item: (
+            str(item.get("played_on") or ""),
+            int(item.get("seat") or 0),
+            str(item.get("team_id") or ""),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def summarize_dimension_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    summary: dict[str, Any] = {}
+    for row in rows:
+        for key, value in row.items():
+            if key in {"competition_name", "season_name", "played_on", "player_id", "team_id", "seat"}:
+                continue
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                summary[key] = float(summary.get(key, 0.0)) + float(value)
+    return summary
+
+
+def build_dimension_season_options(
+    rows: list[dict[str, Any]],
+) -> list[str]:
+    seasons = sorted(
+        {
+            str(row.get("season_name") or "").strip()
+            for row in rows
+            if str(row.get("season_name") or "").strip()
+        },
+        reverse=True,
+    )
+    return seasons
+
+
+def build_dimension_radar_chart(
+    title: str,
+    metrics: list[dict[str, Any]],
+) -> str:
+    center_x = 126
+    center_y = 118
+    radius = 78
+
+    def axis_point(index: int, ratio: float) -> tuple[float, float]:
+        angle = -math.pi / 2 + index * math.pi / 3
+        return (
+            center_x + radius * ratio * math.cos(angle),
+            center_y + radius * ratio * math.sin(angle),
+        )
+
+    grid_polygons = []
+    for level in (0.25, 0.5, 0.75, 1.0):
+        points = " ".join(
+            f"{x:.2f},{y:.2f}"
+            for index in range(6)
+            for x, y in [axis_point(index, level)]
+        )
+        grid_polygons.append(
+            f'<polygon points="{points}" fill="none" stroke="rgba(45, 127, 249, {0.12 + level * 0.12:.2f})" stroke-width="1"></polygon>'
+        )
+
+    axis_lines = []
+    labels = []
+    metric_rows = []
+    data_points = []
+    for index, item in enumerate(metrics):
+        outer_x, outer_y = axis_point(index, 1.0)
+        value_x, value_y = axis_point(index, float(item["ratio"]))
+        label_x, label_y = axis_point(index, 1.24)
+        label_anchor = "middle"
+        if label_x < center_x - 8:
+            label_anchor = "end"
+        elif label_x > center_x + 8:
+            label_anchor = "start"
+        axis_lines.append(
+            f'<line x1="{center_x}" y1="{center_y}" x2="{outer_x:.2f}" y2="{outer_y:.2f}" stroke="rgba(15, 23, 42, 0.18)" stroke-width="1"></line>'
+        )
+        labels.append(
+            f'<text x="{label_x:.2f}" y="{label_y:.2f}" text-anchor="{label_anchor}" font-size="11" fill="#475467">{escape(str(item["label"]))}</text>'
+        )
+        metric_rows.append(
+            f'<div class="col-6 col-xl-4"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">{escape(str(item["label"]))}</div><div class="fw-semibold mt-2">{escape(str(item["display"]))}</div></div></div>'
+        )
+        data_points.append(f"{value_x:.2f},{value_y:.2f}")
+
+    polygon_points = " ".join(data_points)
+    return f"""
+    <div class="row g-4 align-items-center mb-4">
+      <div class="col-12 col-xl-5">
+        <div class="panel h-100 shadow-sm p-3">
+          <div class="small text-secondary mb-3">{escape(title)}</div>
+          <svg viewBox="0 0 252 236" width="100%" role="img" aria-label="{escape(title)}">
+            {''.join(grid_polygons)}
+            {''.join(axis_lines)}
+            <polygon points="{polygon_points}" fill="rgba(45, 127, 249, 0.20)" stroke="#2d7ff9" stroke-width="2"></polygon>
+            {''.join(f'<circle cx="{point.split(",")[0]}" cy="{point.split(",")[1]}" r="3.2" fill="#175cd3"></circle>' for point in data_points)}
+            {''.join(labels)}
+            <circle cx="{center_x}" cy="{center_y}" r="2.6" fill="#175cd3"></circle>
+          </svg>
+        </div>
+      </div>
+      <div class="col-12 col-xl-7">
+        <div class="row g-3">
+          {''.join(metric_rows)}
+        </div>
+      </div>
+    </div>
+    """
+
+
+def build_dimension_season_switcher(
+    base_path: str,
+    competition_name: str | None,
+    selected_page_season: str | None,
+    available_seasons: list[str],
+    selected_dimension_season: str,
+) -> str:
+    if len(available_seasons) <= 1:
+        return ""
+    options_html = "".join(
+        f'<option value="{escape(item)}"{" selected" if item == selected_dimension_season else ""}>{escape(item)}</option>'
+        for item in available_seasons
+    )
+    hidden_fields = []
+    if competition_name:
+        hidden_fields.append(f'<input type="hidden" name="competition" value="{escape(competition_name)}">')
+    if selected_page_season:
+        hidden_fields.append(f'<input type="hidden" name="season" value="{escape(selected_page_season)}">')
+    return f"""
+    <form method="get" action="{escape(base_path)}" class="row g-3 align-items-end mb-4">
+      {''.join(hidden_fields)}
+      <div class="col-12 col-lg-4">
+        <label class="form-label mb-2">维度数据赛季</label>
+        <select class="form-select" name="dimension_season" onchange="this.form.submit()">
+          {options_html}
+        </select>
+      </div>
+    </form>
+    """
+
+
+def build_player_dimension_panel(
+    ctx: RequestContext,
+    data: dict[str, Any],
+    player_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+) -> str:
+    if not competition_name:
+        return ""
+    all_rows = get_player_dimension_history(data, player_id, competition_name, None)
+    if not all_rows:
+        return ""
+    available_seasons = build_dimension_season_options(all_rows)
+    requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
+    selected_dimension_season = (
+        requested_dimension_season
+        if requested_dimension_season in available_seasons
+        else (season_name if season_name in available_seasons else (available_seasons[0] if available_seasons else ""))
+    )
+    if not selected_dimension_season:
+        return ""
+    history = [
+        row
+        for row in all_rows
+        if str(row.get("season_name") or "").strip() == selected_dimension_season
+    ]
+    if not history:
+        return ""
+    season_summaries = {
+        item: summarize_dimension_rows(
+            [row for row in all_rows if str(row.get("season_name") or "").strip() == item]
+        )
+        for item in available_seasons
+    }
+    summary = season_summaries[selected_dimension_season]
+    team_lookup = {team["team_id"]: team for team in data["teams"]}
+    latest = history[0]
+    current_team_name = (
+        team_lookup.get(latest.get("team_id"), {}).get("name")
+        or str(latest.get("team_name") or "").strip()
+        or "未知战队"
+    )
+    avg_points_by_season = {
+        item: safe_rate(
+            season_summaries[item].get("daily_points", 0.0),
+            season_summaries[item].get("games_played", 0.0),
+        )
+        for item in available_seasons
+    }
+    max_avg_points = max(avg_points_by_season.values(), default=0.0) or 1.0
+    radar_html = build_dimension_radar_chart(
+        f"{selected_dimension_season} 赛季维度六边形",
+        [
+            {
+                "label": "总胜率",
+                "ratio": safe_rate(summary.get("wins", 0.0), summary.get("games_played", 0.0)),
+                "display": format_pct(safe_rate(summary.get("wins", 0.0), summary.get("games_played", 0.0))),
+            },
+            {
+                "label": "好人胜率",
+                "ratio": safe_rate(summary.get("villager_wins", 0.0), summary.get("villager_games", 0.0)),
+                "display": format_pct(safe_rate(summary.get("villager_wins", 0.0), summary.get("villager_games", 0.0))),
+            },
+            {
+                "label": "狼人胜率",
+                "ratio": safe_rate(summary.get("werewolf_wins", 0.0), summary.get("werewolf_games", 0.0)),
+                "display": format_pct(safe_rate(summary.get("werewolf_wins", 0.0), summary.get("werewolf_games", 0.0))),
+            },
+            {
+                "label": "场均积分",
+                "ratio": min(avg_points_by_season[selected_dimension_season] / max_avg_points, 1.0),
+                "display": format_dimension_metric_value(avg_points_by_season[selected_dimension_season]),
+            },
+            {
+                "label": "投狼率",
+                "ratio": safe_rate(summary.get("vote_wolf_count", 0.0), summary.get("vote_count", 0.0)),
+                "display": format_pct(safe_rate(summary.get("vote_wolf_count", 0.0), summary.get("vote_count", 0.0))),
+            },
+            {
+                "label": "MVP率",
+                "ratio": safe_rate(summary.get("mvp_count", 0.0), summary.get("games_played", 0.0)),
+                "display": format_pct(safe_rate(summary.get("mvp_count", 0.0), summary.get("games_played", 0.0))),
+            },
+        ],
+    )
+    season_switcher_html = build_dimension_season_switcher(
+        f"/players/{player_id}",
+        competition_name,
+        season_name,
+        available_seasons,
+        selected_dimension_season,
+    )
+    history_rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(str(item.get('played_on') or ''))}</td>
+          <td>{format_dimension_metric_value(item.get('seat', 0))}</td>
+          <td>{escape(team_lookup.get(item.get('team_id'), {}).get('name', current_team_name))}</td>
+          <td>{format_dimension_metric_value(item.get('daily_points', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('games_played', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('wins', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('vote_count', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('vote_wolf_count', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('mvp_count', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('svp_count', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('scapegoat_count', 0))}</td>
+        </tr>
+        """
+        for item in history
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">赛季维度补充数据</h2>
+          <p class="section-copy mb-0">这部分来自比赛日报 Excel 的赛季维度补充数据。可单独切换赛季查看，并在下方用六边形图看当前赛季的维度画像。</p>
+        </div>
+        <span class="chip">{escape(selected_dimension_season)}</span>
+      </div>
+      {season_switcher_html}
+      <div class="row g-3 mb-4">
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">当前战队</div><div class="stat-value mt-2">{escape(current_team_name)}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">赛季总维度积分</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('daily_points', 0))}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">局数 / 胜场</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('games_played', 0))} / {format_dimension_metric_value(summary.get('wins', 0))}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">MVP / SVP / 背锅</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('mvp_count', 0))} / {format_dimension_metric_value(summary.get('svp_count', 0))} / {format_dimension_metric_value(summary.get('scapegoat_count', 0))}</div></div></div>
+      </div>
+      {radar_html}
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>日期</th><th>座位</th><th>战队</th><th>当日积分</th><th>局数</th><th>胜场</th><th>投票</th><th>投狼</th><th>MVP</th><th>SVP</th><th>背锅</th></tr></thead>
+          <tbody>{history_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
+def build_team_dimension_panel(
+    ctx: RequestContext,
+    data: dict[str, Any],
+    team_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+) -> str:
+    if not competition_name:
+        return ""
+    all_rows = get_team_dimension_history(data, team_id, competition_name, None)
+    if not all_rows:
+        return ""
+    available_seasons = build_dimension_season_options(all_rows)
+    requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
+    selected_dimension_season = (
+        requested_dimension_season
+        if requested_dimension_season in available_seasons
+        else (season_name if season_name in available_seasons else (available_seasons[0] if available_seasons else ""))
+    )
+    if not selected_dimension_season:
+        return ""
+    history = [
+        row
+        for row in all_rows
+        if str(row.get("season_name") or "").strip() == selected_dimension_season
+    ]
+    if not history:
+        return ""
+    season_summaries = {
+        item: summarize_dimension_rows(
+            [row for row in all_rows if str(row.get("season_name") or "").strip() == item]
+        )
+        for item in available_seasons
+    }
+    summary = season_summaries[selected_dimension_season]
+    avg_points_by_season = {
+        item: safe_rate(
+            season_summaries[item].get("daily_points", 0.0),
+            season_summaries[item].get("games_played", 0.0),
+        )
+        for item in available_seasons
+    }
+    max_avg_points = max(avg_points_by_season.values(), default=0.0) or 1.0
+    latest = history[0]
+    radar_html = build_dimension_radar_chart(
+        f"{selected_dimension_season} 战队维度六边形",
+        [
+            {
+                "label": "总胜率",
+                "ratio": safe_rate(summary.get("wins", 0.0), summary.get("games_played", 0.0)),
+                "display": format_pct(safe_rate(summary.get("wins", 0.0), summary.get("games_played", 0.0))),
+            },
+            {
+                "label": "好人胜率",
+                "ratio": safe_rate(summary.get("villager_wins", 0.0), summary.get("villager_games", 0.0)),
+                "display": format_pct(safe_rate(summary.get("villager_wins", 0.0), summary.get("villager_games", 0.0))),
+            },
+            {
+                "label": "狼人胜率",
+                "ratio": safe_rate(summary.get("werewolf_wins", 0.0), summary.get("werewolf_games", 0.0)),
+                "display": format_pct(safe_rate(summary.get("werewolf_wins", 0.0), summary.get("werewolf_games", 0.0))),
+            },
+            {
+                "label": "场均积分",
+                "ratio": min(avg_points_by_season[selected_dimension_season] / max_avg_points, 1.0),
+                "display": format_dimension_metric_value(avg_points_by_season[selected_dimension_season]),
+            },
+            {
+                "label": "投狼率",
+                "ratio": safe_rate(summary.get("vote_wolf_count", 0.0), summary.get("vote_count", 0.0)),
+                "display": format_pct(safe_rate(summary.get("vote_wolf_count", 0.0), summary.get("vote_count", 0.0))),
+            },
+            {
+                "label": "首日投对率",
+                "ratio": safe_rate(
+                    summary.get("first_vote_correct", 0.0),
+                    float(summary.get("first_vote_correct", 0.0)) + float(summary.get("first_vote_incorrect", 0.0)),
+                ),
+                "display": format_pct(
+                    safe_rate(
+                        summary.get("first_vote_correct", 0.0),
+                        float(summary.get("first_vote_correct", 0.0)) + float(summary.get("first_vote_incorrect", 0.0)),
+                    )
+                ),
+            },
+        ],
+    )
+    season_switcher_html = build_dimension_season_switcher(
+        f"/teams/{team_id}",
+        competition_name,
+        season_name,
+        available_seasons,
+        selected_dimension_season,
+    )
+    history_rows = "".join(
+        f"""
+        <tr>
+          <td>{escape(str(item.get('played_on') or ''))}</td>
+          <td>{format_dimension_metric_value(item.get('seat', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('daily_points', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('games_played', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('wins', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('villager_points', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('werewolf_points', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('first_vote_correct', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('first_vote_incorrect', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('mvp_count', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('svp_count', 0))}</td>
+          <td>{format_dimension_metric_value(item.get('scapegoat_count', 0))}</td>
+        </tr>
+        """
+        for item in history
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">战队赛季维度补充数据</h2>
+          <p class="section-copy mb-0">这部分来自比赛日报 Excel 的战队维度补充数据。可单独切换赛季查看，并在下方用六边形图看当前赛季的战队画像。</p>
+        </div>
+        <span class="chip">{escape(selected_dimension_season)}</span>
+      </div>
+      {season_switcher_html}
+      <div class="row g-3 mb-4">
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">赛季总维度积分</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('daily_points', 0))}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">局数 / 胜场</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('games_played', 0))} / {format_dimension_metric_value(summary.get('wins', 0))}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">好人得分 / 狼人得分</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('villager_points', 0))} / {format_dimension_metric_value(summary.get('werewolf_points', 0))}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">首日投对 / 投错</div><div class="stat-value mt-2">{format_dimension_metric_value(summary.get('first_vote_correct', 0))} / {format_dimension_metric_value(summary.get('first_vote_incorrect', 0))}</div></div></div>
+      </div>
+      {radar_html}
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>日期</th><th>座位</th><th>当日积分</th><th>局数</th><th>胜场</th><th>好人得分</th><th>狼人得分</th><th>首日投对</th><th>首日投错</th><th>MVP</th><th>SVP</th><th>背锅</th></tr></thead>
+          <tbody>{history_rows}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
 def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     data = load_validated_data()
     team_lookup = {team["team_id"]: team for team in data["teams"]}
@@ -4396,6 +4964,13 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         or team_season_name
         or get_selected_season(ctx, season_names)
     )
+    team_dimension_panel = build_team_dimension_panel(
+        ctx,
+        data,
+        team_id,
+        selected_competition,
+        selected_season,
+    )
     competition_switcher = build_competition_switcher(
         f"/teams/{team_id}",
         team_competition_names,
@@ -4466,6 +5041,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         {team_logo_panel}
         {team_profile_panel}
         {team_stage_group_panel}
+        {team_dimension_panel}
         {team_match_player_score_section}
         <section class="panel shadow-sm p-3 p-lg-4">
           <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -4690,6 +5266,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     {team_logo_panel}
     {team_profile_panel}
     {team_stage_group_panel}
+    {team_dimension_panel}
     {guild_panel}
     {team_match_player_score_section}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -4832,8 +5409,8 @@ def build_team_match_player_score_section(
             competition_name,
             season_name,
         )
-        match_cards: list[str] = []
-        for match in sorted(
+        match_rows_html: list[str] = []
+        for match_index, match in enumerate(sorted(
             matches,
             key=lambda item: (
                 item["played_on"],
@@ -4842,7 +5419,7 @@ def build_team_match_player_score_section(
                 item["match_id"],
             ),
             reverse=True,
-        ):
+        )):
             summary = summarize_team_match(team_id, match, team_lookup)
             participant_rows: list[str] = []
             for participant in sorted(
@@ -4886,39 +5463,39 @@ def build_team_match_player_score_section(
                 f"/matches/{match['match_id']}?next="
                 f"{quote(team_page_path)}"
             )
-            match_cards.append(
+            item_classes = "py-3"
+            if match_index > 0:
+                item_classes += " border-top"
+            match_rows_html.append(
                 f"""
-                <div class="col-12">
-                  <div class="stat-card h-100 p-3 shadow-sm border-0">
-                    <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
-                      <div>
-                        <div class="small text-secondary mb-1">{escape(summary['played_on'])} · {escape(summary['stage'])}</div>
-                        <h3 class="h5 mb-2">{escape(summary['match_id'])}</h3>
-                        <div class="small text-secondary">第 {summary['round']} 轮 · {escape(summary['table_label'])} · 对手 {escape(summary['opponents'])}</div>
-                      </div>
-                      <div class="d-flex flex-wrap gap-2">
-                        <span class="chip">{escape(summary['winning_camp'])}</span>
-                        <span class="chip">本队 {summary['team_score']:.2f}</span>
-                        <span class="chip">对手 {summary['opponent_score']:.2f}</span>
-                        <a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">比赛详情</a>
-                      </div>
+                <div class="{item_classes}">
+                  <div class="d-flex flex-column flex-xl-row justify-content-between align-items-xl-center gap-2 mb-2">
+                    <div>
+                      <div class="fw-semibold">{escape(summary['match_id'])}</div>
+                      <div class="small text-secondary">{escape(summary['played_on'])} · {escape(summary['stage'])} · 第 {summary['round']} 轮 · {escape(summary['table_label'])} · 对手 {escape(summary['opponents'])}</div>
                     </div>
-                    <div class="table-responsive">
-                      <table class="table align-middle mb-0">
-                        <thead>
-                          <tr>
-                            <th>座位</th>
-                            <th>队员</th>
-                            <th>角色</th>
-                            <th>阵营</th>
-                            <th>结果</th>
-                            <th>站边</th>
-                            <th>得分</th>
-                          </tr>
-                        </thead>
-                        <tbody>{''.join(participant_rows) or '<tr><td colspan="7" class="text-secondary">当前还没有这支战队的队员成绩明细。</td></tr>'}</tbody>
-                      </table>
+                    <div class="d-flex flex-wrap gap-2">
+                      <span class="chip">{escape(summary['winning_camp'])}</span>
+                      <span class="chip">本队 {summary['team_score']:.2f}</span>
+                      <span class="chip">对手 {summary['opponent_score']:.2f}</span>
+                      <a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">比赛详情</a>
                     </div>
+                  </div>
+                  <div class="table-responsive">
+                    <table class="table table-sm align-middle mb-0">
+                      <thead>
+                        <tr>
+                          <th>座位</th>
+                          <th>队员</th>
+                          <th>角色</th>
+                          <th>阵营</th>
+                          <th>结果</th>
+                          <th>站边</th>
+                          <th>得分</th>
+                        </tr>
+                      </thead>
+                      <tbody>{''.join(participant_rows) or '<tr><td colspan="7" class="text-secondary">当前还没有这支战队的队员成绩明细。</td></tr>'}</tbody>
+                    </table>
                   </div>
                 </div>
                 """
@@ -4933,7 +5510,7 @@ def build_team_match_player_score_section(
                 </div>
                 <a class="btn btn-outline-dark" href="{escape(scope_path)}">切换到这个赛季</a>
               </div>
-              <div class="row g-3">{''.join(match_cards)}</div>
+              <div class="border rounded-3 px-3 bg-white">{''.join(match_rows_html)}</div>
             </div>
             """
         )
@@ -5146,6 +5723,13 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
             </tr>
             """
         )
+    player_dimension_panel = build_player_dimension_panel(
+        ctx,
+        data,
+        player_id,
+        selected_competition,
+        selected_season,
+    )
 
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
@@ -5171,6 +5755,7 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
         </div>
       </div>
     </section>
+    {player_dimension_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="row g-3">
         <div class="col-12 col-lg-7">

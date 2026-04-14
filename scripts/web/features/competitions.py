@@ -253,6 +253,44 @@ def build_player_mvp_rows(
     return rows
 
 
+def build_match_day_leaderboards(
+    data: dict[str, Any],
+    played_on: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
+    completed_matches = [
+        match
+        for match in data["matches"]
+        if str(match.get("played_on") or "").strip() == played_on
+        and is_match_counted_as_played(match)
+    ]
+    stats_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": completed_matches,
+    }
+    player_rows = [row for row in build_player_rows(stats_data) if row["games_played"] > 0]
+    team_rows = [
+        row
+        for row in build_team_rows(stats_data)
+        if row["matches_represented"] > 0
+    ]
+    player_rows.sort(
+        key=lambda row: (
+            row["rank"],
+            -row["points_earned_total"],
+            row["display_name"],
+        )
+    )
+    team_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", 9999),
+            -row["points_earned_total"],
+            row["name"],
+        )
+    )
+    return completed_matches, player_rows, team_rows
+
+
 def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -573,6 +611,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
     data = load_validated_data()
     catalog = load_series_catalog(data)
     player_lookup = {player["player_id"]: player for player in data["players"]}
+    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(data, played_on)
     day_matches = [
         match
         for match in sorted(
@@ -604,6 +643,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
         series_slug = series_entry["series_slug"] if series_entry else None
         player_count = len({entry["player_id"] for match in matches for entry in match["players"]})
         team_count = len({entry["team_id"] for match in matches for entry in match["players"]})
+        completed_count = sum(1 for match in matches if is_match_counted_as_played(match))
         match_cards = []
         for match in sorted(
             matches,
@@ -612,10 +652,15 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
             season_name = (match.get("season") or "").strip()
             detail_path = build_match_day_path(played_on)
             match_detail_path = f"/matches/{match['match_id']}?next={quote(detail_path)}"
+            completed = is_match_counted_as_played(match)
             team_links = "、".join(
                 f'<a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{legacy.escape(build_scoped_path("/teams/" + entry["team_id"], competition_name, season_name, region_name, series_slug))}">{legacy.escape(team_lookup[entry["team_id"]]["name"])}</a>'
                 for entry in sorted(
-                    {item["team_id"]: item for item in match["players"]}.values(),
+                    {
+                        item["team_id"]: item
+                        for item in match["players"]
+                        if item["team_id"] in team_lookup
+                    }.values(),
                     key=lambda item: team_lookup[item["team_id"]]["name"],
                 )
             )
@@ -642,16 +687,25 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
                     </tr>
                     """
                 )
+            meta_parts = [f"参赛战队 {team_links}" if team_links else "参赛战队待补全"]
+            table_label = str(match.get("table_label") or "").strip()
+            if table_label:
+                meta_parts.append(table_label)
+            duration_minutes = int(match.get("duration_minutes") or 0)
+            if duration_minutes:
+                meta_parts.append(f"{duration_minutes} 分钟")
+            if not completed:
+                meta_parts.append("待补录")
             match_cards.append(
                 f"""
                 <div class="col-12">
                   <div class="team-link-card shadow-sm p-4 h-100">
                     <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-start gap-3 mb-3">
                       <div>
-                        <div class="card-kicker mb-2">个人积分日报</div>
+                        <div class="card-kicker mb-2">比赛结果</div>
                         <h3 class="h5 mb-2">{legacy.escape(match['match_id'])}</h3>
                         <div class="small-muted">赛季 {legacy.escape(season_name)} · {legacy.escape(STAGE_OPTIONS.get(match['stage'], match['stage']))} · 第 {match['round']} 轮 / 第 {match['game_no']} 局</div>
-                        <div class="small-muted mt-1">参赛战队 {team_links} · {legacy.escape(match['table_label'])} · {match['duration_minutes']} 分钟</div>
+                        <div class="small-muted mt-1">{legacy.escape(' · '.join(meta_parts))}</div>
                       </div>
                       <div class="d-flex flex-wrap gap-2">
                         <a class="btn btn-sm btn-outline-dark" href="{legacy.escape(match_detail_path)}">查看详情</a>
@@ -670,7 +724,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
                           </tr>
                         </thead>
                         <tbody>
-                          {''.join(player_rows)}
+                          {''.join(player_rows) or '<tr><td colspan="6" class="text-secondary">当前比赛还没有完成补录。</td></tr>'}
                         </tbody>
                       </table>
                     </div>
@@ -686,7 +740,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
                 <div>
                   <h2 class="section-title mb-2">{legacy.escape(series_name)} · {legacy.escape(region_name)}</h2>
                   <div class="small-muted mb-2">{legacy.escape(competition_name)}</div>
-                  <p class="section-copy mb-0">当天该系列赛共有 {len(matches)} 场比赛，涉及 {team_count} 支战队、{player_count} 名队员。日报按单场个人积分展示，战队积分将累计进赛季排行榜。</p>
+                  <p class="section-copy mb-0">当天该系列赛共有 {len(matches)} 场比赛，其中 {completed_count} 场已完成补录，涉及 {team_count} 支战队、{player_count} 名队员。下方只展示当天每场比赛的结果明细。</p>
                 </div>
                 <a class="btn btn-outline-dark" href="{legacy.escape(build_scoped_path('/competitions', competition_name, (matches[0].get('season') or '').strip() or None, region_name, series_slug))}">进入该赛事页</a>
               </div>
@@ -695,35 +749,35 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
             """
         )
 
-    total_team_count = len({entry["team_id"] for match in day_matches for entry in match["players"]})
-    total_player_count = len({entry["player_id"] for match in day_matches for entry in match["players"]})
+    total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"]})
+    total_player_count = len({entry["player_id"] for match in completed_day_matches for entry in match["players"]})
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="hero-layout">
         <div>
           <div class="eyebrow mb-3">比赛日总览</div>
           <h1 class="hero-title mb-3">{legacy.escape(played_on)} 比赛日</h1>
-          <p class="hero-copy mb-0">这里按系列赛拆分展示这一天的全部比赛。你可以先看当天总览，再点进单场详情页继续查看每局完整数据。</p>
+          <p class="hero-copy mb-0">这里按系列赛拆分展示这一天的全部比赛结果，只保留当天各局比赛明细。</p>
           <div class="d-flex flex-wrap gap-2 mt-4">
             <a class="btn btn-outline-dark" href="{legacy.escape(next_path)}">返回上一页</a>
           </div>
           <div class="hero-kpis">
             <div class="hero-pill"><span>系列赛数量</span><strong>{len(grouped_matches)}</strong><small>当天涉及系列赛</small></div>
             <div class="hero-pill"><span>比赛场次</span><strong>{len(day_matches)}</strong><small>当天全部比赛</small></div>
-            <div class="hero-pill"><span>参赛战队</span><strong>{total_team_count}</strong><small>当天全部战队</small></div>
-            <div class="hero-pill"><span>参赛队员</span><strong>{total_player_count}</strong><small>当天全部上场</small></div>
+            <div class="hero-pill"><span>已补录场次</span><strong>{len(completed_day_matches)}</strong><small>已完成成绩录入</small></div>
+            <div class="hero-pill"><span>上场队员</span><strong>{total_player_count}</strong><small>已补录比赛口径</small></div>
           </div>
         </div>
         <div class="hero-stage-card">
           <div class="official-mark">Official Match Day</div>
           <div class="hero-stage-label">Daily Overview</div>
           <div class="hero-stage-title">{legacy.escape(played_on)}</div>
-          <div class="hero-stage-note">当天所有比赛会按系列赛分块展示，每场比赛都保留详情入口，方便回看当日完整赛程。</div>
+          <div class="hero-stage-note">当天所有比赛按系列赛分块展示，页面下方只保留当日各场比赛结果。</div>
           <div class="hero-stage-grid">
             <div class="hero-stage-metric"><span>系列赛</span><strong>{len(grouped_matches)}</strong><small>当天开赛系列赛</small></div>
             <div class="hero-stage-metric"><span>场次</span><strong>{len(day_matches)}</strong><small>当天完整对局</small></div>
-            <div class="hero-stage-metric"><span>战队</span><strong>{total_team_count}</strong><small>当天参赛战队</small></div>
-            <div class="hero-stage-metric"><span>队员</span><strong>{total_player_count}</strong><small>当天上场人数</small></div>
+            <div class="hero-stage-metric"><span>战队</span><strong>{total_team_count}</strong><small>已补录比赛战队</small></div>
+            <div class="hero-stage-metric"><span>队员</span><strong>{total_player_count}</strong><small>已补录比赛人数</small></div>
           </div>
         </div>
       </div>

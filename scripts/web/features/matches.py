@@ -11,6 +11,11 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import web_app as legacy
+from sqlite_store import (
+    load_season_player_dimension_stats,
+    load_season_team_dimension_stats,
+    save_season_dimension_stats,
+)
 
 CAMP_OPTIONS = legacy.CAMP_OPTIONS
 RequestContext = legacy.RequestContext
@@ -95,6 +100,59 @@ EXCEL_HEADER_ALIASES = {
     "站边": "stance_result",
     "积分模型": "score_model",
     "备注": "notes",
+}
+PLAYER_DIMENSION_SHEET_NAMES = ["单日选手个人维度数据"]
+TEAM_DIMENSION_SHEET_NAMES = ["单日选手战队维度数据 ", "单日选手战队维度数据"]
+PLAYER_DIMENSION_FIELD_MAP = {
+    "当日积分": "daily_points",
+    "局数": "games_played",
+    "胜场数": "wins",
+    "狼人局数": "werewolf_games",
+    "狼人胜局数": "werewolf_wins",
+    "好人局数": "villager_games",
+    "好人胜局数": "villager_wins",
+    "投票次数": "vote_count",
+    "投狼次数": "vote_wolf_count",
+    "悍跳次数": "jump_count",
+    "悍跳成功次数": "jump_success_count",
+    "MVP次数": "mvp_count",
+    "SVP次数": "svp_count",
+    "背锅次数": "scapegoat_count",
+}
+TEAM_DIMENSION_FIELD_MAP = {
+    "当日积分": "daily_points",
+    "局数": "games_played",
+    "胜场数": "wins",
+    "狼人局数": "werewolf_games",
+    "狼人胜局数": "werewolf_wins",
+    "好人局数": "villager_games",
+    "好人胜局数": "villager_wins",
+    "投票次数": "vote_count",
+    "投狼次数": "vote_wolf_count",
+    "悍跳次数": "jump_count",
+    "悍跳成功次数": "jump_success_count",
+    "MVP次数": "mvp_count",
+    "SVP次数": "svp_count",
+    "背锅次数": "scapegoat_count",
+    "首日投对": "first_vote_correct",
+    "第一局胜": "game_1_win",
+    "第二局胜": "game_2_win",
+    "第三局胜": "game_3_win",
+    "第一局阵营": "game_1_camp",
+    "第二局阵营": "game_2_camp",
+    "第三局阵营": "game_3_camp",
+    "第一局狼胜": "game_1_werewolf_win",
+    "第二局狼胜": "game_2_werewolf_win",
+    "第三局狼胜": "game_3_werewolf_win",
+    "第一局好胜": "game_1_villager_win",
+    "第二局好人胜": "game_2_villager_win",
+    "第三局好人胜": "game_3_villager_win",
+    "首日投错": "first_vote_incorrect",
+    "好人得分": "villager_points",
+    "狼人得分": "werewolf_points",
+    "自刀次数": "self_elimination_count",
+    "开毒次数": "poison_used_count",
+    "毒狼次数": "poisoned_werewolf_count",
 }
 
 
@@ -310,6 +368,59 @@ def build_excel_import_panel() -> str:
     """
 
 
+def build_dimension_import_panel(
+    ctx: RequestContext,
+    values: dict[str, str] | None = None,
+) -> str:
+    current = values or {
+        "competition_name": form_value(ctx.query, "competition").strip(),
+        "season": form_value(ctx.query, "season").strip(),
+    }
+    competition_field_html = build_match_competition_field(
+        current["competition_name"],
+        ctx.current_user,
+    )
+    season_field_html = build_match_season_field(
+        current["competition_name"],
+        current["season"],
+        include_non_ongoing=True,
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
+        <div>
+          <h2 class="section-title mb-2">Excel 批量导入赛季维度数据</h2>
+          <p class="section-copy mb-0">用于导入比赛日报里的选手维度和战队维度补充数据。系统会把数据绑定到当前赛事赛季下已有的选手、战队档案中。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/assets/templates/dimension-stats-upload-template-jcds.xlsx">下载京城大师赛维度模板</a>
+        </div>
+      </div>
+      <form method="post" action="/matches/new" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="import_dimension_excel">
+        <div class="row g-3">
+          <div class="col-12 col-xl-4">
+            <label class="form-label">地区赛事页</label>
+            {competition_field_html}
+          </div>
+          <div class="col-12 col-xl-3">
+            <label class="form-label">赛季</label>
+            {season_field_html}
+          </div>
+          <div class="col-12 col-xl-5">
+            <label class="form-label">选择 Excel 文件</label>
+            <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          </div>
+        </div>
+        <div class="small text-secondary mt-3">目前按京城大师赛维度模板识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。导入时会按你选定的赛事和赛季，用战队名、选手主档名做完全一致匹配；找不到会直接报错，不会自动创建新档案。建议先完成比赛录入，再上传维度数据。</div>
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
+        </div>
+      </form>
+    </section>
+    """
+
+
 def get_management_form_values(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
@@ -493,7 +604,7 @@ def read_excel_sheet_rows(upload: UploadedFile, sheet_name: str) -> list[dict[st
         }
         target = ""
         for sheet in workbook_xml.findall("main:sheets/main:sheet", EXCEL_NS):
-            if sheet.attrib.get("name") == sheet_name:
+            if str(sheet.attrib.get("name") or "").strip() == sheet_name.strip():
                 relation_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
                 target = rel_target_by_id.get(relation_id, "")
                 break
@@ -559,6 +670,50 @@ def validate_excel_upload(upload: UploadedFile | None) -> str:
     if not upload.data:
         return "上传的 Excel 文件为空，请重新选择。"
     return ""
+
+
+def normalize_excel_serial_date(value: str, field_label: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ValueError(f"{field_label} 不能为空。")
+    parsed_iso = parse_date_input(text)
+    if parsed_iso:
+        return parsed_iso.strftime("%Y-%m-%d")
+    try:
+        serial = float(text)
+    except ValueError as exc:
+        raise ValueError(f"{field_label} 格式不正确：{text}") from exc
+    base_date = datetime(1899, 12, 30)
+    return (base_date + timedelta(days=int(serial))).strftime("%Y-%m-%d")
+
+
+def parse_excel_metric_value(value: str) -> str | int | float:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        number = float(text)
+    except ValueError:
+        return text
+    if number.is_integer():
+        return int(number)
+    return round(number, 2)
+
+
+def get_excel_row_value(row: dict[str, str], *keys: str) -> str:
+    for key in keys:
+        value = str(row.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def read_optional_sheet_rows(upload: UploadedFile, sheet_names: list[str]) -> list[dict[str, str]]:
+    for sheet_name in sheet_names:
+        rows = read_excel_sheet_rows(upload, sheet_name)
+        if rows:
+            return rows
+    return []
 
 
 def parse_excel_int(value: str, field_label: str) -> int:
@@ -1052,6 +1207,169 @@ def import_matches_from_excel(
     return next_matches, summary
 
 
+def build_player_dimension_stats_from_rows(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+    rows: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    parsed_rows: list[dict[str, object]] = []
+    for index, row in enumerate(rows, start=2):
+        player_name = get_excel_row_value(row, "选手姓名", "player_name")
+        team_name = get_excel_row_value(row, "所属战队", "战队", "team_name")
+        played_on = normalize_excel_serial_date(
+            get_excel_row_value(row, "比赛日期", "played_on"),
+            f"单日选手个人维度数据 第 {index} 行的比赛日期",
+        )
+        seat = parse_excel_optional_int(get_excel_row_value(row, "座位号", "seat"), 0)
+        if not player_name:
+            raise ValueError(f"单日选手个人维度数据 第 {index} 行缺少选手姓名。")
+        if not team_name:
+            raise ValueError(f"单日选手个人维度数据 第 {index} 行缺少所属战队。")
+        team = legacy.find_team_by_name_in_scope(data, competition_name, season_name, team_name)
+        if not team:
+            raise ValueError(f"单日选手个人维度数据 第 {index} 行未找到战队：{team_name}。")
+        player = legacy.find_player_by_name_in_scope(
+            data,
+            competition_name,
+            season_name,
+            player_name,
+            team_name,
+        )
+        if not player:
+            raise ValueError(f"单日选手个人维度数据 第 {index} 行未找到选手：{player_name}。")
+        parsed_row: dict[str, object] = {
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "played_on": played_on,
+            "player_id": player["player_id"],
+            "team_id": team["team_id"],
+            "seat": seat,
+        }
+        for header_name, field_name in PLAYER_DIMENSION_FIELD_MAP.items():
+            parsed_row[field_name] = parse_excel_metric_value(row.get(header_name, ""))
+        parsed_rows.append(parsed_row)
+    return parsed_rows
+
+
+def build_team_dimension_stats_from_rows(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+    rows: list[dict[str, str]],
+) -> list[dict[str, object]]:
+    parsed_rows: list[dict[str, object]] = []
+    for index, row in enumerate(rows, start=2):
+        team_name = get_excel_row_value(row, "战队", "所属战队", "team_name")
+        played_on = normalize_excel_serial_date(
+            get_excel_row_value(row, "比赛日期", "played_on"),
+            f"单日选手战队维度数据 第 {index} 行的比赛日期",
+        )
+        if not team_name:
+            raise ValueError(f"单日选手战队维度数据 第 {index} 行缺少战队名称。")
+        team = legacy.find_team_by_name_in_scope(data, competition_name, season_name, team_name)
+        if not team:
+            raise ValueError(f"单日选手战队维度数据 第 {index} 行未找到战队：{team_name}。")
+        parsed_row: dict[str, object] = {
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "played_on": played_on,
+            "team_id": team["team_id"],
+            "seat": parse_excel_optional_int(get_excel_row_value(row, "座位号", "seat"), 0),
+        }
+        for header_name, field_name in TEAM_DIMENSION_FIELD_MAP.items():
+            parsed_row[field_name] = parse_excel_metric_value(row.get(header_name, ""))
+        parsed_rows.append(parsed_row)
+    return parsed_rows
+
+
+def import_dimension_stats_from_excel(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[list[dict[str, object]] | None, list[dict[str, object]] | None, str]:
+    try:
+        player_sheet_rows = read_optional_sheet_rows(upload, PLAYER_DIMENSION_SHEET_NAMES)
+        team_sheet_rows = read_optional_sheet_rows(upload, TEAM_DIMENSION_SHEET_NAMES)
+    except Exception as exc:
+        return None, None, f"解析 Excel 失败：{exc}"
+    if not player_sheet_rows and not team_sheet_rows:
+        return None, None, "Excel 中没有找到可导入的维度数据工作表。"
+    if not can_manage_matches(ctx.current_user, data, competition_name):
+        return None, None, f"你没有权限导入 {competition_name} 下的维度数据。"
+    competition_error = validate_match_competition_selection(data, competition_name)
+    if competition_error:
+        return None, None, competition_error
+    season_error = validate_match_season_selection(
+        data,
+        competition_name,
+        season_name,
+        include_non_ongoing=True,
+    )
+    if season_error:
+        return None, None, season_error
+    try:
+        imported_player_rows = build_player_dimension_stats_from_rows(
+            data,
+            competition_name,
+            season_name,
+            player_sheet_rows,
+        )
+        imported_team_rows = build_team_dimension_stats_from_rows(
+            data,
+            competition_name,
+            season_name,
+            team_sheet_rows,
+        )
+    except ValueError as exc:
+        return None, None, str(exc)
+
+    existing_player_rows = list(load_season_player_dimension_stats())
+    existing_team_rows = list(load_season_team_dimension_stats())
+    player_index = {
+        (
+            str(row.get("competition_name") or "").strip(),
+            str(row.get("season_name") or "").strip(),
+            str(row.get("played_on") or "").strip(),
+            str(row.get("player_id") or "").strip(),
+        ): row
+        for row in existing_player_rows
+    }
+    team_index = {
+        (
+            str(row.get("competition_name") or "").strip(),
+            str(row.get("season_name") or "").strip(),
+            str(row.get("played_on") or "").strip(),
+            str(row.get("team_id") or "").strip(),
+        ): row
+        for row in existing_team_rows
+    }
+    for row in imported_player_rows:
+        player_index[
+            (
+                str(row.get("competition_name") or "").strip(),
+                str(row.get("season_name") or "").strip(),
+                str(row.get("played_on") or "").strip(),
+                str(row.get("player_id") or "").strip(),
+            )
+        ] = row
+    for row in imported_team_rows:
+        team_index[
+            (
+                str(row.get("competition_name") or "").strip(),
+                str(row.get("season_name") or "").strip(),
+                str(row.get("played_on") or "").strip(),
+                str(row.get("team_id") or "").strip(),
+            )
+        ] = row
+    summary = (
+        f"维度数据导入完成：选手 {len(imported_player_rows)} 条，战队 {len(imported_team_rows)} 条。"
+    )
+    return list(player_index.values()), list(team_index.values()), summary
+
+
 def batch_create_matches(
     competition_name: str,
     season_name: str,
@@ -1192,7 +1510,8 @@ def build_match_season_field(
         const seasonMap = JSON.parse(scope.getAttribute("data-season-map") || "{{}}");
         const seasonSelect = scope.querySelector("[data-match-season-select]");
         const helper = scope.querySelector("[data-match-season-helper]");
-        const competitionSelect = document.querySelector("[data-match-competition-select]");
+        const form = scope.closest("form");
+        const competitionSelect = form ? form.querySelector("[data-match-competition-select]") : null;
         if (!seasonSelect || !competitionSelect) return;
         function renderSeasons() {{
           const seasons = seasonMap[competitionSelect.value] || [];
@@ -1672,11 +1991,12 @@ def get_match_edit_page(
         alert=alert,
     )
     excel_panel_html = build_excel_import_panel()
+    dimension_panel_html = build_dimension_import_panel(ctx)
     if '<section class="form-panel' not in form_html:
         return form_html
     return form_html.replace(
         '<section class="form-panel',
-        f"{excel_panel_html}<section class=\"form-panel",
+        f"{excel_panel_html}{dimension_panel_html}<section class=\"form-panel",
         1,
     )
 
@@ -1718,12 +2038,13 @@ def get_match_create_page(
     management_panel_html = build_match_management_panel(ctx)
     batch_panel_html = build_batch_create_form(ctx, get_batch_create_form_values(ctx, batch_form_values))
     excel_panel_html = build_excel_import_panel()
+    dimension_panel_html = build_dimension_import_panel(ctx)
     body_start = manual_form_html.find('<section class="form-panel')
     if body_start == -1:
         return manual_form_html
     combined_body = manual_form_html.replace(
         '<section class="form-panel',
-        f"{management_panel_html}{batch_panel_html}{excel_panel_html}<section class=\"form-panel",
+        f"{management_panel_html}{batch_panel_html}{excel_panel_html}{dimension_panel_html}<section class=\"form-panel",
         1,
     )
     return combined_body
@@ -2008,6 +2329,44 @@ def handle_match_create(ctx: RequestContext, start_response):
         if created_player_ids:
             alert_message += " 系统还为模板里不存在的参赛 ID 自动创建了赛季档案。"
         return redirect(start_response, append_alert_query(next_path, alert_message))
+    if action == "import_dimension_excel":
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season").strip()
+        upload = file_value(ctx.files, "dimension_excel_file")
+        upload_error = validate_excel_upload(upload)
+        if upload_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=upload_error),
+            )
+        next_player_rows, next_team_rows, import_message = import_dimension_stats_from_excel(
+            ctx,
+            data,
+            upload,
+            competition_name,
+            season_name,
+        )
+        if next_player_rows is None or next_team_rows is None:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=import_message),
+            )
+        try:
+            save_season_dimension_stats(next_player_rows, next_team_rows)
+        except Exception as exc:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=f"维度数据保存失败：{exc}"),
+            )
+        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
+            "/competitions",
+            competition_name,
+            season_name,
+        )
+        return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
 
     new_match = parse_match_form(ctx.form, build_empty_match())
     resolution_errors = resolve_match_entities(data, [new_match])

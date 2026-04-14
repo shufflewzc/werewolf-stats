@@ -21,6 +21,7 @@ get_team_captain_id = legacy.get_team_captain_id
 get_team_scope = legacy.get_team_scope
 get_team_season_status = legacy.get_team_season_status
 get_user_player = legacy.get_user_player
+get_user_team_for_scope = legacy.get_user_team_for_scope
 get_user_team_identities = legacy.get_user_team_identities
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
@@ -32,7 +33,6 @@ save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
 team_scope_label = legacy.team_scope_label
-user_has_team_identity_in_scope = legacy.user_has_team_identity_in_scope
 
 collect_team_stage_groups_from_form = base.collect_team_stage_groups_from_form
 handle_switch_primary_identity_action = base.handle_switch_primary_identity_action
@@ -134,6 +134,17 @@ def get_team_center_page_impl(
                   <a class="btn btn-sm btn-dark" href="{escape(build_scoped_path('/teams/' + team['team_id'], *scope))}">查看战队页</a>
                   <a class="btn btn-sm btn-outline-dark" href="{escape(build_scoped_path('/players/' + player['player_id'], *scope))}">查看档案</a>
                   {switch_action}
+                  {(
+                    f'''
+                    <form method="post" action="/team-center" class="m-0">
+                      <input type="hidden" name="action" value="unbind_team_claim">
+                      <input type="hidden" name="team_id" value="{escape(team['team_id'])}">
+                      <button type="submit" class="btn btn-sm btn-outline-danger">解除认领</button>
+                    </form>
+                    '''
+                    if get_team_captain_id(team) == player["player_id"]
+                    else ""
+                  )}
                 </div>
               </div>
             </div>
@@ -154,7 +165,13 @@ def get_team_center_page_impl(
         if team_status == "completed" or not is_unclaimed_team(team):
             continue
         competition_name, season_name = get_team_scope(team)
-        if user_has_team_identity_in_scope(data, current_user, competition_name, season_name):
+        scope_player, scope_team = get_user_team_for_scope(
+            data,
+            current_user,
+            competition_name,
+            season_name,
+        )
+        if scope_player and scope_team and scope_team["team_id"] != team["team_id"]:
             continue
         guild = get_guild_by_id(data, str(team.get("guild_id") or "").strip())
         claim_cards.append(
@@ -336,8 +353,19 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         if get_team_season_status(data, target_team) == "completed":
             return _respond_with_alert(start_response, ctx, "已结束赛季的战队不再开放认领。", next_path)
         competition_name, season_name = get_team_scope(target_team)
-        if user_has_team_identity_in_scope(data, current_user, competition_name, season_name):
-            return _respond_with_alert(start_response, ctx, "当前账号在这个赛事赛季里已经有战队身份，不能重复认领。", next_path)
+        scope_player, scope_team = get_user_team_for_scope(
+            data,
+            current_user,
+            competition_name,
+            season_name,
+        )
+        if scope_player and scope_team and scope_team["team_id"] != target_team["team_id"]:
+            return _respond_with_alert(
+                start_response,
+                ctx,
+                "当前账号在这个赛事赛季里已经绑定了其他战队身份，不能重复认领。",
+                next_path,
+            )
         requests.append(
             {
                 "request_id": secrets.token_urlsafe(12),
@@ -400,19 +428,27 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
             save_membership_requests(requests)
             return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="认领申请对应的数据已失效，申请已移除。"))
         competition_name, season_name = get_team_scope(target_team)
-        if user_has_team_identity_in_scope(data, requester, competition_name, season_name):
+        scope_player, scope_team = get_user_team_for_scope(
+            data,
+            requester,
+            competition_name,
+            season_name,
+        )
+        if scope_player and scope_team and scope_team["team_id"] != target_team["team_id"]:
             requests = [item for item in requests if item.get("request_id") != request_id]
             save_membership_requests(requests)
             return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="该账号在当前赛事赛季里已经有战队身份，申请已移除。"))
 
         existing_player_ids = {player["player_id"] for player in data["players"]}
-        captain_player = find_player_by_name_in_scope(
-            data,
-            competition_name,
-            season_name,
-            requester.get("display_name") or requester["username"],
-            target_team["name"],
-        )
+        captain_player = scope_player if scope_team and scope_team["team_id"] == target_team["team_id"] else None
+        if captain_player is None:
+            captain_player = find_player_by_name_in_scope(
+                data,
+                competition_name,
+                season_name,
+                requester.get("display_name") or requester["username"],
+                target_team["name"],
+            )
         if captain_player is None:
             player_id = build_unique_slug(existing_player_ids, "player", requester["username"], "player")
             captain_player = build_placeholder_player(
@@ -456,6 +492,35 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         if errors:
             return _respond_with_alert(start_response, ctx, "保存战队资料失败：" + "；".join(errors[:3]), next_path)
         return _respond_with_alert(start_response, ctx, "战队资料已更新。", next_path)
+
+    if action == "unbind_team_claim":
+        team_id = form_value(ctx.form, "team_id").strip()
+        next_path = form_value(ctx.form, "next").strip()
+        team = get_team_by_id(data, team_id)
+        if not team:
+            return _respond_with_alert(start_response, ctx, "没有找到要解除认领的战队。", next_path)
+        if not can_manage_team(ctx, team, current_player):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">只有管理员、具备战队管理权限的账号或当前认领负责人可以解除认领。</div>', ctx),
+            )
+        if is_unclaimed_team(team):
+            return _respond_with_alert(start_response, ctx, "当前战队还没有认领负责人。", next_path)
+        team["captain_player_id"] = None
+        errors = save_repository_state(data, users)
+        if errors:
+            return _respond_with_alert(start_response, ctx, "解除认领失败：" + "；".join(errors[:3]), next_path)
+        requests = [
+            item
+            for item in requests
+            if not (
+                item.get("request_type") == "team_claim"
+                and item.get("target_team_id") == team_id
+            )
+        ]
+        save_membership_requests(requests)
+        return _respond_with_alert(start_response, ctx, f"已解除 {team['name']} 的认领负责人。", next_path)
 
     if action == "update_team_stage_groups":
         team_id = form_value(ctx.form, "team_id").strip()

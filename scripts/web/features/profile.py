@@ -94,7 +94,7 @@ def get_profile_page(
         "notes": "",
     }
     bound_summary = build_bound_player_summary(data, current_user)
-    binding_button = '<a class="btn btn-outline-dark" href="/bindings">绑定历史参赛ID</a>'
+    binding_button = '<a class="btn btn-outline-dark" href="/bindings">管理赛季参赛ID</a>'
 
     if current_player:
         player_form = {
@@ -200,7 +200,7 @@ def get_profile_page(
 
     shortcut_links = [
         '<a class="btn btn-outline-dark" href="/team-center">战队认领</a>',
-        '<a class="btn btn-outline-dark" href="/bindings">参赛 ID 绑定</a>',
+        '<a class="btn btn-outline-dark" href="/bindings">赛季 ID 管理</a>',
     ]
     if can_manage_matches(current_user):
         shortcut_links.append('<a class="btn btn-outline-dark" href="/matches/new">比赛管理</a>')

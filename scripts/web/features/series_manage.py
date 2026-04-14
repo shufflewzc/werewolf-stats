@@ -253,7 +253,6 @@ def get_series_manage_page(
     for season_entry in competition_season_entries:
         season_detail_path = build_series_manage_path(selected_competition_name, current_form["next"], season_entry["season_name"])
         season_edit_path = build_series_manage_path(selected_competition_name, current_form["next"], season_entry["season_name"], "season")
-        registered_team_names = [team_lookup[team_id]["name"] for team_id in season_entry.get("registered_team_ids", []) if team_id in team_lookup]
         season_cards.append(
             f"""
             <div class="col-12 col-lg-6">
@@ -263,12 +262,11 @@ def get_series_manage_page(
                     <div class="card-kicker mb-2">赛季档期</div>
                     <h2 class="h5 mb-2">{escape(season_entry['season_name'])}</h2>
                     <div class="small-muted">起止时间 {escape(format_datetime_local_label(season_entry.get('start_at', '')))} - {escape(format_datetime_local_label(season_entry.get('end_at', '')))}</div>
-                    <div class="small-muted mt-1">状态 {escape(season_status_label(season_entry))} · 已报名战队 {len(season_entry.get('registered_team_ids', []))} 支</div>
+                    <div class="small-muted mt-1">状态 {escape(season_status_label(season_entry))}</div>
                   </div>
                   <span class="chip">{'当前赛季' if season_entry['season_name'] == requested_season_name else escape(season_status_label(season_entry))}</span>
                 </div>
                 <p class="section-copy mt-3 mb-2">{escape(season_entry.get('notes') or '这个赛季还没有补充说明。')}</p>
-                <div class="small-muted">{escape('、'.join(registered_team_names) if registered_team_names else '当前还没有战队报名。')}</div>
                 <div class="d-flex flex-wrap gap-2 mt-3">
                   <a class="btn btn-sm btn-outline-dark" href="{escape(season_detail_path)}">查看赛季</a>
                   {(f'<a class="btn btn-sm btn-outline-dark" href="{escape(season_edit_path)}">编辑赛季</a>' if can_manage_selected_seasons else '')}
@@ -300,16 +298,14 @@ def get_series_manage_page(
                 delete_season_helper_html = '<div class="small text-secondary">当前正在新建赛季，保存后会回到正常展示状态。</div>'
                 if season_form["original_season_name"]:
                     target_season_name = season_form["original_season_name"]
-                    target_season_entry = get_season_entry(season_catalog, selected_series_slug, target_season_name, competition_name=selected_competition_name)
                     selected_season_has_matches = any(get_match_competition_name(match) == selected_competition_name and str(match.get("season") or "").strip() == target_season_name for match in data["matches"])
-                    selected_season_registered_team_count = len(target_season_entry.get("registered_team_ids", [])) if target_season_entry else 0
                     delete_button_disabled = ""
-                    delete_button_confirm = " onclick=\"return confirm('确认强制删除当前赛季吗？这会一并删除该赛季的比赛记录和报名记录，且不可恢复。')\""
+                    delete_button_confirm = " onclick=\"return confirm('确认强制删除当前赛季吗？这会一并删除该赛季相关数据，且不可恢复。')\""
                     if can_force_delete_selected_season:
-                        if selected_season_has_matches or selected_season_registered_team_count:
-                            delete_season_helper_html = f'<div class="small text-secondary">仅管理员可强制删除赛季。当前操作会同步清掉 {selected_season_registered_team_count} 支已报名战队，以及该赛季下的全部比赛记录。</div>'
+                        if selected_season_has_matches:
+                            delete_season_helper_html = '<div class="small text-secondary">仅管理员可强制删除赛季。当前操作会同步删除该赛季下的全部比赛记录，并清理相关赛季数据。</div>'
                         else:
-                            delete_season_helper_html = '<div class="small text-secondary">当前赛季还没有比赛记录和报名记录，管理员可以直接删除。</div>'
+                            delete_season_helper_html = '<div class="small text-secondary">当前赛季还没有比赛记录，管理员可以直接删除。</div>'
                     else:
                         delete_button_disabled = " disabled"
                         delete_button_confirm = ""
@@ -344,7 +340,7 @@ def get_series_manage_page(
                       <div class="col-12 col-md-4"><label class="form-label">赛季名称</label><input class="form-control" name="season_name" value="{escape(season_form['season_name'])}" placeholder="例如：2026春季联赛" required></div>
                       <div class="col-12 col-md-4"><label class="form-label">开始时间</label><input class="form-control" name="start_at" type="datetime-local" value="{escape(season_form['start_at'])}" required></div>
                       <div class="col-12 col-md-4"><label class="form-label">结束时间</label><input class="form-control" name="end_at" type="datetime-local" value="{escape(season_form['end_at'])}" required></div>
-                      <div class="col-12"><label class="form-label">赛季说明</label><textarea class="form-control" name="notes" rows="3" placeholder="可写赛季定位、报名要求或档期说明。">{escape(season_form['notes'])}</textarea></div>
+                      <div class="col-12"><label class="form-label">赛季说明</label><textarea class="form-control" name="notes" rows="3" placeholder="可写赛季定位、档期说明或补充备注。">{escape(season_form['notes'])}</textarea></div>
                     </div>
                     <div class="d-flex flex-wrap gap-2 mt-4">
                       <button type="submit" class="btn btn-dark">保存赛季档期</button>
@@ -558,7 +554,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         if errors:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="强制删除赛季失败：" + "；".join(errors[:3])))
         save_membership_requests(requests)
-        return start_response_html(start_response, "200 OK", get_series_manage_page(RequestContext(method="GET", path=ctx.path, query={"competition_name": [competition_name], **({"next": [next_path]} if next_path else {})}, form={}, files={}, current_user=ctx.current_user, now_label=ctx.now_label), alert=f"{competition_name} / {season_name} 已强制删除，并清空了该赛季的比赛与报名记录。"))
+        return start_response_html(start_response, "200 OK", get_series_manage_page(RequestContext(method="GET", path=ctx.path, query={"competition_name": [competition_name], **({"next": [next_path]} if next_path else {})}, form={}, files={}, current_user=ctx.current_user, now_label=ctx.now_label), alert=f"{competition_name} / {season_name} 已强制删除，并清理了该赛季相关数据。"))
     series_name = form_value(ctx.form, "series_name").strip()
     series_code = form_value(ctx.form, "series_code").strip()
     region_name = form_value(ctx.form, "region_name").strip()

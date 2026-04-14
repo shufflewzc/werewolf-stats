@@ -452,11 +452,9 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     competition_switcher = build_competition_switcher("/competitions", [row["competition_name"] for row in (filtered_rows or region_rows or competition_rows)], selected_competition, tone="light", all_label="返回地区赛事列表", region_name=selected_region, series_slug=selected_series_slug)
     season_switcher = build_season_switcher("/competitions", selected_competition, season_names, selected_season, tone="light", region_name=selected_region, series_slug=selected_series_slug)
     competition_meta = selected_entry
-    current_player = get_user_player(data, ctx.current_user)
     can_manage_selected_match_scope = bool(selected_competition and can_manage_matches(ctx.current_user, data, selected_competition))
     can_edit_selected_competition = bool(selected_competition and can_manage_competition_catalog(ctx.current_user, data, selected_competition))
     can_manage_selected_seasons = bool(selected_competition and can_manage_competition_seasons(ctx.current_user, data, selected_competition))
-    _, current_user_team = get_user_captained_team_for_scope(data, ctx.current_user, selected_competition, selected_season) if selected_competition and selected_season else (None, None)
     season_entry = get_season_entry(season_catalog, selected_series_slug, selected_season, competition_name=selected_competition) if selected_series_slug and selected_season else None
     played_match_rows = [
         match
@@ -503,27 +501,16 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         match_rows,
         legacy.china_today_label(),
     )
-    registered_team_ids = season_entry.get("registered_team_ids", []) if season_entry else []
-    registration_form_html = ""
     season_status_text = "待配置"
     season_period_text = "请先设置赛季起止时间"
-    season_note_text = "当前赛季还没有配置档期，暂时无法开放战队报名。"
+    season_note_text = "当前赛季还没有配置档期。"
     if season_entry:
         season_status_text = season_status_label(season_entry)
         season_period_text = f"{format_datetime_local_label(season_entry.get('start_at', ''))} - {format_datetime_local_label(season_entry.get('end_at', ''))}"
-        season_note_text = season_entry.get("notes") or "可以在这里查看本赛季的进行状态，并管理赛季报名。"
-        if current_user_team and can_manage_team(ctx, current_user_team, current_player):
-            is_registered = current_user_team["team_id"] in registered_team_ids
-            action_name = "cancel_team_registration" if is_registered else "register_team_for_season"
-            action_label = "取消报名我的战队" if is_registered else "报名我的战队"
-            helper_text = f"当前账号可为 {current_user_team['name']} 执行报名操作。" if get_season_status(season_entry) == "ongoing" else "只有进行中的赛季才开放战队报名。"
-            registration_form_html = f"""<form method="post" action="/competitions"><input type="hidden" name="action" value="{action_name}"><input type="hidden" name="competition_name" value="{escape(selected_competition)}"><input type="hidden" name="season_name" value="{escape(selected_season or '')}"><input type="hidden" name="team_id" value="{escape(current_user_team['team_id'])}"><input type="hidden" name="next" value="{escape(current_competition_path)}"><div class="small text-secondary mb-3">{escape(helper_text)}</div><button type="submit" class="btn btn-dark"{'' if get_season_status(season_entry) == 'ongoing' else ' disabled'}>{escape(action_label)}</button></form>"""
-        elif is_admin_user(ctx.current_user):
-            team_options_html = "".join(f'<option value="{escape(team["team_id"])}">{escape(team["name"])}</option>' for team in data["teams"] if team_matches_scope(team, selected_competition, selected_season or ""))
-            registration_form_html = f"""<form method="post" action="/competitions"><input type="hidden" name="action" value="register_team_for_season"><input type="hidden" name="competition_name" value="{escape(selected_competition)}"><input type="hidden" name="season_name" value="{escape(selected_season or '')}"><input type="hidden" name="next" value="{escape(current_competition_path)}"><div class="small text-secondary mb-3">管理员可代任意战队提交报名。</div><div class="d-flex flex-column gap-3"><select class="form-select" name="team_id">{team_options_html}</select><button type="submit" class="btn btn-dark"{'' if get_season_status(season_entry) == 'ongoing' else ' disabled'}>为所选战队报名</button></div></form>"""
+        season_note_text = season_entry.get("notes") or "这里展示当前赛季的进行状态、档期与补充说明。"
     season_registration_panel = ""
     if selected_season:
-        season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期与战队报名</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛事负责人可以维护赛季起止时间，具备战队管理权限的账号、已认领战队的负责人或管理员可以为自己的战队报名正在进行中的赛季。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="row g-3"><div class="col-12 col-lg-6"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></div><div class="col-12 col-lg-6"><div class="team-link-card shadow-sm p-4 h-100"><div class="card-kicker mb-2">我的已认领战队</div><h3 class="h5 mb-2">{escape(current_user_team['name']) if current_user_team else '暂无已认领战队'}</h3><div class="small-muted mb-2">{'认领负责人或管理员可执行报名' if current_user_team else ('管理员可代战队报名' if is_admin_user(ctx.current_user) else '当前账号在本赛季还没有已认领战队')}</div>{registration_form_html or '<div class="section-copy">当前账号没有可用于报名的战队，或你还不是该战队的认领负责人。</div>'}</div></div></div></section>"""
+        season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛季战队与队员由比赛补录、战队档案和管理员维护直接决定，不再单独提供报名操作。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="team-link-card shadow-sm p-4"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></section>"""
     stage_team_sections: list[str] = []
     for stage_key, rows in stage_team_rows.items():
         stage_table_rows = "".join(
@@ -814,6 +801,54 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
 
     total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"]})
     total_player_count = len({entry["player_id"] for match in completed_day_matches for entry in match["players"]})
+    team_day_rows = []
+    for row in day_team_rows:
+        competition_name = str(row.get("competition_name") or "").strip()
+        season_name = str(row.get("season_name") or "").strip()
+        series_entry = get_series_entry_by_competition(catalog, competition_name)
+        region_name = series_entry["region_name"] if series_entry else DEFAULT_REGION_NAME
+        series_slug = series_entry["series_slug"] if series_entry else None
+        team_day_rows.append(
+            f"""
+            <tr>
+              <td>{row.get('points_rank', '-')}</td>
+              <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{legacy.escape(build_scoped_path('/teams/' + row['team_id'], competition_name, season_name, region_name, series_slug))}">{legacy.escape(row['name'])}</a></td>
+              <td>{legacy.escape(competition_name)} / {legacy.escape(season_name)}</td>
+              <td>{row['matches_represented']}</td>
+              <td>{format_pct(row['win_rate'])}</td>
+              <td>{row['points_earned_total']:.2f}</td>
+            </tr>
+            """
+        )
+    team_day_panel = (
+        f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">战队积分日榜</h2>
+              <p class="section-copy mb-0">只统计当天已完成补录的比赛，默认按总积分从高到低排序。</p>
+            </div>
+          </div>
+          <div class="table-responsive">
+            <table class="table align-middle is-mobile-stack">
+              <thead>
+                <tr>
+                  <th>排名</th>
+                  <th>战队</th>
+                  <th>赛事赛季</th>
+                  <th>场次</th>
+                  <th>胜率</th>
+                  <th>总积分</th>
+                </tr>
+              </thead>
+              <tbody>{''.join(team_day_rows)}</tbody>
+            </table>
+          </div>
+        </section>
+        """
+        if team_day_rows
+        else ""
+    )
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="hero-layout">
@@ -845,6 +880,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
         </div>
       </div>
     </section>
+    {team_day_panel}
     {''.join(competition_sections)}
     """
     return layout(f"{played_on} 比赛日", body, ctx)
@@ -862,96 +898,11 @@ def handle_competitions(ctx: RequestContext, start_response):
     if guard is not None:
         return guard
 
-    action = legacy.form_value(ctx.form, "action").strip()
-    if action not in {"register_team_for_season", "cancel_team_registration"}:
-        return start_response_html(
-            start_response,
-            "405 Method Not Allowed",
-            layout("请求无效", '<div class="alert alert-danger">未识别的赛事报名操作。</div>', ctx),
-        )
-
-    data = load_validated_data()
-    season_catalog = load_season_catalog(data)
-    series_catalog = load_series_catalog(data)
-    current_player = get_user_player(data, ctx.current_user)
-    next_path = legacy.form_value(ctx.form, "next").strip() or "/competitions"
-    competition_name = legacy.form_value(ctx.form, "competition_name").strip()
-    season_name = legacy.form_value(ctx.form, "season_name").strip()
-    team_id = legacy.form_value(ctx.form, "team_id").strip()
-    render_ctx = RequestContext(
-        method="GET",
-        path="/competitions",
-        query={
-            **({"competition": [competition_name]} if competition_name else {}),
-            **({"season": [season_name]} if season_name else {}),
-        },
-        form={},
-        files={},
-        current_user=ctx.current_user,
-        now_label=ctx.now_label,
+    return start_response_html(
+        start_response,
+        "405 Method Not Allowed",
+        layout("请求无效", '<div class="alert alert-danger">赛事页不再提供战队报名操作。</div>', ctx),
     )
-    team = legacy.get_team_by_id(data, team_id)
-    if not team:
-        return start_response_html(
-            start_response,
-            "200 OK",
-            get_competitions_page(render_ctx, alert="没有找到要报名的战队。"),
-        )
-    if not legacy.team_matches_scope(team, competition_name, season_name):
-        return start_response_html(
-            start_response,
-            "200 OK",
-            get_competitions_page(render_ctx, alert="战队只能报名自己所属赛事赛季。"),
-        )
-    if not legacy.can_manage_team(ctx, team, current_player):
-        return start_response_html(
-            start_response,
-            "403 Forbidden",
-            layout("没有权限", '<div class="alert alert-danger">只有具备战队管理权限的账号、已认领该战队的负责人或管理员可以为战队报名赛季。</div>', ctx),
-        )
-    series_slug = legacy.build_series_context_from_competition(
-        competition_name,
-        series_catalog,
-    )["series_slug"]
-    season_entry = get_season_entry(
-        season_catalog,
-        series_slug,
-        season_name,
-        competition_name=competition_name,
-    )
-    if not season_entry:
-        return start_response_html(
-            start_response,
-            "200 OK",
-            get_competitions_page(render_ctx, alert="当前赛季还没有配置起止时间，请先让赛事负责人完成赛季设置。"),
-        )
-    if get_season_status(season_entry) != "ongoing":
-        return start_response_html(
-            start_response,
-            "200 OK",
-            get_competitions_page(render_ctx, alert="只有进行中的赛季才允许战队报名。"),
-        )
-
-    registered_team_ids = [
-        registered_team_id
-        for registered_team_id in season_entry.get("registered_team_ids", [])
-        if registered_team_id != team_id
-    ]
-    if action == "register_team_for_season":
-        registered_team_ids.append(team_id)
-
-    updated_catalog = []
-    for item in season_catalog:
-        if (
-            item["series_slug"] == series_slug
-            and item.get("competition_name", "") == competition_name
-            and item["season_name"] == season_name
-        ):
-            updated_catalog.append({**item, "registered_team_ids": registered_team_ids})
-        else:
-            updated_catalog.append(item)
-    save_season_catalog(updated_catalog)
-    return redirect(start_response, next_path)
 
 
 def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[str, Any]) -> dict[str, Any]:
@@ -966,6 +917,13 @@ def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[
 
     opponent_names = "、".join(team_lookup[opponent_id]["name"] for opponent_id in opponents)
     opponent_score = sum(opponents.values())
+    winning_camp = str(match.get("winning_camp") or "").strip()
+    winning_camp_label = {
+        "villagers": "好人胜利",
+        "werewolves": "狼人胜利",
+        "third_party": "第三方胜利",
+        "draw": "平局",
+    }.get(winning_camp, CAMP_OPTIONS.get(winning_camp, winning_camp))
     return {
         "match_id": match["match_id"],
         "competition_name": get_match_competition_name(match),
@@ -977,7 +935,7 @@ def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[
         "table_label": match["table_label"],
         "format": match["format"],
         "duration_minutes": match["duration_minutes"],
-        "winning_camp": CAMP_OPTIONS.get(match["winning_camp"], match["winning_camp"]),
+        "winning_camp": winning_camp_label,
         "team_score": round(team_score, 2),
         "opponent_score": round(opponent_score, 2),
         "opponents": opponent_names or "无",

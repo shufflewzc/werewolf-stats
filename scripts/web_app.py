@@ -1919,6 +1919,8 @@ def ensure_team_asset_dirs() -> None:
 
 def public_asset_url(path: str) -> str:
     normalized = path.strip().lstrip("/")
+    if path.strip().startswith(("http://", "https://")):
+        return path.strip()
     return "/" + normalized if normalized else "/" + DEFAULT_PLAYER_PHOTO
 
 
@@ -2553,6 +2555,12 @@ def build_player_photo_html(photo_path: str, display_name: str, extra_class: str
 
 
 def build_team_logo_html(logo_path: str, team_name: str, extra_class: str = "") -> str:
+    if logo_path.strip().startswith(("http://", "https://")):
+        return (
+            f'<div class="player-photo-frame mx-auto {escape(extra_class)}">'
+            f'<img class="player-photo" src="{escape(logo_path.strip())}" alt="{escape(team_name)} 队标">'
+            "</div>"
+        )
     candidate = safe_asset_path(logo_path)
     if candidate and candidate.is_file():
         return (
@@ -3232,12 +3240,12 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 for match in matches
                 for entry in match["players"]
             }
+            | {
+                team["team_id"]
+                for team in data["teams"]
+                if str(team.get("competition_name") or "").strip() == competition_name
+            }
         )
-        registered_team_ids = {
-            team_id
-            for season_entry in season_entries
-            for team_id in season_entry.get("registered_team_ids", [])
-        }
         player_ids = sorted(
             {
                 entry["player_id"]
@@ -3262,7 +3270,7 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
             {
                 "competition_name": competition_name,
                 "match_count": len(matches),
-                "team_count": max(len(team_ids), len(registered_team_ids)),
+                "team_count": len(team_ids),
                 "player_count": len(player_ids),
                 "latest_played_on": get_scheduled_match_day_label(matches, china_today_label()),
                 "seasons": seasons,
@@ -4548,6 +4556,20 @@ def build_dimension_season_switcher(
     """
 
 
+def build_empty_dimension_panel(title: str, description: str) -> str:
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">{escape(title)}</h2>
+          <p class="section-copy mb-0">{escape(description)}</p>
+        </div>
+      </div>
+      <div class="alert alert-secondary mb-0">当前还没有导入对应赛季的维度数据。</div>
+    </section>
+    """
+
+
 def build_player_dimension_panel(
     ctx: RequestContext,
     data: dict[str, Any],
@@ -4559,7 +4581,10 @@ def build_player_dimension_panel(
         return ""
     all_rows = get_player_dimension_history(data, player_id, competition_name, None)
     if not all_rows:
-        return ""
+        return build_empty_dimension_panel(
+            "赛季维度补充数据",
+            "这部分来自比赛日报 Excel 的赛季维度补充数据。导入后，这里会显示分赛季汇总和六边形画像。",
+        )
     available_seasons = build_dimension_season_options(all_rows)
     requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
     selected_dimension_season = (
@@ -4696,7 +4721,10 @@ def build_team_dimension_panel(
         return ""
     all_rows = get_team_dimension_history(data, team_id, competition_name, None)
     if not all_rows:
-        return ""
+        return build_empty_dimension_panel(
+            "战队赛季维度补充数据",
+            "这部分来自比赛日报 Excel 的战队维度补充数据。导入后，这里会显示分赛季汇总和六边形画像。",
+        )
     available_seasons = build_dimension_season_options(all_rows)
     requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
     selected_dimension_season = (
@@ -4845,7 +4873,28 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     captain_player = player_lookup.get(get_team_captain_id(team) or "")
     captain_label = captain_player["display_name"] if captain_player else ""
     is_unclaimed = not captain_player
-    can_request_claim = is_unclaimed and team_status != "completed"
+    scope_player, scope_team = get_user_team_for_scope(
+        data,
+        ctx.current_user,
+        team_competition_name,
+        team_season_name,
+    )
+    has_scope_claim_conflict = bool(scope_player and scope_team and scope_team["team_id"] != team_id)
+    has_same_team_identity = bool(scope_player and scope_team and scope_team["team_id"] == team_id)
+    current_claim_request = (
+        next(
+            (
+                item
+                for item in load_membership_requests()
+                if ctx.current_user
+                and item.get("username") == ctx.current_user["username"]
+                and item.get("request_type") == "team_claim"
+            ),
+            None,
+        )
+        if ctx.current_user
+        else None
+    )
     current_team_path = build_scoped_path(
         f"/teams/{team_id}",
         form_value(ctx.query, "competition").strip() or team_competition_name or None,
@@ -4853,90 +4902,85 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     )
     requested_competition = form_value(ctx.query, "competition").strip()
     requested_season = form_value(ctx.query, "season").strip()
-    claim_panel = (
-        f"""
-        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
-            <div>
-              <h2 class="section-title mb-2">认领这支战队</h2>
-              <p class="section-copy mb-0">战队名称和成员由赛季档案维护。认领后，你可以编辑战队队标、简称、介绍和赛段分组信息。</p>
-            </div>
+    claim_panel = ""
+    if is_unclaimed and team_status != "completed":
+        claim_copy = "战队名称和成员由赛季档案维护。认领后，你可以编辑战队队标、简称、介绍和赛段分组信息。"
+        claim_action_html = ""
+        if not ctx.current_user:
+            claim_action_html = f'<a class="btn btn-dark" href="/login?next={quote(current_team_path)}">登录后申请认领</a>'
+        elif has_scope_claim_conflict:
+            claim_copy = "当前账号在这个赛事赛季里已经绑定了其他战队身份，不能重复认领新的战队。"
+            claim_action_html = '<span class="chip">当前账号已绑定其他战队</span>'
+        elif current_claim_request:
+            claim_copy = "你当前已经有一条待处理的战队认领申请，处理完成前不能再提交新的申请。"
+            claim_action_html = '<a class="btn btn-outline-dark" href="/team-center">前往认领中心查看</a>'
+        else:
+            if has_same_team_identity:
+                claim_copy = "当前账号已经绑定了这支战队的赛季参赛身份。认领通过后会直接把这个赛季身份设为负责人，不会再额外创建队员。"
+            claim_action_html = f"""
             <form method="post" action="/team-center" class="m-0">
               <input type="hidden" name="action" value="request_team_claim">
               <input type="hidden" name="team_id" value="{escape(team_id)}">
               <input type="hidden" name="next" value="{escape(current_team_path)}">
               <button type="submit" class="btn btn-dark">申请认领</button>
             </form>
+            """
+        claim_panel = f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+            <div>
+              <h2 class="section-title mb-2">认领这支战队</h2>
+              <p class="section-copy mb-0">{escape(claim_copy)}</p>
+            </div>
+            {claim_action_html}
           </div>
         </section>
         """
-        if can_request_claim
-        else ""
+    stage_group_summary = (
+        " / ".join(
+            f"{stage_label} {escape(stage_group_map.get(stage_key, ''))}"
+            for stage_key, stage_label in STAGE_OPTIONS.items()
+            if stage_group_map.get(stage_key)
+        )
+        or "暂未设置"
     )
-    team_logo_panel = f"""
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="row g-4 align-items-start">
-        <div class="col-12 col-lg-4 col-xl-3">
-          {team_logo_html}
-        </div>
-        <div class="col-12 col-lg-8 col-xl-9">
-          <h2 class="section-title mb-2">战队图标</h2>
-          <p class="section-copy mb-3">当前队标会出现在战队页面和后续战队展示卡片中。</p>
-          <div class="small text-secondary mb-3">当前路径：{escape(team['logo'])}</div>
-          {(
-            f'''
-            <form method="post" action="/team-center" class="mb-3">
-              <input type="hidden" name="action" value="delete_team">
-              <input type="hidden" name="team_id" value="{escape(team_id)}">
-              <button type="submit" class="btn btn-outline-danger">管理员删除战队</button>
-              <div class="small text-secondary mt-2">仅管理员可用。会同时移除该战队下没有历史比赛记录的队员和相关待处理申请。</div>
-            </form>
-            '''
-            if can_delete_team
-            else ''
-          )}
-          {(
-            f'''
-            <form method="post" action="/teams/{escape(team_id)}/logo" enctype="multipart/form-data">
-              <input type="hidden" name="next" value="{escape(current_team_path)}">
-              <div class="row g-3 align-items-end">
-                <div class="col-12 col-lg-8">
-                  <label class="form-label">上传新的战队图标</label>
-                  <input class="form-control" name="logo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
-                  <div class="small text-secondary mt-2">支持 PNG、JPG、JPEG、WEBP、GIF、SVG，大小不超过 5 MB。</div>
-                </div>
-                <div class="col-12 col-lg-4 d-flex gap-2">
-                  <button type="submit" class="btn btn-dark">更新队标</button>
-                </div>
-              </div>
-            </form>
-            '''
-            if can_edit_team_page
-            else (
-              '<div class="small text-secondary">当前赛季已结束，战队资料已锁定，仅保留展示。</div>'
-              if team_status == "completed"
-              else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以更新队标。</div>'
-            )
-          )}
-        </div>
-      </div>
-    </section>
-    """
-    team_profile_panel = f"""
+    team_manage_panel = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
-          <h2 class="section-title mb-2">战队资料</h2>
-          <p class="section-copy mb-0">战队名称和成员名单都以赛季档案为准。认领负责人可以维护简称、介绍、队标等展示信息。</p>
+          <h2 class="section-title mb-2">战队维护</h2>
+          <p class="section-copy mb-0">这里只保留维护操作。战队展示信息已经合并到上方巡礼区域。</p>
         </div>
       </div>
-      <div class="row g-3 mb-4">
-        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">负责人状态</div><div class="stat-value mt-2">{'待认领' if is_unclaimed else '已认领'}</div></div></div>
-        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">战队简称</div><div class="stat-value mt-2">{escape(team.get('short_name') or '未设置')}</div></div></div>
-        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">认领负责人</div><div class="stat-value mt-2">{escape(captain_label or '暂未认领')}</div></div></div>
-        <div class="col-12 col-md-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">所属门派</div><div class="stat-value mt-2">{escape(guild['name']) if guild else '未加入门派'}</div></div></div>
-      </div>
       <div class="form-panel p-3 p-lg-4">
+        {(
+          f'''
+          <form method="post" action="/teams/{escape(team_id)}/logo" enctype="multipart/form-data" class="mb-4">
+            <input type="hidden" name="next" value="{escape(current_team_path)}">
+            <div class="row g-3 align-items-end">
+              <div class="col-12 col-lg-8">
+                <input class="form-control" name="logo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
+              </div>
+              <div class="col-12 col-lg-4 d-flex gap-2">
+                <button type="submit" class="btn btn-dark">更新队标</button>
+              </div>
+            </div>
+          </form>
+          '''
+          if can_edit_team_page
+          else ''
+        )}
+        {(
+          f'''
+          <form method="post" action="/team-center" class="mb-4">
+            <input type="hidden" name="action" value="delete_team">
+            <input type="hidden" name="team_id" value="{escape(team_id)}">
+            <button type="submit" class="btn btn-outline-danger">管理员删除战队</button>
+          </form>
+          '''
+          if can_delete_team
+          else ''
+        )}
         {(
           f'''
           <form method="post" action="/team-center">
@@ -4963,60 +5007,46 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以编辑战队资料。</div>'
           )
         )}
-      </div>
-    </section>
-    """
-    stage_group_rows_html = "".join(
-        f"""
-        <tr>
-          <td>{escape(stage_label)}</td>
-          <td>{escape(stage_group_map.get(stage_key, '未设置'))}</td>
-        </tr>
-        """
-        for stage_key, stage_label in STAGE_OPTIONS.items()
-        if stage_group_map.get(stage_key)
-    )
-    stage_group_form_fields_html = "".join(
-        f"""
-        <div class="col-12 col-md-6 col-xl-4">
-          <label class="form-label">{escape(stage_label)}</label>
-          <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
+        {(
+          f'''
+          <form method="post" action="/team-center" class="mt-3">
+            <input type="hidden" name="action" value="unbind_team_claim">
+            <input type="hidden" name="team_id" value="{escape(team_id)}">
+            <input type="hidden" name="next" value="{escape(current_team_path)}">
+            <button type="submit" class="btn btn-outline-danger">解除当前认领</button>
+            <div class="small text-secondary mt-2">只会解除负责人身份，不会删除战队档案，也不会移除赛季成员记录。</div>
+          </form>
+          '''
+          if can_manage_team_profile and not is_unclaimed
+          else ''
+        )}
+        <div class="small text-secondary mt-4">
+          <strong>赛段分组：</strong>
+          {stage_group_summary}
         </div>
-        """
-        for stage_key, stage_label in STAGE_OPTIONS.items()
-    )
-    team_stage_group_panel = f"""
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-        <div>
-          <h2 class="section-title mb-2">战队分组信息</h2>
-          <p class="section-copy mb-0">同一支战队在不同赛段可以配置不同分组，例如常规赛 A 组、季后赛淘汰组。这里保存的是战队资料，不会自动覆盖已录入比赛的分组。</p>
-        </div>
+        {(
+          f'''
+          <form method="post" action="/team-center" class="mt-3">
+            <input type="hidden" name="action" value="update_team_stage_groups">
+            <input type="hidden" name="team_id" value="{escape(team_id)}">
+            <div class="row g-3">
+              {"".join(
+                f'''
+                <div class="col-12 col-md-6 col-xl-4">
+                  <label class="form-label">{escape(stage_label)}</label>
+                  <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
+                </div>
+                '''
+                for stage_key, stage_label in STAGE_OPTIONS.items()
+              )}
+            </div>
+            <button type="submit" class="btn btn-outline-dark mt-3">保存赛段分组</button>
+          </form>
+          '''
+          if can_edit_team_page
+          else ''
+        )}
       </div>
-      <div class="table-responsive mb-4">
-        <table class="table align-middle">
-          <thead><tr><th>赛段</th><th>分组</th></tr></thead>
-          <tbody>{stage_group_rows_html or '<tr><td colspan="2" class="text-secondary">当前还没有配置任何赛段分组。</td></tr>'}</tbody>
-        </table>
-      </div>
-      {(
-        f'''
-        <form method="post" action="/team-center">
-          <input type="hidden" name="action" value="update_team_stage_groups">
-          <input type="hidden" name="team_id" value="{escape(team_id)}">
-          <div class="row g-3">
-            {stage_group_form_fields_html}
-          </div>
-          <button type="submit" class="btn btn-dark mt-4">保存战队分组</button>
-        </form>
-        '''
-        if can_edit_team_page
-        else (
-          '<div class="small text-secondary">当前赛季已结束，战队分组信息已锁定。</div>'
-          if team_status == "completed"
-          else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以维护战队分组。</div>'
-        )
-      )}
     </section>
     """
 
@@ -5042,7 +5072,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         or team_competition_name
         or get_selected_competition(ctx, team_competition_names)
     )
-    season_names = (
+    season_names = [team_season_name] if team_season_name else (
         list_seasons(
             {
                 "matches": [
@@ -5056,13 +5086,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         if selected_competition
         else []
     )
-    if team_season_name and team_season_name not in season_names:
-        season_names.append(team_season_name)
-    selected_season = (
-        form_value(ctx.query, "season").strip()
-        or team_season_name
-        or get_selected_season(ctx, season_names)
-    )
+    selected_season = team_season_name or get_selected_season(ctx, season_names)
     team_dimension_panel = build_team_dimension_panel(
         ctx,
         data,
@@ -5077,13 +5101,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         tone="light",
         all_label="比赛总览",
     )
-    season_switcher = build_season_switcher(
-        f"/teams/{team_id}",
-        selected_competition,
-        season_names,
-        selected_season,
-        tone="light",
-    )
+    season_switcher = ""
     competition_groups: dict[str, list[dict[str, Any]]] = {}
     for match in team_matches:
         competition_name = get_match_competition_name(match)
@@ -5096,8 +5114,8 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         team_id,
         player_lookup,
         team_lookup,
-        requested_competition,
-        requested_season,
+        selected_competition,
+        selected_season or "",
     )
 
     if not selected_competition:
@@ -5127,19 +5145,27 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
 
         body = f"""
         <section class="hero p-4 p-md-5 shadow-lg mb-4">
-          <div class="eyebrow mb-3">战队比赛总览</div>
-          <h1 class="display-6 fw-semibold mb-3">{escape(team['name'])}</h1>
-          <p class="mb-2 opacity-75">{escape(team_scope_label(team))}</p>
-          <p class="mb-2 opacity-75">{escape(team['notes'])}</p>
-          <div class="d-flex flex-wrap gap-2 mt-3">
-            {f'<a class="chip" href="/guilds/{escape(guild["guild_id"])}">{escape(guild["name"])}</a>' if guild else '<span class="chip">未加入门派</span>'}
+          <div class="hero-layout">
+            <div>
+              <div class="eyebrow mb-3">战队比赛总览</div>
+              <h1 class="display-6 fw-semibold mb-2">{escape(team['name'])}</h1>
+              <p class="mb-2 opacity-75">{escape(team_scope_label(team))}</p>
+              <p class="mb-2 opacity-75">简称：{escape(team.get('short_name') or '未设置')}</p>
+              <p class="mb-2 opacity-75">负责人：{escape(captain_label or '暂未认领')}</p>
+              <p class="mb-2 opacity-75">赛段分组：{stage_group_summary}</p>
+              <p class="mb-0 opacity-75">{escape(team['notes'])}</p>
+              <div class="d-flex flex-wrap gap-2 mt-3">
+                {f'<a class="chip" href="/guilds/{escape(guild["guild_id"])}">{escape(guild["name"])}</a>' if guild else '<span class="chip">未加入门派</span>'}
+              </div>
+              <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
+            </div>
+            <div class="ms-lg-auto">
+              {team_logo_html}
+            </div>
           </div>
-          <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
         </section>
         {claim_panel}
-        {team_logo_panel}
-        {team_profile_panel}
-        {team_stage_group_panel}
+        {team_manage_panel if (can_edit_team_page or can_delete_team or can_manage_team_profile) else ''}
         {team_dimension_panel}
         {team_match_player_score_section}
         <section class="panel shadow-sm p-3 p-lg-4">
@@ -5338,22 +5364,32 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
 
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
-      <div class="eyebrow mb-3">战队巡礼</div>
-      <h1 class="display-6 fw-semibold mb-3">{escape(team['name'])}</h1>
-      <p class="mb-2 opacity-75">{escape(team_scope_label(team))}</p>
-      <p class="mb-2 opacity-75">{escape(team['notes'])}</p>
-      <div class="d-flex flex-wrap gap-2 mt-3">
-        <span class="chip">{escape(team_status_label)}</span>
-        <span class="chip">{'待认领' if is_unclaimed else f'负责人：{escape(captain_label)}'}</span>
-        {f'<a class="chip" href="/guilds/{escape(guild["guild_id"])}">关联门派：{escape(guild["name"])}</a>' if guild else '<span class="chip">未加入门派</span>'}
-      </div>
-      <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
-      {f'<div class="d-flex flex-wrap gap-2 mt-3">{season_switcher}</div>' if season_switcher else ''}
-      <div class="d-flex flex-wrap gap-3">
-        <span class="chip">{escape(selected_season or '当前赛季')}</span>
-        <span class="chip">胜率 {format_pct(team_stats['win_rate'])}</span>
-        <span class="chip">总积分 {team_stats['points_earned_total']:.2f}</span>
-        <span class="chip">队员 {roster_count} 名</span>
+      <div class="hero-layout">
+        <div>
+          <div class="eyebrow mb-3">战队巡礼</div>
+          <h1 class="display-6 fw-semibold mb-2">{escape(team['name'])}</h1>
+          <p class="mb-2 opacity-75">{escape(team_scope_label(team))}</p>
+          <p class="mb-2 opacity-75">简称：{escape(team.get('short_name') or '未设置')}</p>
+          <p class="mb-2 opacity-75">负责人：{escape(captain_label or '暂未认领')}</p>
+          <p class="mb-2 opacity-75">赛段分组：{stage_group_summary}</p>
+          <p class="mb-0 opacity-75">{escape(team['notes'])}</p>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <span class="chip">{escape(team_status_label)}</span>
+            <span class="chip">{'待认领' if is_unclaimed else f'负责人：{escape(captain_label)}'}</span>
+            {f'<a class="chip" href="/guilds/{escape(guild["guild_id"])}">关联门派：{escape(guild["name"])}</a>' if guild else '<span class="chip">未加入门派</span>'}
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
+          {f'<div class="d-flex flex-wrap gap-2 mt-3">{season_switcher}</div>' if season_switcher else ''}
+          <div class="d-flex flex-wrap gap-3 mt-3">
+            <span class="chip">{escape(selected_season or '当前赛季')}</span>
+            <span class="chip">胜率 {format_pct(team_stats['win_rate'])}</span>
+            <span class="chip">总积分 {team_stats['points_earned_total']:.2f}</span>
+            <span class="chip">队员 {roster_count} 名</span>
+          </div>
+        </div>
+        <div class="ms-lg-auto">
+          {team_logo_html}
+        </div>
       </div>
     </section>
     {claim_panel}
@@ -5362,9 +5398,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
       if team_status == "completed"
       else ''
     )}
-    {team_logo_panel}
-    {team_profile_panel}
-    {team_stage_group_panel}
+    {team_manage_panel if (can_edit_team_page or can_delete_team or can_manage_team_profile) else ''}
     {team_dimension_panel}
     {guild_panel}
     {team_match_player_score_section}

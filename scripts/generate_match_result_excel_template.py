@@ -295,6 +295,42 @@ TEAM_DIMENSION_TEMPLATE_COLUMNS = [
     ("poison_used_count", "开毒次数"),
     ("poisoned_werewolf_count", "毒狼次数"),
 ]
+TEAM_LOGO_TEMPLATE_FILE = OUTPUT_DIR / "team-logo-upload-template.xlsx"
+TEAM_LOGO_TEMPLATE_COLUMNS = [
+    ("team_name", "战队名称"),
+    ("logo", "战队logo"),
+]
+PLAYER_PHOTO_TEMPLATE_FILE = OUTPUT_DIR / "player-photo-upload-template.xlsx"
+PLAYER_PHOTO_TEMPLATE_COLUMNS = [
+    ("player_name", "选手姓名"),
+    ("photo", "选手头像"),
+]
+
+
+def build_team_logo_sample_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "team_name": "O.TCLUB",
+            "logo": "",
+        },
+        {
+            "team_name": "万目宗",
+            "logo": "",
+        },
+    ]
+
+
+def build_player_photo_sample_rows() -> list[dict[str, object]]:
+    return [
+        {
+            "player_name": "AA",
+            "photo": "",
+        },
+        {
+            "player_name": "小北",
+            "photo": "",
+        },
+    ]
 
 
 def excel_column_name(index: int) -> str:
@@ -561,6 +597,24 @@ def write_dimension_workbook() -> Path:
     )
 
 
+def write_team_logo_workbook() -> Path:
+    return write_multi_sheet_workbook(
+        TEAM_LOGO_TEMPLATE_FILE,
+        [
+            ("赛季战队图标数据", TEAM_LOGO_TEMPLATE_COLUMNS, build_team_logo_sample_rows()),
+        ],
+    )
+
+
+def write_player_photo_workbook() -> Path:
+    return write_multi_sheet_workbook(
+        PLAYER_PHOTO_TEMPLATE_FILE,
+        [
+            ("赛季队员头像数据", PLAYER_PHOTO_TEMPLATE_COLUMNS, build_player_photo_sample_rows()),
+        ],
+    )
+
+
 def write_all_workbooks() -> list[Path]:
     outputs: list[Path] = []
     for slug, _label, competition_name, season_name, score_model, columns in TEMPLATE_CONFIGS:
@@ -569,6 +623,8 @@ def write_all_workbooks() -> list[Path]:
         copyfile(outputs[0], LEGACY_OUTPUT_FILE)
         outputs.append(LEGACY_OUTPUT_FILE)
     outputs.append(write_dimension_workbook())
+    outputs.append(write_team_logo_workbook())
+    outputs.append(write_player_photo_workbook())
     return outputs
 
 

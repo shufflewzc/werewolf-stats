@@ -5,7 +5,9 @@ from html import escape
 from io import BytesIO
 import json
 from pathlib import Path
+from pathlib import PurePosixPath
 import re
+import secrets
 from urllib.parse import quote
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
@@ -51,11 +53,18 @@ normalize_match_score_model = legacy.normalize_match_score_model
 option_tags = legacy.option_tags
 parse_match_form = legacy.parse_match_form
 parse_float_value = legacy.parse_float_value
+build_placeholder_team = legacy.build_placeholder_team
+build_team_serial = legacy.build_team_serial
 redirect = legacy.redirect
 replace_match_path_id = legacy.replace_match_path_id
 require_competition_manager = legacy.require_competition_manager
 resolve_match_entities = legacy.resolve_match_entities
 save_repository_state = legacy.save_repository_state
+safe_asset_path = legacy.safe_asset_path
+ensure_team_asset_dirs = legacy.ensure_team_asset_dirs
+TEAM_UPLOAD_DIR = legacy.TEAM_UPLOAD_DIR
+ROOT_DIR = legacy.ROOT
+ALLOWED_IMAGE_EXTENSIONS = legacy.ALLOWED_IMAGE_EXTENSIONS
 start_response_html = legacy.start_response_html
 uses_structured_score_model = legacy.uses_structured_score_model
 validate_match_awards = legacy.validate_match_awards
@@ -66,7 +75,19 @@ STAGE_LABELS = STAGE_OPTIONS
 ROOT = Path(__file__).resolve().parents[3]
 TEMPLATE_DOWNLOAD_PATH = "/assets/templates/match-result-upload-template-generic.xlsx"
 EXCEL_NS = {"main": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+XDR_NS = {
+    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+}
+WPS_CELLIMAGE_NS = {
+    "etc": "http://www.wps.cn/officeDocument/2017/etCustomData",
+    "xdr": "http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing",
+    "a": "http://schemas.openxmlformats.org/drawingml/2006/main",
+}
+REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 MATCH_SEQUENCE_PATTERN = re.compile(r"-(\d{2})$")
+WPS_DISPIMG_PATTERN = re.compile(r'DISPIMG\("(?P<image_id>ID_[A-F0-9]+)"', re.IGNORECASE)
 EXCEL_HEADER_ALIASES = {
     "比赛编号": "match_id",
     "局号": "match_id",
@@ -86,6 +107,16 @@ EXCEL_HEADER_ALIASES = {
     "座位号": "seat",
     "战队": "team_name",
     "战队名": "team_name",
+    "战队名称": "team_name",
+    "战队logo": "logo",
+    "战队Logo": "logo",
+    "logo": "logo",
+    "Logo": "logo",
+    "选手姓名": "player_name",
+    "选手头像": "photo",
+    "选手照片": "photo",
+    "photo": "photo",
+    "Photo": "photo",
     "选手": "player_name",
     "身份": "role",
     "阵营": "camp",
@@ -103,6 +134,8 @@ EXCEL_HEADER_ALIASES = {
 }
 PLAYER_DIMENSION_SHEET_NAMES = ["单日选手个人维度数据"]
 TEAM_DIMENSION_SHEET_NAMES = ["单日选手战队维度数据 ", "单日选手战队维度数据"]
+TEAM_LOGO_SHEET_NAMES = ["赛季战队图标数据", "records"]
+PLAYER_PHOTO_SHEET_NAMES = ["赛季队员头像数据", "records"]
 PLAYER_DIMENSION_FIELD_MAP = {
     "当日积分": "daily_points",
     "局数": "games_played",
@@ -421,6 +454,112 @@ def build_dimension_import_panel(
     """
 
 
+def build_team_logo_import_panel(
+    ctx: RequestContext,
+    values: dict[str, str] | None = None,
+) -> str:
+    current = values or {
+        "competition_name": form_value(ctx.query, "competition").strip(),
+        "season": form_value(ctx.query, "season").strip(),
+    }
+    competition_field_html = build_match_competition_field(
+        current["competition_name"],
+        ctx.current_user,
+    )
+    season_field_html = build_match_season_field(
+        current["competition_name"],
+        current["season"],
+        include_non_ongoing=True,
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
+        <div>
+          <h2 class="section-title mb-2">Excel 批量导入赛季战队图标</h2>
+          <p class="section-copy mb-0">只识别 `战队名称`、`战队logo` 两列。会按你当前选择的赛事和赛季批量更新队标；如果这个赛季下还没有该战队，也会先自动创建赛季战队档案。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/assets/templates/team-logo-upload-template.xlsx">下载战队图标模板</a>
+        </div>
+      </div>
+      <form method="post" action="/matches/new" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="import_team_logo_excel">
+        <div class="row g-3">
+          <div class="col-12 col-xl-4">
+            <label class="form-label">地区赛事页</label>
+            {competition_field_html}
+          </div>
+          <div class="col-12 col-xl-3">
+            <label class="form-label">赛季</label>
+            {season_field_html}
+          </div>
+          <div class="col-12 col-xl-5">
+            <label class="form-label">选择 Excel 文件</label>
+            <input class="form-control" type="file" name="team_logo_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          </div>
+        </div>
+        <div class="small text-secondary mt-3">`战队logo` 列优先识别你直接插入到 Excel 单元格里的图片；如果这一格没有嵌图，也支持填写站内资源路径，例如 `assets/teams/logo.png`，或 `https://...` 外链地址。这个导入只会创建或更新赛季战队档案的图标，不会改成员、负责人和比赛数据。</div>
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <button type="submit" class="btn btn-dark">上传并导入战队图标</button>
+        </div>
+      </form>
+    </section>
+    """
+
+
+def build_player_photo_import_panel(
+    ctx: RequestContext,
+    values: dict[str, str] | None = None,
+) -> str:
+    current = values or {
+        "competition_name": form_value(ctx.query, "competition").strip(),
+        "season": form_value(ctx.query, "season").strip(),
+    }
+    competition_field_html = build_match_competition_field(
+        current["competition_name"],
+        ctx.current_user,
+    )
+    season_field_html = build_match_season_field(
+        current["competition_name"],
+        current["season"],
+        include_non_ongoing=True,
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
+        <div>
+          <h2 class="section-title mb-2">Excel 批量导入赛季队员头像</h2>
+          <p class="section-copy mb-0">只识别 `选手姓名`、`选手头像` 两列。会按你当前选择的赛事和赛季批量更新队员头像，必须精确匹配到已有的赛季队员档案。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/assets/templates/player-photo-upload-template.xlsx">下载队员头像模板</a>
+        </div>
+      </div>
+      <form method="post" action="/matches/new" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="import_player_photo_excel">
+        <div class="row g-3">
+          <div class="col-12 col-xl-4">
+            <label class="form-label">地区赛事页</label>
+            {competition_field_html}
+          </div>
+          <div class="col-12 col-xl-3">
+            <label class="form-label">赛季</label>
+            {season_field_html}
+          </div>
+          <div class="col-12 col-xl-5">
+            <label class="form-label">选择 Excel 文件</label>
+            <input class="form-control" type="file" name="player_photo_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          </div>
+        </div>
+        <div class="small text-secondary mt-3">`选手头像` 列优先识别你直接插入到 Excel 单元格里的图片；如果这一格没有嵌图，也支持填写站内资源路径，例如 `assets/players/xx.png`，或 `https://...` 外链地址。系统只会更新已存在的赛季队员档案；如果同一赛季里有重名队员，会直接报错，避免误覆盖。</div>
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <button type="submit" class="btn btn-dark">上传并导入队员头像</button>
+        </div>
+      </form>
+    </section>
+    """
+
+
 def get_management_form_values(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
@@ -589,28 +728,10 @@ def build_match_management_panel(
 
 def read_excel_sheet_rows(upload: UploadedFile, sheet_name: str) -> list[dict[str, str]]:
     with ZipFile(BytesIO(upload.data)) as archive:
-        workbook_xml = ET.fromstring(archive.read("xl/workbook.xml"))
-        rels_xml = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
-        shared_strings: list[str] = []
-        if "xl/sharedStrings.xml" in archive.namelist():
-            shared_strings_xml = ET.fromstring(archive.read("xl/sharedStrings.xml"))
-            shared_strings = [
-                "".join(node.text or "" for node in item.findall(".//main:t", EXCEL_NS))
-                for item in shared_strings_xml.findall("main:si", EXCEL_NS)
-            ]
-        rel_target_by_id = {
-            rel.attrib["Id"]: rel.attrib["Target"]
-            for rel in rels_xml.findall("{http://schemas.openxmlformats.org/package/2006/relationships}Relationship")
-        }
-        target = ""
-        for sheet in workbook_xml.findall("main:sheets/main:sheet", EXCEL_NS):
-            if str(sheet.attrib.get("name") or "").strip() == sheet_name.strip():
-                relation_id = sheet.attrib.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id", "")
-                target = rel_target_by_id.get(relation_id, "")
-                break
-        if not target:
+        shared_strings = load_excel_shared_strings(archive)
+        sheet_path = resolve_sheet_archive_path(archive, sheet_name)
+        if not sheet_path:
             return []
-        sheet_path = "xl/" + target.lstrip("/")
         sheet_xml = ET.fromstring(archive.read(sheet_path))
 
     rows: list[list[str]] = []
@@ -660,6 +781,229 @@ def read_first_available_sheet_rows(upload: UploadedFile, sheet_names: list[str]
         if rows:
             return rows
     return []
+
+
+def load_excel_shared_strings(archive: ZipFile) -> list[str]:
+    if "xl/sharedStrings.xml" not in archive.namelist():
+        return []
+    shared_strings_xml = ET.fromstring(archive.read("xl/sharedStrings.xml"))
+    return [
+        "".join(node.text or "" for node in item.findall(".//main:t", EXCEL_NS))
+        for item in shared_strings_xml.findall("main:si", EXCEL_NS)
+    ]
+
+
+def normalize_archive_target(base_path: str, target: str) -> str:
+    if not target:
+        return ""
+    if target.startswith("/"):
+        return target.lstrip("/")
+    return str((PurePosixPath(base_path).parent / target).as_posix())
+
+
+def resolve_sheet_archive_path(archive: ZipFile, sheet_name: str) -> str:
+    workbook_xml = ET.fromstring(archive.read("xl/workbook.xml"))
+    rels_xml = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+    rel_target_by_id = {
+        rel.attrib["Id"]: rel.attrib["Target"]
+        for rel in rels_xml.findall(f"{{{PKG_REL_NS}}}Relationship")
+    }
+    for sheet in workbook_xml.findall("main:sheets/main:sheet", EXCEL_NS):
+        if str(sheet.attrib.get("name") or "").strip() != sheet_name.strip():
+            continue
+        relation_id = sheet.attrib.get(f"{{{REL_NS}}}id", "")
+        return normalize_archive_target("xl/workbook.xml", rel_target_by_id.get(relation_id, ""))
+    return ""
+
+
+def resolve_part_relationships_path(part_path: str) -> str:
+    part = PurePosixPath(part_path)
+    return str((part.parent / "_rels" / f"{part.name}.rels").as_posix())
+
+
+def read_excel_sheet_embedded_images(
+    upload: UploadedFile,
+    sheet_name: str,
+) -> dict[tuple[int, int], tuple[str, bytes]]:
+    with ZipFile(BytesIO(upload.data)) as archive:
+        sheet_path = resolve_sheet_archive_path(archive, sheet_name)
+        if not sheet_path:
+            return {}
+        wps_images = read_wps_cell_images(archive, sheet_path)
+        if wps_images:
+            return wps_images
+        sheet_xml = ET.fromstring(archive.read(sheet_path))
+        drawing_node = sheet_xml.find("main:drawing", EXCEL_NS)
+        if drawing_node is None:
+            return {}
+        sheet_rels_path = resolve_part_relationships_path(sheet_path)
+        if sheet_rels_path not in archive.namelist():
+            return {}
+        sheet_rels_xml = ET.fromstring(archive.read(sheet_rels_path))
+        rel_target_by_id = {
+            rel.attrib["Id"]: rel.attrib["Target"]
+            for rel in sheet_rels_xml.findall(f"{{{PKG_REL_NS}}}Relationship")
+        }
+        drawing_rel_id = drawing_node.attrib.get(f"{{{REL_NS}}}id", "")
+        drawing_path = normalize_archive_target(sheet_path, rel_target_by_id.get(drawing_rel_id, ""))
+        if not drawing_path or drawing_path not in archive.namelist():
+            return {}
+        drawing_xml = ET.fromstring(archive.read(drawing_path))
+        drawing_rels_path = resolve_part_relationships_path(drawing_path)
+        if drawing_rels_path not in archive.namelist():
+            return {}
+        drawing_rels_xml = ET.fromstring(archive.read(drawing_rels_path))
+        media_target_by_id = {
+            rel.attrib["Id"]: rel.attrib["Target"]
+            for rel in drawing_rels_xml.findall(f"{{{PKG_REL_NS}}}Relationship")
+        }
+        embedded_images: dict[tuple[int, int], tuple[str, bytes]] = {}
+        anchors = [
+            *drawing_xml.findall("xdr:twoCellAnchor", XDR_NS),
+            *drawing_xml.findall("xdr:oneCellAnchor", XDR_NS),
+        ]
+        for anchor in anchors:
+            from_node = anchor.find("xdr:from", XDR_NS)
+            pic_node = anchor.find("xdr:pic", XDR_NS)
+            if from_node is None or pic_node is None:
+                continue
+            row_text = from_node.findtext("xdr:row", default="", namespaces=XDR_NS)
+            col_text = from_node.findtext("xdr:col", default="", namespaces=XDR_NS)
+            try:
+                row_index = int(row_text) + 1
+                col_index = int(col_text) + 1
+            except ValueError:
+                continue
+            blip_node = pic_node.find(".//a:blip", XDR_NS)
+            if blip_node is None:
+                continue
+            embed_id = blip_node.attrib.get(f"{{{REL_NS}}}embed", "")
+            media_path = normalize_archive_target(drawing_path, media_target_by_id.get(embed_id, ""))
+            if not media_path or media_path not in archive.namelist():
+                continue
+            embedded_images[(row_index, col_index)] = (
+                PurePosixPath(media_path).name,
+                archive.read(media_path),
+            )
+        return embedded_images
+
+
+def read_wps_cell_images(
+    archive: ZipFile,
+    sheet_path: str,
+) -> dict[tuple[int, int], tuple[str, bytes]]:
+    if "xl/cellimages.xml" not in archive.namelist() or "xl/_rels/cellimages.xml.rels" not in archive.namelist():
+        return {}
+    shared_strings = load_excel_shared_strings(archive)
+    sheet_xml = ET.fromstring(archive.read(sheet_path))
+    formula_image_id_by_cell: dict[tuple[int, int], str] = {}
+    for row in sheet_xml.findall("main:sheetData/main:row", EXCEL_NS):
+        row_number_text = row.attrib.get("r", "").strip()
+        try:
+            row_number = int(row_number_text)
+        except ValueError:
+            continue
+        for cell in row.findall("main:c", EXCEL_NS):
+            cell_ref = cell.attrib.get("r", "")
+            column_index = excel_column_index(cell_ref) if cell_ref else 0
+            if column_index <= 0:
+                continue
+            cell_type = cell.attrib.get("t")
+            text = ""
+            if cell_type == "inlineStr":
+                text = "".join(node.text or "" for node in cell.findall(".//main:t", EXCEL_NS))
+            elif cell_type == "s":
+                value_node = cell.find("main:v", EXCEL_NS)
+                shared_index = int(value_node.text) if value_node is not None and value_node.text else -1
+                if 0 <= shared_index < len(shared_strings):
+                    text = shared_strings[shared_index]
+            else:
+                value_node = cell.find("main:v", EXCEL_NS)
+                text = value_node.text if value_node is not None and value_node.text is not None else ""
+            matched = WPS_DISPIMG_PATTERN.search(text or "")
+            if matched:
+                formula_image_id_by_cell[(row_number, column_index)] = matched.group("image_id")
+    if not formula_image_id_by_cell:
+        return {}
+
+    cellimages_xml = ET.fromstring(archive.read("xl/cellimages.xml"))
+    cellimages_rels_xml = ET.fromstring(archive.read("xl/_rels/cellimages.xml.rels"))
+    media_target_by_rel_id = {
+        rel.attrib["Id"]: normalize_archive_target("xl/cellimages.xml", rel.attrib["Target"])
+        for rel in cellimages_rels_xml.findall(f"{{{PKG_REL_NS}}}Relationship")
+    }
+    payload_by_image_id: dict[str, tuple[str, bytes]] = {}
+    for cell_image in cellimages_xml.findall("etc:cellImage", WPS_CELLIMAGE_NS):
+        pic_node = cell_image.find("xdr:pic", WPS_CELLIMAGE_NS)
+        if pic_node is None:
+            continue
+        c_nv_pr = pic_node.find("xdr:nvPicPr/xdr:cNvPr", WPS_CELLIMAGE_NS)
+        blip_node = pic_node.find(".//a:blip", WPS_CELLIMAGE_NS)
+        if c_nv_pr is None or blip_node is None:
+            continue
+        image_id = str(c_nv_pr.attrib.get("name") or "").strip()
+        rel_id = blip_node.attrib.get(f"{{{REL_NS}}}embed", "")
+        media_path = media_target_by_rel_id.get(rel_id, "")
+        if not image_id or not media_path or media_path not in archive.namelist():
+            continue
+        payload_by_image_id[image_id] = (
+            PurePosixPath(media_path).name,
+            archive.read(media_path),
+        )
+    embedded_images: dict[tuple[int, int], tuple[str, bytes]] = {}
+    for cell_key, image_id in formula_image_id_by_cell.items():
+        payload = payload_by_image_id.get(image_id)
+        if payload:
+            embedded_images[cell_key] = payload
+    return embedded_images
+
+
+def save_embedded_team_logo(team_id: str, original_name: str, image_bytes: bytes) -> str:
+    extension = Path(original_name).suffix.lower()
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        raise ValueError(f"不支持的图片格式：{original_name}")
+    ensure_team_asset_dirs()
+    filename = f"{team_id}-{secrets.token_hex(6)}{extension}"
+    target = TEAM_UPLOAD_DIR / filename
+    target.write_bytes(image_bytes)
+    return str(target.relative_to(ROOT_DIR)).replace("\\", "/")
+
+
+def save_embedded_player_photo(player_id: str, original_name: str, image_bytes: bytes) -> str:
+    extension = Path(original_name).suffix.lower()
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        raise ValueError(f"不支持的图片格式：{original_name}")
+    legacy.ensure_player_asset_dirs()
+    target = legacy.PLAYER_UPLOAD_DIR / f"{player_id}-{secrets.token_hex(6)}{extension}"
+    target.write_bytes(image_bytes)
+    return str(target.relative_to(ROOT_DIR)).replace("\\", "/")
+
+
+def find_embedded_image_for_row(
+    embedded_images: dict[tuple[int, int], tuple[str, bytes]],
+    row_index: int,
+    preferred_column: int = 2,
+) -> tuple[str, bytes] | None:
+    exact_match = embedded_images.get((row_index, preferred_column))
+    if exact_match:
+        return exact_match
+    same_row_candidates = [
+        (abs(column_index - preferred_column), column_index, payload)
+        for (image_row, column_index), payload in embedded_images.items()
+        if image_row == row_index
+    ]
+    if same_row_candidates:
+        same_row_candidates.sort(key=lambda item: (item[0], item[1]))
+        return same_row_candidates[0][2]
+    nearby_row_candidates = [
+        (abs(image_row - row_index), abs(column_index - preferred_column), image_row, column_index, payload)
+        for (image_row, column_index), payload in embedded_images.items()
+        if abs(image_row - row_index) <= 1
+    ]
+    if nearby_row_candidates:
+        nearby_row_candidates.sort(key=lambda item: (item[0], item[1], item[2], item[3]))
+        return nearby_row_candidates[0][4]
+    return None
 
 
 def validate_excel_upload(upload: UploadedFile | None) -> str:
@@ -1370,6 +1714,193 @@ def import_dimension_stats_from_excel(
     return list(player_index.values()), list(team_index.values()), summary
 
 
+def is_external_logo_url(value: str) -> bool:
+    normalized = value.strip().lower()
+    return normalized.startswith("http://") or normalized.startswith("https://")
+
+
+def normalize_logo_reference(value: str) -> str:
+    return str(value or "").strip()
+
+
+def import_team_logos_from_excel(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[list[dict[str, object]] | None, str]:
+    try:
+        rows = read_first_available_sheet_rows(upload, TEAM_LOGO_SHEET_NAMES)
+        embedded_images: dict[tuple[int, int], tuple[str, bytes]] = {}
+        for sheet_name in TEAM_LOGO_SHEET_NAMES:
+            embedded_images = read_excel_sheet_embedded_images(upload, sheet_name)
+            if embedded_images:
+                break
+    except Exception as exc:
+        return None, f"解析 Excel 失败：{exc}"
+    if not rows:
+        return None, "Excel 中没有找到可导入的战队图标数据工作表。"
+    if not can_manage_matches(ctx.current_user, data, competition_name):
+        return None, f"你没有权限导入 {competition_name} 下的战队图标。"
+    competition_error = validate_match_competition_selection(data, competition_name)
+    if competition_error:
+        return None, competition_error
+    season_error = validate_match_season_selection(
+        data,
+        competition_name,
+        season_name,
+        include_non_ongoing=True,
+    )
+    if season_error:
+        return None, season_error
+
+    created_count = 0
+    updated_count = 0
+    for index, row in enumerate(rows, start=2):
+        team_name = get_excel_row_value(row, "team_name")
+        if not team_name:
+            return None, f"战队图标数据第 {index} 行缺少战队名称。"
+        team = legacy.find_team_by_name_in_scope(data, competition_name, season_name, team_name)
+        if not team:
+            team = build_placeholder_team(
+                build_team_serial(data, competition_name, season_name, data["teams"]),
+                team_name,
+                competition_name,
+                season_name,
+            )
+            data["teams"].append(team)
+            created_count += 1
+        else:
+            updated_count += 1
+        embedded_logo = find_embedded_image_for_row(embedded_images, index, 2)
+        if embedded_logo:
+            original_name, image_bytes = embedded_logo
+            try:
+                team["logo"] = save_embedded_team_logo(team["team_id"], original_name, image_bytes)
+            except ValueError as exc:
+                return None, f"战队图标数据第 {index} 行图片保存失败：{exc}"
+        else:
+            logo_value = normalize_logo_reference(get_excel_row_value(row, "logo"))
+            if not logo_value:
+                return None, f"战队图标数据第 {index} 行缺少战队logo。"
+            if not is_external_logo_url(logo_value):
+                candidate = safe_asset_path(logo_value)
+                if candidate is None:
+                    return None, (
+                        f"战队图标数据第 {index} 行的战队logo 必须是 Excel 里插入的图片、`assets/` 下的站内路径，"
+                        "或 http/https 外链地址。"
+                    )
+                if not candidate.is_file():
+                    return None, f"战队图标数据第 {index} 行的图标文件不存在：{logo_value}"
+            team["logo"] = logo_value
+        if not str(team.get("short_name") or "").strip():
+            team["short_name"] = team_name.strip()[:12] or team["team_id"]
+
+    return data["teams"], f"战队图标导入完成：新建 {created_count} 支，更新 {updated_count} 支。"
+
+
+def find_players_by_name_in_scope(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+    player_name: str,
+) -> list[dict[str, object]]:
+    normalized_player_name = player_name.strip()
+    if not normalized_player_name:
+        return []
+    team_lookup = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+    }
+    matched_players: list[dict[str, object]] = []
+    for player in data.get("players", []):
+        if str(player.get("display_name") or "").strip() != normalized_player_name:
+            continue
+        team = team_lookup.get(str(player.get("team_id") or "").strip())
+        if not team:
+            continue
+        if (
+            str(team.get("competition_name") or "").strip() != competition_name.strip()
+            or str(team.get("season_name") or "").strip() != season_name.strip()
+        ):
+            continue
+        matched_players.append(player)
+    return matched_players
+
+
+def import_player_photos_from_excel(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[list[dict[str, object]] | None, str]:
+    try:
+        rows = read_first_available_sheet_rows(upload, PLAYER_PHOTO_SHEET_NAMES)
+        embedded_images: dict[tuple[int, int], tuple[str, bytes]] = {}
+        for sheet_name in PLAYER_PHOTO_SHEET_NAMES:
+            embedded_images = read_excel_sheet_embedded_images(upload, sheet_name)
+            if embedded_images:
+                break
+    except Exception as exc:
+        return None, f"解析 Excel 失败：{exc}"
+    if not rows:
+        return None, "Excel 中没有找到可导入的队员头像数据工作表。"
+    if not can_manage_matches(ctx.current_user, data, competition_name):
+        return None, f"你没有权限导入 {competition_name} 下的队员头像。"
+    competition_error = validate_match_competition_selection(data, competition_name)
+    if competition_error:
+        return None, competition_error
+    season_error = validate_match_season_selection(
+        data,
+        competition_name,
+        season_name,
+        include_non_ongoing=True,
+    )
+    if season_error:
+        return None, season_error
+
+    updated_count = 0
+    for index, row in enumerate(rows, start=2):
+        player_name = get_excel_row_value(row, "player_name")
+        if not player_name:
+            return None, f"队员头像数据第 {index} 行缺少选手姓名。"
+        matched_players = find_players_by_name_in_scope(data, competition_name, season_name, player_name)
+        if not matched_players:
+            return None, f"队员头像数据第 {index} 行没有匹配到赛季队员：{player_name}"
+        if len(matched_players) > 1:
+            return None, f"队员头像数据第 {index} 行命中了多个同名赛季队员：{player_name}"
+        player = matched_players[0]
+        embedded_photo = find_embedded_image_for_row(embedded_images, index, 2)
+        if embedded_photo:
+            original_name, image_bytes = embedded_photo
+            try:
+                player["photo"] = save_embedded_player_photo(
+                    str(player.get("player_id") or ""),
+                    original_name,
+                    image_bytes,
+                )
+            except ValueError as exc:
+                return None, f"队员头像数据第 {index} 行图片保存失败：{exc}"
+        else:
+            photo_value = normalize_logo_reference(get_excel_row_value(row, "photo"))
+            if not photo_value:
+                return None, f"队员头像数据第 {index} 行缺少选手头像。"
+            if not is_external_logo_url(photo_value):
+                candidate = safe_asset_path(photo_value)
+                if candidate is None:
+                    return None, (
+                        f"队员头像数据第 {index} 行的选手头像必须是 Excel 里插入的图片、`assets/` 下的站内路径，"
+                        "或 http/https 外链地址。"
+                    )
+                if not candidate.is_file():
+                    return None, f"队员头像数据第 {index} 行的头像文件不存在：{photo_value}"
+            player["photo"] = photo_value
+        updated_count += 1
+    return data["players"], f"队员头像导入完成：更新 {updated_count} 位。"
+
+
 def batch_create_matches(
     competition_name: str,
     season_name: str,
@@ -1992,11 +2523,13 @@ def get_match_edit_page(
     )
     excel_panel_html = build_excel_import_panel()
     dimension_panel_html = build_dimension_import_panel(ctx)
+    team_logo_panel_html = build_team_logo_import_panel(ctx)
+    player_photo_panel_html = build_player_photo_import_panel(ctx)
     if '<section class="form-panel' not in form_html:
         return form_html
     return form_html.replace(
         '<section class="form-panel',
-        f"{excel_panel_html}{dimension_panel_html}<section class=\"form-panel",
+        f"{excel_panel_html}{dimension_panel_html}{team_logo_panel_html}{player_photo_panel_html}<section class=\"form-panel",
         1,
     )
 
@@ -2039,12 +2572,14 @@ def get_match_create_page(
     batch_panel_html = build_batch_create_form(ctx, get_batch_create_form_values(ctx, batch_form_values))
     excel_panel_html = build_excel_import_panel()
     dimension_panel_html = build_dimension_import_panel(ctx)
+    team_logo_panel_html = build_team_logo_import_panel(ctx)
+    player_photo_panel_html = build_player_photo_import_panel(ctx)
     body_start = manual_form_html.find('<section class="form-panel')
     if body_start == -1:
         return manual_form_html
     combined_body = manual_form_html.replace(
         '<section class="form-panel',
-        f"{management_panel_html}{batch_panel_html}{excel_panel_html}{dimension_panel_html}<section class=\"form-panel",
+        f"{management_panel_html}{batch_panel_html}{excel_panel_html}{dimension_panel_html}{team_logo_panel_html}{player_photo_panel_html}<section class=\"form-panel",
         1,
     )
     return combined_body
@@ -2360,6 +2895,84 @@ def handle_match_create(ctx: RequestContext, start_response):
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert=f"维度数据保存失败：{exc}"),
+            )
+        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
+            "/competitions",
+            competition_name,
+            season_name,
+        )
+        return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
+    if action == "import_team_logo_excel":
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season").strip()
+        upload = file_value(ctx.files, "team_logo_excel_file")
+        upload_error = validate_excel_upload(upload)
+        if upload_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=upload_error),
+            )
+        next_teams, import_message = import_team_logos_from_excel(
+            ctx,
+            data,
+            upload,
+            competition_name,
+            season_name,
+        )
+        if next_teams is None:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=import_message),
+            )
+        users = load_users()
+        data["teams"] = next_teams
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert="战队图标导入保存失败：" + "；".join(errors[:3])),
+            )
+        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
+            "/competitions",
+            competition_name,
+            season_name,
+        )
+        return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
+    if action == "import_player_photo_excel":
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season").strip()
+        upload = file_value(ctx.files, "player_photo_excel_file")
+        upload_error = validate_excel_upload(upload)
+        if upload_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=upload_error),
+            )
+        next_players, import_message = import_player_photos_from_excel(
+            ctx,
+            data,
+            upload,
+            competition_name,
+            season_name,
+        )
+        if next_players is None:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=import_message),
+            )
+        users = load_users()
+        data["players"] = next_players
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert="队员头像导入保存失败：" + "；".join(errors[:3])),
             )
         next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
             "/competitions",

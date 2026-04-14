@@ -25,7 +25,7 @@ load_membership_requests = legacy.load_membership_requests
 load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
 redirect = legacy.redirect
-remove_user_linked_player_id = legacy.remove_user_linked_player_id
+remove_user_player_binding = legacy.remove_user_player_binding
 save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
@@ -54,6 +54,19 @@ def can_manage_other_binding_accounts(data, acting_user) -> bool:
 
 def can_direct_bind_player_ids(acting_user) -> bool:
     return bool(acting_user and is_admin_user(acting_user))
+
+
+def release_captaincy_for_player(data: dict[str, list[dict[str, object]]], player_id: str) -> list[str]:
+    normalized_player_id = player_id.strip()
+    if not normalized_player_id:
+        return []
+    released_team_names: list[str] = []
+    for team in data["teams"]:
+        if str(team.get("captain_player_id") or "").strip() != normalized_player_id:
+            continue
+        team["captain_player_id"] = None
+        released_team_names.append(str(team.get("name") or team.get("team_id") or normalized_player_id))
+    return released_team_names
 
 
 def get_player_bindings_page(
@@ -107,15 +120,14 @@ def get_player_bindings_page(
             else (player["team_id"] if player else "未知战队")
         )
         action_html = (
-            '<span class="small text-secondary">当前主身份</span>'
-            if target_user.get("player_id") == player_id
-            else f"""
+            f"""
             <form method="post" action="/bindings" class="m-0">
               <input type="hidden" name="action" value="unbind_player_id">
               {target_username_input}
               <input type="hidden" name="player_id" value="{escape(player_id)}">
-              <button type="submit" class="btn btn-sm btn-outline-danger">解绑</button>
+              <button type="submit" class="btn btn-sm btn-outline-danger">{'解绑主身份' if target_user.get("player_id") == player_id else '解绑'}</button>
             </form>
+            {('<div class="small text-secondary mt-1">当前主身份，解绑后会自动切换到剩余已绑定 ID。</div>' if target_user.get("player_id") == player_id else '')}
             """
         )
         bound_rows.append(
@@ -637,18 +649,19 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                 "403 Forbidden",
                 layout("没有权限", '<div class="alert alert-danger">你没有权限操作这条绑定关系。</div>', ctx),
             )
-        if target_user.get("player_id") == player_id:
+        if player_id not in get_user_bound_player_ids(target_user):
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_player_bindings_page(
                     ctx,
-                    alert="当前主身份不能直接解绑；如需变更，请联系管理员处理。",
+                    alert="这个参赛ID当前并没有绑定到该账号。",
                     target_username=target_username,
                     selected_player_id=player_id,
                 ),
             )
-        users = remove_user_linked_player_id(users, target_username, player_id)
+        released_team_names = release_captaincy_for_player(data, player_id)
+        users = remove_user_player_binding(users, target_username, player_id)
         errors = save_repository_state(data, users)
         if errors:
             return start_response_html(
@@ -666,7 +679,14 @@ def handle_player_bindings(ctx: RequestContext, start_response):
             "200 OK",
             get_player_bindings_page(
                 ctx,
-                alert=f"已解除账号 {target_username} 与参赛ID {player_id} 的绑定。",
+                alert=(
+                    f"已解除账号 {target_username} 与参赛ID {player_id} 的绑定。"
+                    + (
+                        f"同时已解除战队 { '、'.join(released_team_names) } 的认领负责人。"
+                        if released_team_names
+                        else ""
+                    )
+                ),
                 target_username=target_username,
                 selected_player_id=player_id,
             ),

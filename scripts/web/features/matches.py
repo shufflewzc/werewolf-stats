@@ -1687,6 +1687,7 @@ def import_dimension_stats_from_excel(
             str(row.get("season_name") or "").strip(),
             str(row.get("played_on") or "").strip(),
             str(row.get("team_id") or "").strip(),
+            int(row.get("seat") or 0),
         ): row
         for row in existing_team_rows
     }
@@ -1706,6 +1707,7 @@ def import_dimension_stats_from_excel(
                 str(row.get("season_name") or "").strip(),
                 str(row.get("played_on") or "").strip(),
                 str(row.get("team_id") or "").strip(),
+                int(row.get("seat") or 0),
             )
         ] = row
     summary = (

@@ -271,7 +271,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             team_id TEXT NOT NULL,
             seat INTEGER NOT NULL DEFAULT 0,
             metrics_json TEXT NOT NULL DEFAULT '{}',
-            PRIMARY KEY (competition_name, season_name, played_on, team_id),
+            PRIMARY KEY (competition_name, season_name, played_on, team_id, seat),
             FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE CASCADE
         );
 
@@ -279,7 +279,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
         ON season_player_dimension_stats(competition_name, season_name, played_on, player_id);
 
         CREATE INDEX IF NOT EXISTS idx_season_team_dimension_stats_scope
-        ON season_team_dimension_stats(competition_name, season_name, played_on, team_id);
+        ON season_team_dimension_stats(competition_name, season_name, played_on, team_id, seat);
 
         CREATE TABLE IF NOT EXISTS membership_requests (
             request_id TEXT PRIMARY KEY,
@@ -450,9 +450,97 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE membership_requests ADD COLUMN scope_season_name TEXT NOT NULL DEFAULT ''"
         )
+    migrate_season_team_dimension_stats_schema(connection)
     backfill_team_scopes(connection)
     backfill_match_awards(connection)
     backfill_team_claim_captains(connection)
+
+
+def migrate_season_team_dimension_stats_schema(connection: sqlite3.Connection) -> None:
+    table_columns = connection.execute(
+        "PRAGMA table_info(season_team_dimension_stats)"
+    ).fetchall()
+    if not table_columns:
+        return
+    pk_columns = [
+        row["name"]
+        for row in sorted(table_columns, key=lambda item: int(item["pk"] or 0))
+        if int(row["pk"] or 0) > 0
+    ]
+    expected_pk_columns = [
+        "competition_name",
+        "season_name",
+        "played_on",
+        "team_id",
+        "seat",
+    ]
+    if pk_columns == expected_pk_columns:
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_season_team_dimension_stats_scope
+            ON season_team_dimension_stats(competition_name, season_name, played_on, team_id, seat)
+            """
+        )
+        return
+
+    existing_rows = connection.execute(
+        """
+        SELECT competition_name, season_name, played_on, team_id, seat, metrics_json
+        FROM season_team_dimension_stats
+        ORDER BY competition_name, season_name, played_on, team_id, seat, rowid
+        """
+    ).fetchall()
+    deduped_rows: dict[tuple[str, str, str, str, int], sqlite3.Row] = {}
+    for row in existing_rows:
+        key = (
+            row["competition_name"],
+            row["season_name"],
+            row["played_on"],
+            row["team_id"],
+            int(row["seat"] or 0),
+        )
+        deduped_rows[key] = row
+
+    connection.execute("DROP INDEX IF EXISTS idx_season_team_dimension_stats_scope")
+    connection.execute("ALTER TABLE season_team_dimension_stats RENAME TO season_team_dimension_stats_legacy")
+    connection.execute(
+        """
+        CREATE TABLE season_team_dimension_stats (
+            competition_name TEXT NOT NULL,
+            season_name TEXT NOT NULL,
+            played_on TEXT NOT NULL,
+            team_id TEXT NOT NULL,
+            seat INTEGER NOT NULL DEFAULT 0,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (competition_name, season_name, played_on, team_id, seat),
+            FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_season_team_dimension_stats_scope
+        ON season_team_dimension_stats(competition_name, season_name, played_on, team_id, seat)
+        """
+    )
+    for row in deduped_rows.values():
+        connection.execute(
+            """
+            INSERT INTO season_team_dimension_stats (
+                competition_name, season_name, played_on, team_id, seat, metrics_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["competition_name"],
+                row["season_name"],
+                row["played_on"],
+                row["team_id"],
+                int(row["seat"] or 0),
+                row["metrics_json"] or "{}",
+            ),
+        )
+    connection.execute("DROP TABLE season_team_dimension_stats_legacy")
 
 
 def backfill_team_scopes(connection: sqlite3.Connection) -> None:
@@ -1211,8 +1299,6 @@ def save_season_dimension_stats(
     with connect_db() as connection:
         require_initialized_database(connection)
         with connection:
-            connection.execute("DELETE FROM season_player_dimension_stats")
-            connection.execute("DELETE FROM season_team_dimension_stats")
             for row in player_rows:
                 metrics = {
                     key: value
@@ -1233,6 +1319,11 @@ def save_season_dimension_stats(
                         competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
                     )
                     VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(competition_name, season_name, played_on, player_id)
+                    DO UPDATE SET
+                        team_id = excluded.team_id,
+                        seat = excluded.seat,
+                        metrics_json = excluded.metrics_json
                     """,
                     (
                         row["competition_name"],
@@ -1263,6 +1354,9 @@ def save_season_dimension_stats(
                         competition_name, season_name, played_on, team_id, seat, metrics_json
                     )
                     VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(competition_name, season_name, played_on, team_id, seat)
+                    DO UPDATE SET
+                        metrics_json = excluded.metrics_json
                     """,
                     (
                         row["competition_name"],

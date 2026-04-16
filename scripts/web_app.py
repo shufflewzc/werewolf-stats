@@ -3,14 +3,18 @@
 from __future__ import annotations
 
 import base64
+from copy import deepcopy
 import hashlib
 import hmac
 import json
 import math
 import mimetypes
+import os
 import re
 import secrets
 import sys
+import threading
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesParser
@@ -59,6 +63,7 @@ from competition_meta import (
     season_status_label,
 )
 from sqlite_store import (
+    DB_PATH,
     load_membership_requests,
     load_users,
     save_matches as persist_matches,
@@ -115,7 +120,11 @@ TEAM_UPLOAD_DIR = TEAM_ASSETS_DIR / "uploads"
 DEFAULT_PLAYER_PHOTO = "assets/players/default-player.svg"
 DEFAULT_TEAM_LOGO = "assets/teams/default-team.svg"
 SESSION_COOKIE = "werewolf_session"
-PORT = 8000
+HOST = os.getenv("HOST", "")
+PORT = int(os.getenv("PORT", "8000"))
+VALIDATED_DATA_CACHE_TTL_SECONDS = float(
+    os.getenv("VALIDATED_DATA_CACHE_TTL_SECONDS", "5")
+)
 SESSIONS: dict[str, str] = {}
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
@@ -124,6 +133,12 @@ MATCH_ID_PATTERN = re.compile(r"^[a-z0-9]{1,6}-[a-z0-9]{1,8}-\d{6}-\d{2}$")
 ALIAS_SPLIT_PATTERN = re.compile(r"[\n,，、]+")
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+VALIDATED_DATA_CACHE_LOCK = threading.RLock()
+VALIDATED_DATA_CACHE: dict[str, Any] = {
+    "db_mtime_ns": None,
+    "cached_at": 0.0,
+    "data": None,
+}
 
 
 @dataclass
@@ -154,6 +169,47 @@ def china_now_label() -> str:
 
 def china_today_label() -> str:
     return china_now().strftime("%Y-%m-%d")
+
+
+def get_database_mtime_ns() -> int | None:
+    try:
+        return DB_PATH.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+def invalidate_validated_data_cache() -> None:
+    with VALIDATED_DATA_CACHE_LOCK:
+        VALIDATED_DATA_CACHE["db_mtime_ns"] = None
+        VALIDATED_DATA_CACHE["cached_at"] = 0.0
+        VALIDATED_DATA_CACHE["data"] = None
+
+
+def get_cached_validated_data() -> dict[str, Any] | None:
+    current_mtime_ns = get_database_mtime_ns()
+    if current_mtime_ns is None:
+        return None
+    with VALIDATED_DATA_CACHE_LOCK:
+        cached_data = VALIDATED_DATA_CACHE["data"]
+        if cached_data is None:
+            return None
+        if VALIDATED_DATA_CACHE["db_mtime_ns"] != current_mtime_ns:
+            return None
+        if (
+            VALIDATED_DATA_CACHE_TTL_SECONDS > 0
+            and time.monotonic() - VALIDATED_DATA_CACHE["cached_at"]
+            > VALIDATED_DATA_CACHE_TTL_SECONDS
+        ):
+            return None
+        return deepcopy(cached_data)
+
+
+def set_cached_validated_data(data: dict[str, Any]) -> None:
+    current_mtime_ns = get_database_mtime_ns()
+    with VALIDATED_DATA_CACHE_LOCK:
+        VALIDATED_DATA_CACHE["db_mtime_ns"] = current_mtime_ns
+        VALIDATED_DATA_CACHE["cached_at"] = time.monotonic()
+        VALIDATED_DATA_CACHE["data"] = deepcopy(data)
 
 
 def to_chinese_camp(value: str) -> str:
@@ -1829,13 +1885,19 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
 
 
 def load_validated_data() -> dict[str, Any]:
+    cached_data = get_cached_validated_data()
+    if cached_data is not None:
+        return cached_data
     errors, data = validate_repository()
     if errors:
+        invalidate_validated_data_cache()
         raise ValueError("\n".join(errors))
+    set_cached_validated_data(data)
     return data
 
 
 def save_matches(matches: list[dict[str, Any]]) -> list[str]:
+    invalidate_validated_data_cache()
     _, backup_data = validate_repository()
     backup_matches = backup_data.get("matches", [])
     normalized_matches, _ = canonicalize_match_ids(matches)
@@ -1844,15 +1906,19 @@ def save_matches(matches: list[dict[str, Any]]) -> list[str]:
         errors, _ = validate_repository()
         if errors:
             persist_matches(backup_matches)
+            invalidate_validated_data_cache()
             return errors
+        invalidate_validated_data_cache()
         return []
     except Exception:
         if backup_matches:
             persist_matches(backup_matches)
+        invalidate_validated_data_cache()
         raise
 
 
 def save_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> list[str]:
+    invalidate_validated_data_cache()
     backup_errors, backup_data = validate_repository()
     if backup_errors:
         return backup_errors
@@ -1862,10 +1928,13 @@ def save_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> 
         errors, _ = validate_repository()
         if errors:
             save_repository_data(backup_data, backup_users)
+            invalidate_validated_data_cache()
             return errors
+        invalidate_validated_data_cache()
         return []
     except Exception:
         save_repository_data(backup_data, backup_users)
+        invalidate_validated_data_cache()
         raise
 
 
@@ -7683,8 +7752,9 @@ def app(environ, start_response):
 
 
 def main() -> int:
-    with make_server("", PORT, app) as server:
-        print(f"本地站点已启动：http://localhost:{PORT}")
+    with make_server(HOST, PORT, app) as server:
+        listen_host = HOST or "127.0.0.1"
+        print(f"本地站点已启动：http://{listen_host}:{PORT}")
         print("中国时间：", china_now_label())
         server.serve_forever()
     return 0

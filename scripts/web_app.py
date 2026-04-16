@@ -5013,6 +5013,15 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         )
         or "暂未设置"
     )
+    stage_group_inputs_html = "".join(
+        f"""
+        <div class="col-12 col-md-6 col-xl-4">
+          <label class="form-label">{escape(stage_label)}</label>
+          <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
+        </div>
+        """
+        for stage_key, stage_label in STAGE_OPTIONS.items()
+    )
     team_manage_panel = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -5099,15 +5108,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             <input type="hidden" name="action" value="update_team_stage_groups">
             <input type="hidden" name="team_id" value="{escape(team_id)}">
             <div class="row g-3">
-              {"".join(
-                f'''
-                <div class="col-12 col-md-6 col-xl-4">
-                  <label class="form-label">{escape(stage_label)}</label>
-                  <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
-                </div>
-                '''
-                for stage_key, stage_label in STAGE_OPTIONS.items()
-              )}
+              {stage_group_inputs_html}
             </div>
             <button type="submit" class="btn btn-outline-dark mt-3">保存赛段分组</button>
           </form>

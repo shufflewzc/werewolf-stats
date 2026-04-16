@@ -259,6 +259,103 @@ python3 scripts/web_app.py
 3. 完成简单加法验证码
 4. 注册后即可登录
 
+## 1Panel 部署
+
+如果你使用 `1Panel` 的 `Python 运行环境` 部署，推荐按下面配置。
+
+### 1. 工作目录
+
+将运行目录设置为项目根目录：
+
+```text
+/Users/shufflewzc/Documents/GitHub/werewolf-stats
+```
+
+线上服务器请替换成你自己的实际绝对路径，只要该目录下能看到：
+
+- `wsgi.py`
+- `requirements.txt`
+- `scripts/`
+- `data/`
+
+### 2. 安装依赖
+
+在 `1Panel` 的安装命令或初始化命令中填写：
+
+```bash
+pip install -r requirements.txt
+```
+
+如果运行环境里已经装过依赖，也可以手动补装：
+
+```bash
+pip install gunicorn
+```
+
+### 3. 启动命令
+
+不要再直接使用：
+
+```bash
+python3 scripts/web_app.py
+```
+
+请改为：
+
+```bash
+gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app
+```
+
+这条命令的含义：
+
+- `wsgi:app` 使用仓库内置的生产入口
+- `-w 2` 启动 2 个 worker，避免单请求卡住整站
+- `--threads 4` 给每个 worker 额外线程，提高并发余量
+- `-t 120` 将超时时间设为 120 秒，减少慢请求直接被杀掉
+- `-b 0.0.0.0:8000` 监听 `8000` 端口，方便 `1Panel/OpenResty` 反代
+
+### 4. 端口配置
+
+建议应用监听端口保持为：
+
+```text
+8000
+```
+
+`1Panel` 网站反向代理继续转发到：
+
+```text
+127.0.0.1:8000
+```
+
+一般不需要额外改业务代码里的端口。
+
+### 5. 推荐的 1Panel 填写方式
+
+如果你的 `Python 运行环境` 页面里有类似字段，可以这样填：
+
+- 运行目录：项目根目录
+- 安装命令：`pip install -r requirements.txt`
+- 启动命令：`gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app`
+- 监听端口：`8000`
+
+### 6. 常见问题
+
+如果仍然出现 `502` 或 `504`，优先检查：
+
+- Python 运行环境是否真的已经切换到 `gunicorn`
+- 当前工作目录是否为项目根目录，而不是 `scripts/`
+- `requirements.txt` 是否已经安装成功
+- `1Panel` 反向代理目标是否仍然是 `127.0.0.1:8000`
+- Python 运行环境日志里是否有报错或进程退出记录
+
+### 7. 当前仓库做过的线上优化
+
+为了减少 `1Panel` 下长时间运行后出现 `504` 的概率，当前仓库已经额外做了两件事：
+
+- 新增 `wsgi.py` 作为生产入口，供 `gunicorn` 直接启动
+- 网站读取路径加入短时运行时缓存，保存数据后会自动失效，减少普通页面反复整库校验造成的阻塞
+
 ### 网站数据说明
 
 - 主数据库文件：`data/werewolf_stats.db`

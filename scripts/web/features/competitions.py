@@ -630,40 +630,41 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
     ai_season_actions = ""
     ai_season_admin_editor = ""
-    if selected_competition and selected_season and is_admin_user(ctx.current_user):
-        if ai_configured:
-            ai_season_actions = f"""
-            <form method="post" action="/competitions" class="m-0">
-              <input type="hidden" name="action" value="generate_ai_season_summary">
-              <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
-              <input type="hidden" name="season_name" value="{escape(selected_season)}">
-              <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
-              <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
-              <button type="submit" class="btn btn-dark">{'重生成 AI 赛季总结' if ai_season_summary else '生成 AI 赛季总结'}</button>
-            </form>
-            """
-        else:
-            ai_season_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
-        if ai_season_summary:
-            ai_season_admin_editor = f"""
-            <div class="form-panel p-3 p-lg-4 mt-4">
-              <h3 class="h5 mb-2">管理员编辑总结</h3>
-              <p class="section-copy mb-3">可以直接修改当前赛季总结正文。保存后会立即覆盖展示内容。</p>
-              <form method="post" action="/competitions">
-                <input type="hidden" name="action" value="save_ai_season_summary">
-                <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
-                <input type="hidden" name="season_name" value="{escape(selected_season)}">
-                <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
-                <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
-                <div class="mb-3">
-                  <textarea class="form-control" name="summary_content" rows="14">{escape(ai_season_summary.get('content') or '')}</textarea>
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                  <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
-                </div>
-              </form>
+    if selected_competition and selected_season and ai_configured and (
+        not ai_season_summary or is_admin_user(ctx.current_user)
+    ):
+        ai_season_actions = f"""
+        <form method="post" action="/competitions" class="m-0">
+          <input type="hidden" name="action" value="generate_ai_season_summary">
+          <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
+          <input type="hidden" name="season_name" value="{escape(selected_season)}">
+          <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
+          <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
+          <button type="submit" class="btn btn-dark">{'重生成 AI 赛季总结' if ai_season_summary else '生成 AI 赛季总结'}</button>
+        </form>
+        """
+    elif selected_competition and selected_season and not ai_configured and is_admin_user(ctx.current_user):
+        ai_season_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+    if selected_competition and selected_season and is_admin_user(ctx.current_user) and ai_season_summary:
+        ai_season_admin_editor = f"""
+        <div class="form-panel p-3 p-lg-4 mt-4">
+          <h3 class="h5 mb-2">管理员编辑总结</h3>
+          <p class="section-copy mb-3">可以直接修改当前赛季总结正文。保存后会立即覆盖展示内容。</p>
+          <form method="post" action="/competitions">
+            <input type="hidden" name="action" value="save_ai_season_summary">
+            <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
+            <input type="hidden" name="season_name" value="{escape(selected_season)}">
+            <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
+            <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
+            <div class="mb-3">
+              <textarea class="form-control" name="summary_content" rows="14">{escape(ai_season_summary.get('content') or '')}</textarea>
             </div>
-            """
+            <div class="d-flex flex-wrap gap-2">
+              <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
+            </div>
+          </form>
+        </div>
+        """
     ai_season_summary_panel = ""
     if selected_season:
         ai_season_summary_panel = (
@@ -687,7 +688,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
                 <div>
                   <h2 class="section-title mb-2">AI 赛季总结</h2>
-                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成赛季总结。')}</p>
+                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成赛季总结。')}</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">{ai_season_actions}</div>
               </div>
@@ -744,17 +745,7 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
 
 
 def render_ai_daily_brief_html(content: str) -> str:
-    paragraphs = [
-        paragraph.strip()
-        for paragraph in str(content or "").replace("\r\n", "\n").split("\n\n")
-        if paragraph.strip()
-    ]
-    if not paragraphs:
-        return '<div class="text-secondary">AI 日报暂时没有可展示的正文。</div>'
-    return "".join(
-        f'<p class="mb-3">{escape(paragraph).replace("\\n", "<br>")}</p>'
-        for paragraph in paragraphs
-    )
+    return legacy.render_ai_daily_brief_html(content)
 
 
 def build_ai_match_day_prompt(
@@ -1161,32 +1152,31 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
     ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
     ai_actions = ""
     ai_report_admin_editor = ""
-    if is_admin_user(ctx.current_user):
-        if ai_configured:
-            ai_actions = f"""
-            <form method="post" action="{escape(build_match_day_path(played_on, next_path))}" class="m-0">
-              <input type="hidden" name="action" value="generate_ai_daily_brief">
-              <button type="submit" class="btn btn-dark">{'重生成 AI 日报' if ai_report else '生成 AI 日报'}</button>
-            </form>
-            """
-        else:
-            ai_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
-        if ai_report:
-            ai_report_admin_editor = f"""
-            <div class="form-panel p-3 p-lg-4 mt-4">
-              <h3 class="h5 mb-2">管理员编辑日报</h3>
-              <p class="section-copy mb-3">可以直接修改当前日报正文。保存后会立即覆盖展示内容。</p>
-              <form method="post" action="{escape(build_match_day_path(played_on, next_path))}">
-                <input type="hidden" name="action" value="save_ai_daily_brief">
-                <div class="mb-3">
-                  <textarea class="form-control" name="report_content" rows="12">{escape(ai_report.get('content') or '')}</textarea>
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                  <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
-                </div>
-              </form>
+    if ai_configured and (not ai_report or is_admin_user(ctx.current_user)):
+        ai_actions = f"""
+        <form method="post" action="{escape(build_match_day_path(played_on, next_path))}" class="m-0">
+          <input type="hidden" name="action" value="generate_ai_daily_brief">
+          <button type="submit" class="btn btn-dark">{'重生成 AI 日报' if ai_report else '生成 AI 日报'}</button>
+        </form>
+        """
+    elif not ai_configured and is_admin_user(ctx.current_user):
+        ai_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+    if is_admin_user(ctx.current_user) and ai_report:
+        ai_report_admin_editor = f"""
+        <div class="form-panel p-3 p-lg-4 mt-4">
+          <h3 class="h5 mb-2">管理员编辑日报</h3>
+          <p class="section-copy mb-3">可以直接修改当前日报正文。保存后会立即覆盖展示内容。</p>
+          <form method="post" action="{escape(build_match_day_path(played_on, next_path))}">
+            <input type="hidden" name="action" value="save_ai_daily_brief">
+            <div class="mb-3">
+              <textarea class="form-control" name="report_content" rows="12">{escape(ai_report.get('content') or '')}</textarea>
             </div>
-            """
+            <div class="d-flex flex-wrap gap-2">
+              <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
+            </div>
+          </form>
+        </div>
+        """
     ai_report_panel = (
         f"""
         <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -1204,15 +1194,15 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
         """
         if ai_report
         else f"""
-        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
-            <div>
-              <h2 class="section-title mb-2">AI 比赛日报</h2>
-              <p class="section-copy mb-0">{escape('当前还没有生成日报。' if ai_configured else f'当前还没有配置 AI 接口。{("已保存 Key " + mask_api_key(ai_settings.get("api_key") or "")) if ai_settings.get("api_key") else ""}')}</p>
-            </div>
-            <div class="d-flex flex-wrap gap-2">{ai_actions}</div>
-          </div>
-        </section>
+            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+                <div>
+                  <h2 class="section-title mb-2">AI 比赛日报</h2>
+                  <p class="section-copy mb-0">{escape('当前还没有生成日报，首次生成对所有访客开放。' if ai_configured else f'当前还没有配置 AI 接口。{("已保存 Key " + mask_api_key(ai_settings.get("api_key") or "")) if ai_settings.get("api_key") else ""}')}</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">{ai_actions}</div>
+              </div>
+            </section>
         """
     )
     body = f"""
@@ -1257,12 +1247,11 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", get_match_day_page_with_alert(ctx, played_on))
 
-    guard = require_admin(ctx, start_response)
-    if guard is not None:
-        return guard
-
     action = form_value(ctx.form, "action").strip()
     if action == "save_ai_daily_brief":
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
         report_content = form_value(ctx.form, "report_content").strip()
         if not report_content:
             return start_response_html(
@@ -1286,6 +1275,14 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
             start_response,
             "200 OK",
             get_match_day_page_with_alert(ctx, played_on, alert="未识别的操作。"),
+        )
+
+    existing_report = load_ai_match_day_report(played_on)
+    if existing_report and not is_admin_user(ctx.current_user):
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_match_day_page_with_alert(ctx, played_on, alert="当前日报已生成，只有管理员可以重生成。"),
         )
 
     if not is_valid_match_day(played_on):
@@ -1352,10 +1349,6 @@ def handle_competitions(ctx: RequestContext, start_response):
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
 
-    guard = require_login(ctx, start_response)
-    if guard is not None:
-        return guard
-
     action = form_value(ctx.form, "action").strip()
     if action == "save_ai_season_summary":
         admin_guard = require_admin(ctx, start_response)
@@ -1401,10 +1394,6 @@ def handle_competitions(ctx: RequestContext, start_response):
         )
 
     if action == "generate_ai_season_summary":
-        admin_guard = require_admin(ctx, start_response)
-        if admin_guard is not None:
-            return admin_guard
-
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season_name").strip()
         region_name = form_value(ctx.form, "region_name").strip()
@@ -1429,6 +1418,13 @@ def handle_competitions(ctx: RequestContext, start_response):
                 start_response,
                 "200 OK",
                 get_competitions_page(page_ctx, alert="请先进入具体赛季页，再生成 AI 赛季总结。"),
+            )
+        existing_summary = load_ai_season_summary(competition_name, season_name)
+        if existing_summary and not is_admin_user(ctx.current_user):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_competitions_page(page_ctx, alert="当前赛季总结已生成，只有管理员可以重生成。"),
             )
 
         data = load_validated_data()

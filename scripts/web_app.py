@@ -157,8 +157,8 @@ DEFAULT_MATCH_DAY_SYSTEM_PROMPT = (
 DEFAULT_MATCH_DAY_USER_PROMPT = """请基于下面的真实比赛数据，为 {played_on} 生成一份中文赛事日报。
 要求：
 1. 只能基于给定数据写，不要编造未提供的事实。
-2. 输出纯文本中文，不要 Markdown 标题，不要代码块。
-3. 结构按“总览一句 + 3到6条亮点 + 收尾一句”组织。
+2. 输出 Markdown 格式中文，可使用二级或三级标题、无序列表、加粗，不要输出代码块。
+3. 结构按“## 今日总览 + ## 今日亮点 + ## 结语”组织，其中亮点部分写 3 到 6 条列表。
 4. 可以提炼当天的强势战队、亮眼队员、关键比赛和积分走势。
 5. 语气像赛事官号日报，简洁但有信息量。
 
@@ -180,8 +180,8 @@ DEFAULT_SEASON_SUMMARY_SYSTEM_PROMPT = (
 DEFAULT_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实赛季数据，为 {competition_name} 的 {season_name} 输出一份中文赛季总结。
 要求：
 1. 只能依据给定数据总结，不要编造队伍故事、场外信息或未提供的事件。
-2. 输出纯文本中文，不要 Markdown 标题，不要代码块。
-3. 结构按“赛季总览一句 + 4到8条重点总结 + 收尾一句”组织。
+2. 输出 Markdown 格式中文，可使用二级或三级标题、无序列表、加粗，不要输出代码块。
+3. 结构按“## 赛季总览 + ## 重点总结 + ## 收尾”组织，其中重点总结部分写 4 到 8 条列表。
 4. 可以总结赛季走势、强势战队、亮眼选手、阶段变化和 MVP 亮点。
 5. 语气像官方赛季回顾，简洁、准确、有概括力。
 
@@ -211,8 +211,8 @@ AI_COMPLETION_RETRY_DELAY_SECONDS = 1.0
 DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实选手赛季数据，为 {player_name} 输出一份中文个人赛季总结。
 要求：
 1. 只能依据给定数据总结，不要编造人物故事、场外信息或未提供的比赛细节。
-2. 输出纯文本中文，不要 Markdown 标题，不要代码块。
-3. 结构按“赛季定位一句 + 3到6条表现总结 + 收尾一句”组织。
+2. 输出 Markdown 格式中文，可使用二级或三级标题、无序列表、加粗，不要输出代码块。
+3. 结构按“## 赛季定位 + ## 表现总结 + ## 收尾点评”组织，其中表现总结部分写 3 到 6 条列表。
 4. 可以总结这名选手的赛季定位、战绩走势、角色分布、关键场次和相对排名。
 5. 语气像官方选手观察，简洁、准确、有概括力。
 
@@ -619,18 +619,138 @@ def request_openai_compatible_completion(
     raise ValueError("AI 接口请求失败，请稍后重试。")
 
 
-def render_ai_daily_brief_html(content: str) -> str:
-    paragraphs = [
-        paragraph.strip()
-        for paragraph in str(content or "").replace("\r\n", "\n").split("\n\n")
-        if paragraph.strip()
-    ]
-    if not paragraphs:
+def _is_safe_markdown_href(href: str) -> bool:
+    normalized = str(href or "").strip().lower()
+    return normalized.startswith(("http://", "https://", "/"))
+
+
+def render_markdown_inline(text: str) -> str:
+    raw_text = str(text or "")
+    placeholders: dict[str, str] = {}
+
+    def store_placeholder(html: str) -> str:
+        token = f"@@HTML{len(placeholders)}@@"
+        placeholders[token] = html
+        return token
+
+    def replace_code(match: re.Match[str]) -> str:
+        return store_placeholder(f"<code>{escape(match.group(1))}</code>")
+
+    def replace_link(match: re.Match[str]) -> str:
+        label = match.group(1)
+        href = match.group(2).strip()
+        if not _is_safe_markdown_href(href):
+            return match.group(0)
+        return store_placeholder(
+            f'<a href="{escape(href, quote=True)}" target="_blank" rel="noopener noreferrer">{escape(label)}</a>'
+        )
+
+    processed = re.sub(r"`([^`\n]+)`", replace_code, raw_text)
+    processed = re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", replace_link, processed)
+    rendered = escape(processed)
+    rendered = re.sub(r"(\*\*|__)(.+?)\1", r"<strong>\2</strong>", rendered)
+    rendered = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", rendered)
+    rendered = re.sub(r"(?<!_)_([^_\n]+)_(?!_)", r"<em>\1</em>", rendered)
+    for token, html in placeholders.items():
+        rendered = rendered.replace(token, html)
+    return rendered
+
+
+def render_markdown_html(content: str) -> str:
+    normalized = str(content or "").replace("\r\n", "\n").strip()
+    if not normalized:
         return '<div class="text-secondary">AI 日报暂时没有可展示的正文。</div>'
-    return "".join(
-        f'<p class="mb-3">{escape(paragraph).replace("\\n", "<br>")}</p>'
-        for paragraph in paragraphs
-    )
+
+    lines = normalized.split("\n")
+    blocks: list[str] = []
+    index = 0
+    total_lines = len(lines)
+
+    while index < total_lines:
+        line = lines[index]
+        stripped = line.strip()
+        if not stripped:
+            index += 1
+            continue
+
+        if stripped.startswith("```"):
+            code_lines: list[str] = []
+            index += 1
+            while index < total_lines and not lines[index].strip().startswith("```"):
+                code_lines.append(lines[index])
+                index += 1
+            if index < total_lines:
+                index += 1
+            blocks.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
+            continue
+
+        heading_match = re.match(r"^(#{1,6})\s+(.+)$", stripped)
+        if heading_match:
+            level = len(heading_match.group(1))
+            blocks.append(
+                f"<h{level}>{render_markdown_inline(heading_match.group(2).strip())}</h{level}>"
+            )
+            index += 1
+            continue
+
+        if re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", stripped):
+            blocks.append("<hr>")
+            index += 1
+            continue
+
+        if stripped.startswith(">"):
+            quote_lines: list[str] = []
+            while index < total_lines:
+                current = lines[index].strip()
+                if not current.startswith(">"):
+                    break
+                quote_lines.append(current[1:].lstrip())
+                index += 1
+            quote_html = "<br>".join(render_markdown_inline(item) for item in quote_lines)
+            blocks.append(f"<blockquote><p>{quote_html}</p></blockquote>")
+            continue
+
+        unordered_match = re.match(r"^[-*]\s+(.+)$", stripped)
+        ordered_match = re.match(r"^\d+\.\s+(.+)$", stripped)
+        if unordered_match or ordered_match:
+            list_tag = "ul" if unordered_match else "ol"
+            items: list[str] = []
+            pattern = r"^[-*]\s+(.+)$" if list_tag == "ul" else r"^\d+\.\s+(.+)$"
+            while index < total_lines:
+                current = lines[index].strip()
+                match = re.match(pattern, current)
+                if not match:
+                    break
+                items.append(f"<li>{render_markdown_inline(match.group(1).strip())}</li>")
+                index += 1
+            blocks.append(f"<{list_tag}>{''.join(items)}</{list_tag}>")
+            continue
+
+        paragraph_lines = [line.strip()]
+        index += 1
+        while index < total_lines:
+            current = lines[index]
+            current_stripped = current.strip()
+            if not current_stripped:
+                index += 1
+                break
+            if (
+                current_stripped.startswith(("```", ">", "#"))
+                or re.match(r"^[-*]\s+.+$", current_stripped)
+                or re.match(r"^\d+\.\s+.+$", current_stripped)
+                or re.fullmatch(r"(-{3,}|\*{3,}|_{3,})", current_stripped)
+            ):
+                break
+            paragraph_lines.append(current.strip())
+            index += 1
+        paragraph_html = "<br>".join(render_markdown_inline(item) for item in paragraph_lines)
+        blocks.append(f"<p>{paragraph_html}</p>")
+
+    return "".join(blocks) or '<div class="text-secondary">AI 日报暂时没有可展示的正文。</div>'
+
+
+def render_ai_daily_brief_html(content: str) -> str:
+    return render_markdown_html(content)
 
 
 def get_database_mtime_ns() -> int | None:
@@ -1831,6 +1951,71 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .editorial-copy p:last-child {{
         margin-bottom: 0;
+      }}
+      .editorial-copy h1,
+      .editorial-copy h2,
+      .editorial-copy h3,
+      .editorial-copy h4,
+      .editorial-copy h5,
+      .editorial-copy h6 {{
+        margin: 1.4rem 0 0.8rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        letter-spacing: -0.04em;
+        line-height: 1.3;
+      }}
+      .editorial-copy h1:first-child,
+      .editorial-copy h2:first-child,
+      .editorial-copy h3:first-child,
+      .editorial-copy h4:first-child,
+      .editorial-copy h5:first-child,
+      .editorial-copy h6:first-child {{
+        margin-top: 0;
+      }}
+      .editorial-copy ul,
+      .editorial-copy ol {{
+        padding-left: 1.4rem;
+        margin: 0 0 1rem;
+      }}
+      .editorial-copy li {{
+        margin-bottom: 0.35rem;
+      }}
+      .editorial-copy blockquote {{
+        margin: 0 0 1rem;
+        padding: 0.85rem 1rem;
+        border-left: 4px solid rgba(176, 94, 53, 0.35);
+        background: rgba(176, 94, 53, 0.06);
+        border-radius: 0 14px 14px 0;
+      }}
+      .editorial-copy blockquote p {{
+        margin-bottom: 0;
+      }}
+      .editorial-copy code {{
+        padding: 0.12rem 0.35rem;
+        border-radius: 0.35rem;
+        background: rgba(15, 23, 42, 0.08);
+        font-size: 0.92em;
+      }}
+      .editorial-copy pre {{
+        margin: 0 0 1rem;
+        padding: 1rem;
+        border-radius: 1rem;
+        background: rgba(15, 23, 42, 0.92);
+        color: rgba(248, 250, 252, 0.96);
+        overflow-x: auto;
+      }}
+      .editorial-copy pre code {{
+        padding: 0;
+        background: transparent;
+        color: inherit;
+      }}
+      .editorial-copy a {{
+        color: var(--accent-dark);
+        text-decoration-thickness: 0.08em;
+      }}
+      .editorial-copy hr {{
+        margin: 1.25rem 0;
+        border: 0;
+        border-top: 1px solid rgba(15, 23, 42, 0.12);
       }}
       .card-kicker {{
         font-size: 0.74rem;

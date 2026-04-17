@@ -22,12 +22,17 @@ get_user_region_label = legacy.get_user_region_label
 hash_password = legacy.hash_password
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
+load_ai_daily_brief_settings = legacy.load_ai_daily_brief_settings
+load_ai_prompt_templates = legacy.load_ai_prompt_templates
 load_users = legacy.load_users
+mask_api_key = legacy.mask_api_key
 normalize_permission_keys = legacy.normalize_permission_keys
 normalize_user_location = legacy.normalize_user_location
 option_tags = legacy.option_tags
 require_admin = legacy.require_admin
 revoke_user_sessions = legacy.revoke_user_sessions
+save_ai_daily_brief_settings = legacy.save_ai_daily_brief_settings
+save_ai_prompt_templates = legacy.save_ai_prompt_templates
 save_users = legacy.save_users
 start_response_html = legacy.start_response_html
 validate_account_form = legacy.validate_account_form
@@ -40,6 +45,8 @@ def get_accounts_page(
     alert: str = "",
     form_values: dict[str, str] | None = None,
 ) -> str:
+    ai_settings = load_ai_daily_brief_settings()
+    ai_prompt_templates = load_ai_prompt_templates()
     current_form = form_values or {
         "editing_username": "",
         "username": "",
@@ -48,6 +55,19 @@ def get_accounts_page(
         "province_name": DEFAULT_PROVINCE_NAME,
         "region_name": "广州市",
         "manager_scope_keys": [],
+    }
+    ai_form = {
+        "base_url": str((form_values or {}).get("ai_base_url") or ai_settings.get("base_url") or "").strip(),
+        "api_key": "",
+        "model": str((form_values or {}).get("ai_model") or ai_settings.get("model") or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+    ai_prompt_form = {
+        "match_day_system_prompt": str((form_values or {}).get("match_day_system_prompt") or ai_prompt_templates.get("match_day_system_prompt") or "").strip(),
+        "match_day_user_prompt": str((form_values or {}).get("match_day_user_prompt") or ai_prompt_templates.get("match_day_user_prompt") or "").strip(),
+        "season_summary_system_prompt": str((form_values or {}).get("season_summary_system_prompt") or ai_prompt_templates.get("season_summary_system_prompt") or "").strip(),
+        "season_summary_user_prompt": str((form_values or {}).get("season_summary_user_prompt") or ai_prompt_templates.get("season_summary_user_prompt") or "").strip(),
+        "player_season_summary_system_prompt": str((form_values or {}).get("player_season_summary_system_prompt") or ai_prompt_templates.get("player_season_summary_system_prompt") or "").strip(),
+        "player_season_summary_user_prompt": str((form_values or {}).get("player_season_summary_user_prompt") or ai_prompt_templates.get("player_season_summary_user_prompt") or "").strip(),
     }
     users = load_users()
     data = legacy.load_validated_data()
@@ -165,12 +185,107 @@ def get_accounts_page(
         if editing_account
         else ""
     )
+    ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
+    ai_status_text = (
+        f'已启用，当前地址 {escape(ai_settings["base_url"])}，模型 {escape(ai_settings["model"])}，Key {escape(mask_api_key(ai_settings["api_key"]))}'
+        if ai_configured
+        else "尚未配置。配置完成后，比赛日页面、赛季页和选手页都会出现对应的 AI 生成按钮。"
+    )
 
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">管理员后台</div>
       <h1 class="display-6 fw-semibold mb-3">账号管理</h1>
       <p class="mb-0 opacity-75">这里只有管理员可以访问，用来新增账号和删除账号。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">AI 比赛日报配置</h2>
+          <p class="section-copy mb-0">这里填写兼容 OpenAI 协议的接口配置。保存后，比赛日页面会支持生成或重生成 AI 日报。</p>
+        </div>
+        <span class="chip">{'已配置' if ai_configured else '未配置'}</span>
+      </div>
+      <div class="form-panel p-3 p-lg-4">
+        <div class="small text-secondary mb-4">{ai_status_text}</div>
+        <form method="post" action="/accounts">
+          <input type="hidden" name="action" value="save_ai_daily_brief_settings">
+          <div class="row g-3">
+            <div class="col-12 col-xl-5">
+              <label class="form-label">Base URL</label>
+              <input class="form-control" name="ai_base_url" value="{escape(ai_form['base_url'])}" placeholder="例如 https://api.openai.com/v1">
+              <div class="small text-secondary mt-2">支持直接填写接口根地址，也支持直接填写到 `/chat/completions`。</div>
+            </div>
+            <div class="col-12 col-xl-4">
+              <label class="form-label">模型名称</label>
+              <input class="form-control" name="ai_model" value="{escape(ai_form['model'])}" placeholder="{escape(legacy.DEFAULT_AI_DAILY_BRIEF_MODEL)}">
+              <div class="small text-secondary mt-2">多数兼容接口都需要明确指定模型，默认值可直接用于 OpenAI 官方接口。</div>
+            </div>
+            <div class="col-12 col-xl-3">
+              <label class="form-label">API Key</label>
+              <input class="form-control" name="ai_api_key" type="password" autocomplete="off" placeholder="{escape('留空则保持当前 Key' if ai_settings.get('api_key') else '输入新的 API Key')}">
+              <div class="small text-secondary mt-2">为安全起见，这里不会回显已保存的 Key。</div>
+            </div>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <button type="submit" class="btn btn-dark">保存 AI 配置</button>
+          </div>
+        </form>
+      </div>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">AI 提示词模板</h2>
+          <p class="section-copy mb-0">这里可以分别修改比赛日报、赛季总结和选手赛季总结的系统提示词、用户提示词模板。用户模板支持占位符。</p>
+        </div>
+      </div>
+      <div class="form-panel p-3 p-lg-4">
+        <form method="post" action="/accounts">
+          <input type="hidden" name="action" value="save_ai_prompt_templates">
+          <div class="row g-4">
+            <div class="col-12">
+              <h3 class="h5 mb-3">比赛日报</h3>
+            </div>
+            <div class="col-12 col-xl-4">
+              <label class="form-label">系统提示词</label>
+              <textarea class="form-control" name="match_day_system_prompt" rows="8">{escape(ai_prompt_form['match_day_system_prompt'])}</textarea>
+            </div>
+            <div class="col-12 col-xl-8">
+              <label class="form-label">用户提示词模板</label>
+              <textarea class="form-control" name="match_day_user_prompt" rows="12">{escape(ai_prompt_form['match_day_user_prompt'])}</textarea>
+              <div class="small text-secondary mt-2">可用占位符：`{"{played_on}"}`、`{"{series_count}"}`、`{"{match_count}"}`、`{"{team_board}"}`、`{"{player_board}"}`、`{"{match_details}"}`。</div>
+            </div>
+            <div class="col-12">
+              <h3 class="h5 mb-3">赛季总结</h3>
+            </div>
+            <div class="col-12 col-xl-4">
+              <label class="form-label">系统提示词</label>
+              <textarea class="form-control" name="season_summary_system_prompt" rows="8">{escape(ai_prompt_form['season_summary_system_prompt'])}</textarea>
+            </div>
+            <div class="col-12 col-xl-8">
+              <label class="form-label">用户提示词模板</label>
+              <textarea class="form-control" name="season_summary_user_prompt" rows="14">{escape(ai_prompt_form['season_summary_user_prompt'])}</textarea>
+              <div class="small text-secondary mt-2">可用占位符：`{"{competition_name}"}`、`{"{season_name}"}`、`{"{match_count}"}`、`{"{team_count}"}`、`{"{player_count}"}`、`{"{team_board}"}`、`{"{player_board}"}`、`{"{mvp_board}"}`、`{"{stage_summary}"}`、`{"{match_day_distribution}"}`。</div>
+            </div>
+            <div class="col-12">
+              <h3 class="h5 mb-3">选手赛季总结</h3>
+            </div>
+            <div class="col-12 col-xl-4">
+              <label class="form-label">系统提示词</label>
+              <textarea class="form-control" name="player_season_summary_system_prompt" rows="8">{escape(ai_prompt_form['player_season_summary_system_prompt'])}</textarea>
+            </div>
+            <div class="col-12 col-xl-8">
+              <label class="form-label">用户提示词模板</label>
+              <textarea class="form-control" name="player_season_summary_user_prompt" rows="16">{escape(ai_prompt_form['player_season_summary_user_prompt'])}</textarea>
+              <div class="small text-secondary mt-2">可用占位符：`{"{player_name}"}`、`{"{team_name}"}`、`{"{competition_name}"}`、`{"{season_name}"}`、`{"{rank}"}`、`{"{games_played}"}`、`{"{record}"}`、`{"{overall_win_rate}"}`、`{"{villagers_win_rate}"}`、`{"{werewolves_win_rate}"}`、`{"{points_total}"}`、`{"{average_points}"}`、`{"{stance_summary}"}`、`{"{role_summary}"}`、`{"{season_player_board}"}`、`{"{season_team_board}"}`、`{"{recent_matches}"}`。</div>
+            </div>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <button type="submit" class="btn btn-dark">保存提示词模板</button>
+          </div>
+        </form>
+      </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="row g-4">
@@ -377,6 +492,96 @@ def handle_accounts(ctx: RequestContext, start_response):
 
     action = form_value(ctx.form, "action")
     users = load_users()
+
+    if action == "save_ai_daily_brief_settings":
+        base_url = form_value(ctx.form, "ai_base_url").strip()
+        model = form_value(ctx.form, "ai_model", legacy.DEFAULT_AI_DAILY_BRIEF_MODEL).strip()
+        api_key = form_value(ctx.form, "ai_api_key").strip()
+        existing_settings = load_ai_daily_brief_settings()
+        if not base_url:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_accounts_page(
+                    ctx,
+                    alert="请先填写 AI 接口 Base URL。",
+                    form_values={
+                        "ai_base_url": base_url,
+                        "ai_model": model,
+                    },
+                ),
+            )
+        if not api_key and not existing_settings.get("api_key"):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_accounts_page(
+                    ctx,
+                    alert="请先填写 AI 接口 API Key。",
+                    form_values={
+                        "ai_base_url": base_url,
+                        "ai_model": model,
+                    },
+                ),
+            )
+        save_ai_daily_brief_settings(
+            base_url=base_url,
+            api_key=api_key,
+            model=model,
+            preserve_existing_api_key=True,
+        )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_accounts_page(ctx, alert="AI 比赛日报配置已保存。"),
+        )
+
+    if action == "save_ai_prompt_templates":
+        match_day_system_prompt = form_value(ctx.form, "match_day_system_prompt").strip()
+        match_day_user_prompt = form_value(ctx.form, "match_day_user_prompt").strip()
+        season_summary_system_prompt = form_value(ctx.form, "season_summary_system_prompt").strip()
+        season_summary_user_prompt = form_value(ctx.form, "season_summary_user_prompt").strip()
+        player_season_summary_system_prompt = form_value(ctx.form, "player_season_summary_system_prompt").strip()
+        player_season_summary_user_prompt = form_value(ctx.form, "player_season_summary_user_prompt").strip()
+        if not all(
+            [
+                match_day_system_prompt,
+                match_day_user_prompt,
+                season_summary_system_prompt,
+                season_summary_user_prompt,
+                player_season_summary_system_prompt,
+                player_season_summary_user_prompt,
+            ]
+        ):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_accounts_page(
+                    ctx,
+                    alert="六个提示词模板都需要填写。",
+                    form_values={
+                        "match_day_system_prompt": match_day_system_prompt,
+                        "match_day_user_prompt": match_day_user_prompt,
+                        "season_summary_system_prompt": season_summary_system_prompt,
+                        "season_summary_user_prompt": season_summary_user_prompt,
+                        "player_season_summary_system_prompt": player_season_summary_system_prompt,
+                        "player_season_summary_user_prompt": player_season_summary_user_prompt,
+                    },
+                ),
+            )
+        save_ai_prompt_templates(
+            match_day_system_prompt=match_day_system_prompt,
+            match_day_user_prompt=match_day_user_prompt,
+            season_summary_system_prompt=season_summary_system_prompt,
+            season_summary_user_prompt=season_summary_user_prompt,
+            player_season_summary_system_prompt=player_season_summary_system_prompt,
+            player_season_summary_user_prompt=player_season_summary_user_prompt,
+        )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_accounts_page(ctx, alert="AI 提示词模板已保存。"),
+        )
 
     if action == "create":
         username = form_value(ctx.form, "username").strip()

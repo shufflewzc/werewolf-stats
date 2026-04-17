@@ -15,6 +15,8 @@ import secrets
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesParser
@@ -65,9 +67,11 @@ from competition_meta import (
 from sqlite_store import (
     DB_PATH,
     load_membership_requests,
+    load_meta_value,
     load_users,
     save_matches as persist_matches,
     save_membership_requests,
+    save_meta_value,
     save_repository_data,
     save_users,
 )
@@ -125,6 +129,12 @@ PORT = int(os.getenv("PORT", "8000"))
 VALIDATED_DATA_CACHE_TTL_SECONDS = float(
     os.getenv("VALIDATED_DATA_CACHE_TTL_SECONDS", "5")
 )
+AI_DAILY_BRIEF_SETTINGS_KEY = "ai_daily_brief_settings"
+AI_DAILY_BRIEF_REPORT_KEY_PREFIX = "ai_daily_brief_report:"
+AI_SEASON_SUMMARY_KEY_PREFIX = "ai_season_summary:"
+AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX = "ai_player_season_summary:"
+AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
+DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 SESSIONS: dict[str, str] = {}
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
@@ -139,6 +149,90 @@ VALIDATED_DATA_CACHE: dict[str, Any] = {
     "cached_at": 0.0,
     "data": None,
 }
+
+DEFAULT_MATCH_DAY_SYSTEM_PROMPT = (
+    "你是一名狼人杀赛事内容编辑。"
+    "请把输入的真实比赛数据整理成适合站内发布的中文日报，禁止虚构。"
+)
+DEFAULT_MATCH_DAY_USER_PROMPT = """请基于下面的真实比赛数据，为 {played_on} 生成一份中文赛事日报。
+要求：
+1. 只能基于给定数据写，不要编造未提供的事实。
+2. 输出纯文本中文，不要 Markdown 标题，不要代码块。
+3. 结构按“总览一句 + 3到6条亮点 + 收尾一句”组织。
+4. 可以提炼当天的强势战队、亮眼队员、关键比赛和积分走势。
+5. 语气像赛事官号日报，简洁但有信息量。
+
+当天共有 {series_count} 个系列赛、{match_count} 场比赛。
+
+战队日榜：
+{team_board}
+
+队员日榜：
+{player_board}
+
+比赛明细：
+{match_details}
+"""
+DEFAULT_SEASON_SUMMARY_SYSTEM_PROMPT = (
+    "你是一名狼人杀赛事内容编辑。"
+    "请把输入的真实赛季数据整理成适合站内发布的中文赛季总结，禁止虚构。"
+)
+DEFAULT_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实赛季数据，为 {competition_name} 的 {season_name} 输出一份中文赛季总结。
+要求：
+1. 只能依据给定数据总结，不要编造队伍故事、场外信息或未提供的事件。
+2. 输出纯文本中文，不要 Markdown 标题，不要代码块。
+3. 结构按“赛季总览一句 + 4到8条重点总结 + 收尾一句”组织。
+4. 可以总结赛季走势、强势战队、亮眼选手、阶段变化和 MVP 亮点。
+5. 语气像官方赛季回顾，简洁、准确、有概括力。
+
+赛季基础信息：赛事 {competition_name}；赛季 {season_name}；已录入比赛 {match_count} 场；参赛战队 {team_count} 支；参赛队员 {player_count} 名。
+
+战队积分榜：
+{team_board}
+
+个人积分榜：
+{player_board}
+
+MVP 榜：
+{mvp_board}
+
+赛段摘要：
+{stage_summary}
+
+比赛日分布：
+{match_day_distribution}
+"""
+DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT = (
+    "你是一名狼人杀赛事内容编辑。"
+    "请把输入的真实选手赛季数据整理成适合站内发布的中文个人赛季总结，禁止虚构。"
+)
+AI_COMPLETION_MAX_RETRIES = 10
+AI_COMPLETION_RETRY_DELAY_SECONDS = 1.0
+DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实选手赛季数据，为 {player_name} 输出一份中文个人赛季总结。
+要求：
+1. 只能依据给定数据总结，不要编造人物故事、场外信息或未提供的比赛细节。
+2. 输出纯文本中文，不要 Markdown 标题，不要代码块。
+3. 结构按“赛季定位一句 + 3到6条表现总结 + 收尾一句”组织。
+4. 可以总结这名选手的赛季定位、战绩走势、角色分布、关键场次和相对排名。
+5. 语气像官方选手观察，简洁、准确、有概括力。
+
+选手基础信息：姓名 {player_name}；战队 {team_name}；赛事 {competition_name}；赛季 {season_name}；赛季排名 第 {rank} 名；出场 {games_played} 场；战绩 {record}；总胜率 {overall_win_rate}；好人胜率 {villagers_win_rate}；狼人胜率 {werewolves_win_rate}；总积分 {points_total}；场均得分 {average_points}。
+
+站边信息：
+{stance_summary}
+
+角色分布：
+{role_summary}
+
+选手所在赛季积分榜参考：
+{season_player_board}
+
+战队积分榜参考：
+{season_team_board}
+
+最近比赛记录：
+{recent_matches}
+"""
 
 
 @dataclass
@@ -169,6 +263,374 @@ def china_now_label() -> str:
 
 def china_today_label() -> str:
     return china_now().strftime("%Y-%m-%d")
+
+
+def normalize_openai_compatible_base_url(base_url: str) -> str:
+    normalized = str(base_url or "").strip().rstrip("/")
+    lowered = normalized.lower()
+    if lowered.endswith("/chat/completions"):
+        return normalized
+    if lowered.endswith("/v1"):
+        return normalized + "/chat/completions"
+    return normalized + "/v1/chat/completions"
+
+
+def load_ai_daily_brief_settings() -> dict[str, str]:
+    raw_value = load_meta_value(AI_DAILY_BRIEF_SETTINGS_KEY) or ""
+    if not raw_value.strip():
+        return {
+            "base_url": "",
+            "api_key": "",
+            "model": DEFAULT_AI_DAILY_BRIEF_MODEL,
+        }
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {
+            "base_url": "",
+            "api_key": "",
+            "model": DEFAULT_AI_DAILY_BRIEF_MODEL,
+        }
+    return {
+        "base_url": str(parsed.get("base_url") or "").strip(),
+        "api_key": str(parsed.get("api_key") or "").strip(),
+        "model": str(parsed.get("model") or DEFAULT_AI_DAILY_BRIEF_MODEL).strip()
+        or DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+
+
+def save_ai_daily_brief_settings(
+    base_url: str,
+    api_key: str,
+    model: str,
+    preserve_existing_api_key: bool = True,
+) -> None:
+    existing_settings = load_ai_daily_brief_settings()
+    normalized_api_key = str(api_key or "").strip()
+    if preserve_existing_api_key and not normalized_api_key:
+        normalized_api_key = existing_settings.get("api_key", "")
+    payload = {
+        "base_url": str(base_url or "").strip(),
+        "api_key": normalized_api_key,
+        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+    save_meta_value(AI_DAILY_BRIEF_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
+
+
+def load_ai_prompt_templates() -> dict[str, str]:
+    raw_value = load_meta_value(AI_PROMPT_TEMPLATES_KEY) or ""
+    default_payload = {
+        "match_day_system_prompt": DEFAULT_MATCH_DAY_SYSTEM_PROMPT,
+        "match_day_user_prompt": DEFAULT_MATCH_DAY_USER_PROMPT,
+        "season_summary_system_prompt": DEFAULT_SEASON_SUMMARY_SYSTEM_PROMPT,
+        "season_summary_user_prompt": DEFAULT_SEASON_SUMMARY_USER_PROMPT,
+        "player_season_summary_system_prompt": DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT,
+        "player_season_summary_user_prompt": DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT,
+    }
+    if not raw_value.strip():
+        return default_payload
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return default_payload
+    return {
+        key: str(parsed.get(key) or default_value).strip() or default_value
+        for key, default_value in default_payload.items()
+    }
+
+
+def save_ai_prompt_templates(
+    match_day_system_prompt: str,
+    match_day_user_prompt: str,
+    season_summary_system_prompt: str,
+    season_summary_user_prompt: str,
+    player_season_summary_system_prompt: str,
+    player_season_summary_user_prompt: str,
+) -> None:
+    payload = {
+        "match_day_system_prompt": str(match_day_system_prompt or "").strip()
+        or DEFAULT_MATCH_DAY_SYSTEM_PROMPT,
+        "match_day_user_prompt": str(match_day_user_prompt or "").strip()
+        or DEFAULT_MATCH_DAY_USER_PROMPT,
+        "season_summary_system_prompt": str(season_summary_system_prompt or "").strip()
+        or DEFAULT_SEASON_SUMMARY_SYSTEM_PROMPT,
+        "season_summary_user_prompt": str(season_summary_user_prompt or "").strip()
+        or DEFAULT_SEASON_SUMMARY_USER_PROMPT,
+        "player_season_summary_system_prompt": str(player_season_summary_system_prompt or "").strip()
+        or DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT,
+        "player_season_summary_user_prompt": str(player_season_summary_user_prompt or "").strip()
+        or DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT,
+    }
+    save_meta_value(AI_PROMPT_TEMPLATES_KEY, json.dumps(payload, ensure_ascii=False))
+
+
+def render_ai_prompt_template(
+    template: str,
+    values: dict[str, Any],
+    template_label: str,
+) -> str:
+    try:
+        return str(template).format_map(
+            {key: str(value) for key, value in values.items()}
+        )
+    except KeyError as exc:
+        missing_key = str(exc).strip("'")
+        raise ValueError(f"{template_label} 缺少占位符参数：{missing_key}") from exc
+
+
+def mask_api_key(value: str) -> str:
+    normalized = str(value or "").strip()
+    if not normalized:
+        return ""
+    if len(normalized) <= 8:
+        return "*" * len(normalized)
+    return normalized[:4] + "*" * (len(normalized) - 8) + normalized[-4:]
+
+
+def load_ai_match_day_report(played_on: str) -> dict[str, str] | None:
+    raw_value = load_meta_value(AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on) or ""
+    if not raw_value.strip():
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {
+            "content": raw_value,
+            "generated_at": "",
+            "model": "",
+        }
+    return {
+        "content": str(parsed.get("content") or "").strip(),
+        "generated_at": str(parsed.get("generated_at") or "").strip(),
+        "model": str(parsed.get("model") or "").strip(),
+    }
+
+
+def save_ai_match_day_report(
+    played_on: str,
+    content: str,
+    model: str,
+    generated_at: str | None = None,
+) -> None:
+    payload = {
+        "content": str(content or "").strip(),
+        "generated_at": str(generated_at or china_now_label()).strip(),
+        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+    save_meta_value(
+        AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on,
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+def load_ai_season_summary(
+    competition_name: str,
+    season_name: str,
+) -> dict[str, str] | None:
+    raw_value = load_meta_value(
+        AI_SEASON_SUMMARY_KEY_PREFIX + competition_name + ":" + season_name
+    ) or ""
+    if not raw_value.strip():
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {
+            "content": raw_value,
+            "generated_at": "",
+            "model": "",
+        }
+    return {
+        "content": str(parsed.get("content") or "").strip(),
+        "generated_at": str(parsed.get("generated_at") or "").strip(),
+        "model": str(parsed.get("model") or "").strip(),
+    }
+
+
+def save_ai_season_summary(
+    competition_name: str,
+    season_name: str,
+    content: str,
+    model: str,
+    generated_at: str | None = None,
+) -> None:
+    payload = {
+        "content": str(content or "").strip(),
+        "generated_at": str(generated_at or china_now_label()).strip(),
+        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+    save_meta_value(
+        AI_SEASON_SUMMARY_KEY_PREFIX + competition_name + ":" + season_name,
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+def load_ai_player_season_summary(
+    player_id: str,
+    competition_name: str,
+    season_name: str,
+) -> dict[str, str] | None:
+    raw_value = load_meta_value(
+        AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX
+        + player_id
+        + ":"
+        + competition_name
+        + ":"
+        + season_name
+    ) or ""
+    if not raw_value.strip():
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {
+            "content": raw_value,
+            "generated_at": "",
+            "model": "",
+        }
+    return {
+        "content": str(parsed.get("content") or "").strip(),
+        "generated_at": str(parsed.get("generated_at") or "").strip(),
+        "model": str(parsed.get("model") or "").strip(),
+    }
+
+
+def save_ai_player_season_summary(
+    player_id: str,
+    competition_name: str,
+    season_name: str,
+    content: str,
+    model: str,
+    generated_at: str | None = None,
+) -> None:
+    payload = {
+        "content": str(content or "").strip(),
+        "generated_at": str(generated_at or china_now_label()).strip(),
+        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+    save_meta_value(
+        AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX
+        + player_id
+        + ":"
+        + competition_name
+        + ":"
+        + season_name,
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+def extract_openai_compatible_text(response_payload: dict[str, Any]) -> str:
+    output_text = str(response_payload.get("output_text") or "").strip()
+    if output_text:
+        return output_text
+    choices = response_payload.get("choices")
+    if isinstance(choices, list) and choices:
+        first_choice = choices[0] if isinstance(choices[0], dict) else {}
+        message = first_choice.get("message") if isinstance(first_choice, dict) else {}
+        content = message.get("content") if isinstance(message, dict) else ""
+        if isinstance(content, str):
+            return content.strip()
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    if isinstance(item.get("text"), str):
+                        text_parts.append(item["text"])
+                    elif item.get("type") == "output_text" and isinstance(item.get("text"), str):
+                        text_parts.append(item["text"])
+            return "\n".join(part.strip() for part in text_parts if part.strip()).strip()
+    output = response_payload.get("output")
+    if isinstance(output, list):
+        text_parts = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content_items = item.get("content")
+            if not isinstance(content_items, list):
+                continue
+            for content_item in content_items:
+                if (
+                    isinstance(content_item, dict)
+                    and isinstance(content_item.get("text"), str)
+                ):
+                    text_parts.append(content_item["text"])
+        return "\n".join(part.strip() for part in text_parts if part.strip()).strip()
+    return ""
+
+
+def request_openai_compatible_completion(
+    *,
+    base_url: str,
+    api_key: str,
+    model: str,
+    system_prompt: str,
+    user_prompt: str,
+    timeout_seconds: int = 90,
+) -> str:
+    endpoint = normalize_openai_compatible_base_url(base_url)
+    payload = {
+        "model": model.strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        "temperature": 0.7,
+    }
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key.strip()}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    last_error: ValueError | None = None
+    for attempt in range(1, AI_COMPLETION_MAX_RETRIES + 1):
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
+                response_body = response.read().decode("utf-8")
+            try:
+                payload_data = json.loads(response_body)
+            except json.JSONDecodeError as exc:
+                raise ValueError("AI 接口返回了无法解析的 JSON 响应。") from exc
+            output_text = extract_openai_compatible_text(payload_data)
+            if not output_text:
+                raise ValueError("AI 接口已返回结果，但没有解析到正文内容。")
+            return output_text.strip()
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode("utf-8", errors="ignore").strip()
+            detail = error_body[:400] if error_body else exc.reason
+            last_error = ValueError(f"AI 接口返回 {exc.code}：{detail}")
+            if exc.code < 500 and exc.code not in {408, 409, 429}:
+                raise last_error from exc
+        except urllib.error.URLError as exc:
+            last_error = ValueError(f"AI 接口请求失败：{exc.reason}")
+        except TimeoutError as exc:
+            last_error = ValueError("AI 接口请求超时，请稍后重试。")
+        except ValueError as exc:
+            last_error = exc
+
+        if attempt < AI_COMPLETION_MAX_RETRIES:
+            time.sleep(AI_COMPLETION_RETRY_DELAY_SECONDS)
+
+    if last_error is not None:
+        raise last_error
+    raise ValueError("AI 接口请求失败，请稍后重试。")
+
+
+def render_ai_daily_brief_html(content: str) -> str:
+    paragraphs = [
+        paragraph.strip()
+        for paragraph in str(content or "").replace("\r\n", "\n").split("\n\n")
+        if paragraph.strip()
+    ]
+    if not paragraphs:
+        return '<div class="text-secondary">AI 日报暂时没有可展示的正文。</div>'
+    return "".join(
+        f'<p class="mb-3">{escape(paragraph).replace("\\n", "<br>")}</p>'
+        for paragraph in paragraphs
+    )
 
 
 def get_database_mtime_ns() -> int | None:
@@ -1357,6 +1819,18 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         max-width: 68ch;
         font-size: 0.92rem;
         line-height: 1.5;
+      }}
+      .editorial-copy {{
+        max-width: none;
+        color: rgba(17, 24, 39, 0.9);
+        font-size: 0.98rem;
+        line-height: 1.85;
+      }}
+      .editorial-copy p {{
+        margin-bottom: 0.95rem;
+      }}
+      .editorial-copy p:last-child {{
+        margin-bottom: 0;
       }}
       .card-kicker {{
         font-size: 0.74rem;
@@ -3796,6 +4270,12 @@ def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
     return impl(ctx, played_on)
 
 
+def handle_match_day(ctx: RequestContext, start_response, played_on: str):
+    from web.features.competitions import handle_match_day as impl
+
+    return impl(ctx, start_response, played_on)
+
+
 def get_teams_page(ctx: RequestContext) -> str:
     from web.features.competitions import get_teams_page as impl
 
@@ -5780,8 +6260,101 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
     return impl(ctx, start_response, guild_id)
 
 
+def build_ai_player_season_summary_prompt(
+    player_name: str,
+    competition_name: str,
+    season_name: str,
+    detail: dict[str, Any],
+    player_row: dict[str, Any],
+    season_player_rows: list[dict[str, Any]],
+    season_team_rows: list[dict[str, Any]],
+) -> str:
+    prompt_templates = load_ai_prompt_templates()
+    role_lines = [
+        f"- {item['role']}：{item['games']} 局"
+        for item in detail.get("roles", [])
+    ]
+    recent_match_lines = [
+        f"- {item['played_on']} | {item['competition_name']} / {item['season']} | {item['stage_label']} | "
+        f"第 {item['round']} 轮 | 角色 {item['role']} | 阵营 {item['camp_label']} | "
+        f"结果 {item['result_label']} | 站边 {item['stance_result_label']} | 积分 {float(item['points_earned']):.2f}"
+        for item in detail.get("history", [])[:12]
+    ]
+    player_board_lines = [
+        f"- 第{row['rank']}名 {row['display_name']} | {row['team_name']} | 出场 {row['games_played']} | "
+        f"战绩 {row['record']} | 总积分 {float(row['points_earned_total']):.2f} | 场均 {float(row['average_points']):.2f}"
+        for row in season_player_rows[:10]
+    ]
+    team_board_lines = [
+        f"- 第{row.get('points_rank', '-')}名 {row['name']} | 场次 {row['matches_represented']} | "
+        f"总积分 {float(row['points_earned_total']):.2f} | 胜率 {format_pct(row['win_rate'])}"
+        for row in season_team_rows[:8]
+    ]
+    return render_ai_prompt_template(
+        prompt_templates["player_season_summary_user_prompt"],
+        {
+            "player_name": player_name,
+            "team_name": detail.get("team_name") or player_row.get("team_name") or "未知战队",
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "rank": player_row.get("rank", "-"),
+            "games_played": player_row.get("games_played", 0),
+            "record": detail.get("record") or player_row.get("record") or "0-0",
+            "overall_win_rate": detail.get("overall_win_rate") or format_pct(player_row.get("win_rate", 0.0)),
+            "villagers_win_rate": detail.get("villagers_win_rate") or format_pct(player_row.get("villagers_win_rate", 0.0)),
+            "werewolves_win_rate": detail.get("werewolves_win_rate") or format_pct(player_row.get("werewolves_win_rate", 0.0)),
+            "points_total": detail.get("points_total") or f"{float(player_row.get('points_earned_total', 0.0)):.2f}",
+            "average_points": detail.get("average_points") or f"{float(player_row.get('average_points', 0.0)):.2f}",
+            "stance_summary": (
+                f"站对边 {detail.get('correct_stances', 0)} 次；"
+                f"站错边 {detail.get('incorrect_stances', 0)} 次；"
+                f"总判断 {detail.get('stance_calls', 0)} 次；"
+                f"站边成功率 {detail.get('stance_rate') or format_pct(player_row.get('stance_rate', 0.0))}"
+            ),
+            "role_summary": "\n".join(role_lines) if role_lines else "- 暂无角色分布数据",
+            "season_player_board": "\n".join(player_board_lines) if player_board_lines else "- 当前赛季暂无个人积分榜数据",
+            "season_team_board": "\n".join(team_board_lines) if team_board_lines else "- 当前赛季暂无战队积分榜数据",
+            "recent_matches": "\n".join(recent_match_lines) if recent_match_lines else "- 当前赛季暂无比赛明细",
+        },
+        "选手赛季总结用户提示词模板",
+    )
 
-def get_player_page(ctx: RequestContext, player_id: str) -> str:
+
+def generate_ai_player_season_summary(
+    player_name: str,
+    competition_name: str,
+    season_name: str,
+    detail: dict[str, Any],
+    player_row: dict[str, Any],
+    season_player_rows: list[dict[str, Any]],
+    season_team_rows: list[dict[str, Any]],
+) -> tuple[str, str]:
+    settings = load_ai_daily_brief_settings()
+    prompt_templates = load_ai_prompt_templates()
+    base_url = str(settings.get("base_url") or "").strip()
+    api_key = str(settings.get("api_key") or "").strip()
+    model = str(settings.get("model") or DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or DEFAULT_AI_DAILY_BRIEF_MODEL
+    if not base_url or not api_key:
+        raise ValueError("AI 选手赛季总结尚未配置 Base URL 或 API Key。")
+    report_text = request_openai_compatible_completion(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        system_prompt=prompt_templates["player_season_summary_system_prompt"],
+        user_prompt=build_ai_player_season_summary_prompt(
+            player_name,
+            competition_name,
+            season_name,
+            detail,
+            player_row,
+            season_player_rows,
+            season_team_rows,
+        ),
+    )
+    return report_text, model
+
+
+def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str:
     data = load_validated_data()
     users = load_users()
     player_matches = [
@@ -5933,6 +6506,75 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
         selected_competition,
         selected_season,
     )
+    ai_player_season_summary = (
+        load_ai_player_season_summary(player_id, selected_competition, selected_season)
+        if selected_competition and selected_season
+        else None
+    )
+    ai_settings = load_ai_daily_brief_settings()
+    ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
+    ai_player_summary_actions = ""
+    ai_player_summary_admin_editor = ""
+    if selected_competition and selected_season:
+        if ai_configured and (not ai_player_season_summary or is_admin_user(ctx.current_user)):
+            ai_player_summary_actions = f"""
+            <form method="post" action="/players/{escape(player_id)}" class="m-0">
+              <input type="hidden" name="action" value="generate_ai_player_season_summary">
+              <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
+              <input type="hidden" name="season_name" value="{escape(selected_season)}">
+              <button type="submit" class="btn btn-dark">{'重生成 AI 选手赛季总结' if ai_player_season_summary else '生成 AI 选手赛季总结'}</button>
+            </form>
+            """
+        elif not ai_configured and is_admin_user(ctx.current_user):
+            ai_player_summary_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+        if ai_player_season_summary and is_admin_user(ctx.current_user):
+            ai_player_summary_admin_editor = f"""
+            <div class="form-panel p-3 p-lg-4 mt-4">
+              <h3 class="h5 mb-2">管理员编辑总结</h3>
+              <p class="section-copy mb-3">可以直接修改当前总结正文。保存后会立即覆盖展示内容。</p>
+              <form method="post" action="/players/{escape(player_id)}">
+                <input type="hidden" name="action" value="save_ai_player_season_summary">
+                <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
+                <input type="hidden" name="season_name" value="{escape(selected_season)}">
+                <div class="mb-3">
+                  <textarea class="form-control" name="summary_content" rows="12">{escape(ai_player_season_summary.get('content') or '')}</textarea>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                  <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
+                </div>
+              </form>
+            </div>
+            """
+    ai_player_summary_panel = ""
+    if selected_season:
+        ai_player_summary_panel = (
+            f"""
+            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+                <div>
+                  <h2 class="section-title mb-2">AI 选手赛季总结</h2>
+                  <p class="section-copy mb-0">基于当前选手在这个赛事赛季下的真实战绩、角色分布和比赛记录生成总结。首次生成对所有访客开放；生成后仅管理员可重生成或编辑。</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">{ai_player_summary_actions}</div>
+              </div>
+              <div class="small text-secondary mb-3">生成时间 {escape(ai_player_season_summary.get('generated_at') or '未生成')} · 模型 {escape(ai_player_season_summary.get('model') or ai_settings.get('model') or DEFAULT_AI_DAILY_BRIEF_MODEL)}</div>
+              <div class="editorial-copy mb-0">{render_ai_daily_brief_html(ai_player_season_summary.get('content') or '')}</div>
+              {ai_player_summary_admin_editor}
+            </section>
+            """
+            if ai_player_season_summary
+            else f"""
+            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+                <div>
+                  <h2 class="section-title mb-2">AI 选手赛季总结</h2>
+                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成选手赛季总结。')}</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">{ai_player_summary_actions}</div>
+              </div>
+            </section>
+            """
+        )
 
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
@@ -5959,6 +6601,7 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
       </div>
     </section>
     {player_dimension_panel}
+    {ai_player_summary_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="row g-3">
         <div class="col-12 col-lg-7">
@@ -6123,7 +6766,156 @@ def get_player_page(ctx: RequestContext, player_id: str) -> str:
       </div>
     </section>
     """
-    return layout(f"{detail['display_name']} 页面", body, ctx)
+    return layout(f"{detail['display_name']} 页面", body, ctx, alert=alert)
+
+
+def handle_player_page(ctx: RequestContext, start_response, player_id: str):
+    if ctx.method == "GET":
+        return start_response_html(start_response, "200 OK", get_player_page(ctx, player_id))
+
+    action = form_value(ctx.form, "action").strip()
+    competition_name = form_value(ctx.form, "competition_name").strip()
+    season_name = form_value(ctx.form, "season_name").strip()
+    page_query = {
+        "competition": [competition_name] if competition_name else [],
+        "season": [season_name] if season_name else [],
+    }
+    page_ctx = RequestContext(
+        method="GET",
+        path=f"/players/{player_id}",
+        query={key: value for key, value in page_query.items() if value},
+        form={},
+        files={},
+        current_user=ctx.current_user,
+        now_label=ctx.now_label,
+    )
+
+    if not competition_name or not season_name:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert="请先切换到具体赛事和赛季，再生成 AI 选手赛季总结。"),
+        )
+
+    existing_summary = load_ai_player_season_summary(
+        player_id,
+        competition_name,
+        season_name,
+    )
+    if action == "save_ai_player_season_summary":
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
+        summary_content = form_value(ctx.form, "summary_content").strip()
+        if not summary_content:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_player_page(page_ctx, player_id, alert="总结正文不能为空。"),
+            )
+        save_ai_player_season_summary(
+            player_id,
+            competition_name,
+            season_name,
+            summary_content,
+            "管理员手动编辑",
+        )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert="AI 选手赛季总结已保存。"),
+        )
+
+    if action != "generate_ai_player_season_summary":
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert="未识别的操作。"),
+        )
+
+    if existing_summary:
+        if not is_admin_user(ctx.current_user):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_player_page(page_ctx, player_id, alert="当前总结已生成，只有管理员可以重生成。"),
+            )
+
+    data = load_validated_data()
+    player_matches = [
+        match
+        for match in data["matches"]
+        if any(entry["player_id"] == player_id for entry in match["players"])
+        and get_match_competition_name(match) == competition_name
+        and str(match.get("season") or "").strip() == season_name
+    ]
+    if not player_matches:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert="当前选手在这个赛季下还没有可用于总结的比赛数据。"),
+        )
+
+    season_player_rows = build_player_rows(data, competition_name, season_name)
+    player_row = next((row for row in season_player_rows if row["player_id"] == player_id), None)
+    if not player_row or not player_row.get("games_played"):
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert="当前选手在这个赛季下还没有可用于总结的战绩数据。"),
+        )
+
+    player_details = build_player_details(data, season_player_rows, competition_name, season_name)
+    detail = player_details.get(player_id)
+    player = next((item for item in data["players"] if item["player_id"] == player_id), None)
+    if not detail or not player:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert="没有找到对应的选手资料。"),
+        )
+
+    season_team_rows = [
+        row
+        for row in build_team_rows(data, competition_name, season_name)
+        if row["matches_represented"] > 0
+    ]
+    season_team_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", 9999),
+            -row["points_earned_total"],
+            row["name"],
+        )
+    )
+    try:
+        report_text, model = generate_ai_player_season_summary(
+            player.get("display_name") or player_id,
+            competition_name,
+            season_name,
+            detail,
+            player_row,
+            season_player_rows,
+            season_team_rows,
+        )
+        save_ai_player_season_summary(
+            player_id,
+            competition_name,
+            season_name,
+            report_text,
+            model,
+        )
+    except ValueError as exc:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_player_page(page_ctx, player_id, alert=str(exc)),
+        )
+
+    return start_response_html(
+        start_response,
+        "200 OK",
+        get_player_page(page_ctx, player_id, alert="AI 选手赛季总结已生成。"),
+    )
 
 
 def build_player_edit_form(
@@ -7652,7 +8444,7 @@ def app(environ, start_response):
             return start_response_html(start_response, "200 OK", get_series_page(ctx, series_slug))
         if path.startswith("/days/"):
             played_on = path.split("/", 2)[2]
-            return start_response_html(start_response, "200 OK", get_match_day_page(ctx, played_on))
+            return handle_match_day(ctx, start_response, played_on)
         if path == "/guilds":
             return handle_guilds(ctx, start_response)
         if path.startswith("/guilds/"):
@@ -7706,7 +8498,7 @@ def app(environ, start_response):
             return handle_player_edit(ctx, start_response, player_id)
         if path.startswith("/players/"):
             player_id = path.split("/", 2)[2]
-            return start_response_html(start_response, "200 OK", get_player_page(ctx, player_id))
+            return handle_player_page(ctx, start_response, player_id)
         if path.startswith("/teams/"):
             team_id = path.split("/", 2)[2]
             return start_response_html(start_response, "200 OK", get_team_page(ctx, team_id))

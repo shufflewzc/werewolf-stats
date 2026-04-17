@@ -1672,48 +1672,42 @@ def import_dimension_stats_from_excel(
 
     existing_player_rows = list(load_season_player_dimension_stats())
     existing_team_rows = list(load_season_team_dimension_stats())
-    player_index = {
-        (
-            str(row.get("competition_name") or "").strip(),
-            str(row.get("season_name") or "").strip(),
-            str(row.get("played_on") or "").strip(),
-            str(row.get("player_id") or "").strip(),
-        ): row
+    imported_player_days = {
+        str(row.get("played_on") or "").strip()
+        for row in imported_player_rows
+        if str(row.get("played_on") or "").strip()
+    }
+    imported_team_days = {
+        str(row.get("played_on") or "").strip()
+        for row in imported_team_rows
+        if str(row.get("played_on") or "").strip()
+    }
+
+    next_player_rows = [
+        row
         for row in existing_player_rows
-    }
-    team_index = {
-        (
-            str(row.get("competition_name") or "").strip(),
-            str(row.get("season_name") or "").strip(),
-            str(row.get("played_on") or "").strip(),
-            str(row.get("team_id") or "").strip(),
-            int(row.get("seat") or 0),
-        ): row
+        if not (
+            str(row.get("competition_name") or "").strip() == competition_name
+            and str(row.get("season_name") or "").strip() == season_name
+            and str(row.get("played_on") or "").strip() in imported_player_days
+        )
+    ]
+    next_team_rows = [
+        row
         for row in existing_team_rows
-    }
-    for row in imported_player_rows:
-        player_index[
-            (
-                str(row.get("competition_name") or "").strip(),
-                str(row.get("season_name") or "").strip(),
-                str(row.get("played_on") or "").strip(),
-                str(row.get("player_id") or "").strip(),
-            )
-        ] = row
-    for row in imported_team_rows:
-        team_index[
-            (
-                str(row.get("competition_name") or "").strip(),
-                str(row.get("season_name") or "").strip(),
-                str(row.get("played_on") or "").strip(),
-                str(row.get("team_id") or "").strip(),
-                int(row.get("seat") or 0),
-            )
-        ] = row
+        if not (
+            str(row.get("competition_name") or "").strip() == competition_name
+            and str(row.get("season_name") or "").strip() == season_name
+            and str(row.get("played_on") or "").strip() in imported_team_days
+        )
+    ]
+
+    next_player_rows.extend(imported_player_rows)
+    next_team_rows.extend(imported_team_rows)
     summary = (
         f"维度数据导入完成：选手 {len(imported_player_rows)} 条，战队 {len(imported_team_rows)} 条。"
     )
-    return list(player_index.values()), list(team_index.values()), summary
+    return next_player_rows, next_team_rows, summary
 
 
 def is_external_logo_url(value: str) -> bool:

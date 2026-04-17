@@ -66,9 +66,13 @@ from competition_meta import (
 )
 from sqlite_store import (
     DB_PATH,
+    delete_session,
+    delete_sessions_for_username,
+    load_session_username,
     load_membership_requests,
     load_meta_value,
     load_users,
+    save_session,
     save_matches as persist_matches,
     save_membership_requests,
     save_meta_value,
@@ -124,6 +128,7 @@ TEAM_UPLOAD_DIR = TEAM_ASSETS_DIR / "uploads"
 DEFAULT_PLAYER_PHOTO = "assets/players/default-player.svg"
 DEFAULT_TEAM_LOGO = "assets/teams/default-team.svg"
 SESSION_COOKIE = "werewolf_session"
+SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 HOST = os.getenv("HOST", "")
 PORT = int(os.getenv("PORT", "8000"))
 VALIDATED_DATA_CACHE_TTL_SECONDS = float(
@@ -135,7 +140,6 @@ AI_SEASON_SUMMARY_KEY_PREFIX = "ai_season_summary:"
 AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX = "ai_player_season_summary:"
 AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
-SESSIONS: dict[str, str] = {}
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
 SLUG_SANITIZE_PATTERN = re.compile(r"[^a-z0-9_-]+")
@@ -978,7 +982,7 @@ def get_current_user(environ: dict[str, Any]) -> dict[str, Any] | None:
     if token is None:
         return None
 
-    username = SESSIONS.get(token.value)
+    username = load_session_username(token.value)
     if not username:
         return None
 
@@ -1421,9 +1425,7 @@ def account_role_label(user: dict[str, Any]) -> str:
 
 
 def revoke_user_sessions(username: str) -> None:
-    tokens_to_remove = [token for token, session_username in SESSIONS.items() if session_username == username]
-    for token in tokens_to_remove:
-        SESSIONS.pop(token, None)
+    delete_sessions_for_username(username)
 
 
 def start_response_html(start_response, status: str, body: str, headers: list[tuple[str, str]] | None = None):
@@ -8345,12 +8347,12 @@ def handle_login(ctx: RequestContext, start_response):
     for user in load_users():
         if user["username"] == username and user.get("active") and verify_password(password, user):
             token = secrets.token_urlsafe(24)
-            SESSIONS[token] = username
+            save_session(token, username)
             next_path = form_value(ctx.query, "next", "/dashboard")
             return redirect(
                 start_response,
                 next_path,
-                headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax")],
+                headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax")],
             )
 
     return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
@@ -8360,7 +8362,7 @@ def handle_logout(start_response, environ: dict[str, Any]):
     jar = parse_cookies(environ)
     token = jar.get(SESSION_COOKIE)
     if token is not None:
-        SESSIONS.pop(token.value, None)
+        delete_session(token.value)
     return redirect(
         start_response,
         "/login",

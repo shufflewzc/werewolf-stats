@@ -151,6 +151,13 @@ def create_schema(connection: sqlite3.Connection) -> None:
             meta_value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS user_sessions (
+            session_token TEXT PRIMARY KEY,
+            username TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS guilds (
             guild_id TEXT PRIMARY KEY,
             name TEXT NOT NULL,
@@ -1474,4 +1481,73 @@ def save_meta_value(meta_key: str, meta_value: str) -> None:
                 ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
                 """,
                 (meta_key, meta_value),
+            )
+
+
+def load_session_username(session_token: str) -> str | None:
+    normalized_token = str(session_token or "").strip()
+    if not normalized_token:
+        return None
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        row = connection.execute(
+            """
+            SELECT username
+            FROM user_sessions
+            WHERE session_token = ?
+            """,
+            (normalized_token,),
+        ).fetchone()
+        if not row:
+            return None
+        return str(row["username"] or "").strip() or None
+
+
+def save_session(session_token: str, username: str) -> None:
+    normalized_token = str(session_token or "").strip()
+    normalized_username = str(username or "").strip()
+    if not normalized_token or not normalized_username:
+        return
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO user_sessions (session_token, username)
+                VALUES (?, ?)
+                ON CONFLICT(session_token) DO UPDATE SET
+                    username = excluded.username,
+                    created_at = CURRENT_TIMESTAMP
+                """,
+                (normalized_token, normalized_username),
+            )
+
+
+def delete_session(session_token: str) -> None:
+    normalized_token = str(session_token or "").strip()
+    if not normalized_token:
+        return
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                "DELETE FROM user_sessions WHERE session_token = ?",
+                (normalized_token,),
+            )
+
+
+def delete_sessions_for_username(username: str) -> None:
+    normalized_username = str(username or "").strip()
+    if not normalized_username:
+        return
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                "DELETE FROM user_sessions WHERE username = ?",
+                (normalized_username,),
             )

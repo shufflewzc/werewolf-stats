@@ -1376,6 +1376,31 @@ def save_season_dimension_stats(
                 )
 
 
+def clear_season_dimension_stats(
+    competition_name: str,
+    season_name: str,
+) -> tuple[int, int]:
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            player_cursor = connection.execute(
+                """
+                DELETE FROM season_player_dimension_stats
+                WHERE competition_name = ? AND season_name = ?
+                """,
+                (competition_name, season_name),
+            )
+            team_cursor = connection.execute(
+                """
+                DELETE FROM season_team_dimension_stats
+                WHERE competition_name = ? AND season_name = ?
+                """,
+                (competition_name, season_name),
+            )
+        return int(player_cursor.rowcount or 0), int(team_cursor.rowcount or 0)
+
+
 def load_membership_requests(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:

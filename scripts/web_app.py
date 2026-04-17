@@ -138,6 +138,7 @@ AI_DAILY_BRIEF_SETTINGS_KEY = "ai_daily_brief_settings"
 AI_DAILY_BRIEF_REPORT_KEY_PREFIX = "ai_daily_brief_report:"
 AI_SEASON_SUMMARY_KEY_PREFIX = "ai_season_summary:"
 AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX = "ai_player_season_summary:"
+AI_TEAM_SEASON_SUMMARY_KEY_PREFIX = "ai_team_season_summary:"
 AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
@@ -212,6 +213,10 @@ DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT = (
 )
 AI_COMPLETION_MAX_RETRIES = 10
 AI_COMPLETION_RETRY_DELAY_SECONDS = 1.0
+DEFAULT_TEAM_SEASON_SUMMARY_SYSTEM_PROMPT = (
+    "你是一名狼人杀赛事内容编辑。"
+    "请把输入的真实战队赛季数据整理成适合站内发布的中文战队赛季总结，禁止虚构。"
+)
 DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实选手赛季数据，为 {player_name} 输出一份中文个人赛季总结。
 要求：
 1. 只能依据给定数据总结，不要编造人物故事、场外信息或未提供的比赛细节。
@@ -233,6 +238,25 @@ DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实选手赛
 
 战队积分榜参考：
 {season_team_board}
+
+最近比赛记录：
+{recent_matches}
+"""
+DEFAULT_TEAM_SEASON_SUMMARY_USER_PROMPT = """请基于下面的真实战队赛季数据，为 {team_name} 输出一份中文战队赛季总结。
+要求：
+1. 只能依据给定数据总结，不要编造队伍故事、队员关系、场外信息或未提供的比赛细节。
+2. 输出 Markdown 格式中文，可使用二级或三级标题、无序列表、加粗，不要输出代码块。
+3. 结构按“## 战队定位 + ## 赛季表现 + ## 收尾点评”组织，其中赛季表现部分写 3 到 6 条列表。
+4. 可以总结这支战队的赛季定位、队内核心贡献、比赛走势、关键场次和在积分榜中的位置。
+5. 语气像官方战队观察，简洁、准确、有概括力。
+
+战队基础信息：名称 {team_name}；赛事 {competition_name}；赛季 {season_name}；积分排名 第 {rank} 名；参赛队员 {player_count} 名；出场 {matches_represented} 场；总积分 {points_total}；场均积分 {points_per_match}；胜率 {win_rate}；站边成功率 {stance_rate}。
+
+当前赛季战队积分榜参考：
+{season_team_board}
+
+战队队员赛季数据：
+{roster_board}
 
 最近比赛记录：
 {recent_matches}
@@ -330,6 +354,8 @@ def load_ai_prompt_templates() -> dict[str, str]:
         "season_summary_user_prompt": DEFAULT_SEASON_SUMMARY_USER_PROMPT,
         "player_season_summary_system_prompt": DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT,
         "player_season_summary_user_prompt": DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT,
+        "team_season_summary_system_prompt": DEFAULT_TEAM_SEASON_SUMMARY_SYSTEM_PROMPT,
+        "team_season_summary_user_prompt": DEFAULT_TEAM_SEASON_SUMMARY_USER_PROMPT,
     }
     if not raw_value.strip():
         return default_payload
@@ -350,6 +376,8 @@ def save_ai_prompt_templates(
     season_summary_user_prompt: str,
     player_season_summary_system_prompt: str,
     player_season_summary_user_prompt: str,
+    team_season_summary_system_prompt: str,
+    team_season_summary_user_prompt: str,
 ) -> None:
     payload = {
         "match_day_system_prompt": str(match_day_system_prompt or "").strip()
@@ -364,6 +392,10 @@ def save_ai_prompt_templates(
         or DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT,
         "player_season_summary_user_prompt": str(player_season_summary_user_prompt or "").strip()
         or DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT,
+        "team_season_summary_system_prompt": str(team_season_summary_system_prompt or "").strip()
+        or DEFAULT_TEAM_SEASON_SUMMARY_SYSTEM_PROMPT,
+        "team_season_summary_user_prompt": str(team_season_summary_user_prompt or "").strip()
+        or DEFAULT_TEAM_SEASON_SUMMARY_USER_PROMPT,
     }
     save_meta_value(AI_PROMPT_TEMPLATES_KEY, json.dumps(payload, ensure_ascii=False))
 
@@ -515,6 +547,60 @@ def save_ai_player_season_summary(
     save_meta_value(
         AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX
         + player_id
+        + ":"
+        + competition_name
+        + ":"
+        + season_name,
+        json.dumps(payload, ensure_ascii=False),
+    )
+
+
+def load_ai_team_season_summary(
+    team_id: str,
+    competition_name: str,
+    season_name: str,
+) -> dict[str, str] | None:
+    raw_value = load_meta_value(
+        AI_TEAM_SEASON_SUMMARY_KEY_PREFIX
+        + team_id
+        + ":"
+        + competition_name
+        + ":"
+        + season_name
+    ) or ""
+    if not raw_value.strip():
+        return None
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {
+            "content": raw_value,
+            "generated_at": "",
+            "model": "",
+        }
+    return {
+        "content": str(parsed.get("content") or "").strip(),
+        "generated_at": str(parsed.get("generated_at") or "").strip(),
+        "model": str(parsed.get("model") or "").strip(),
+    }
+
+
+def save_ai_team_season_summary(
+    team_id: str,
+    competition_name: str,
+    season_name: str,
+    content: str,
+    model: str,
+    generated_at: str | None = None,
+) -> None:
+    payload = {
+        "content": str(content or "").strip(),
+        "generated_at": str(generated_at or china_now_label()).strip(),
+        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
+    }
+    save_meta_value(
+        AI_TEAM_SEASON_SUMMARY_KEY_PREFIX
+        + team_id
         + ":"
         + competition_name
         + ":"
@@ -5957,6 +6043,83 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                 "has_stats": bool(player_stats),
             }
         )
+    players.sort(
+        key=lambda item: (
+            0 if item["has_stats"] else 1,
+            -float(item["points_total"]),
+            -item["games_played"],
+            item["display_name"],
+        )
+    )
+    ai_team_season_summary = (
+        load_ai_team_season_summary(team_id, selected_competition, selected_season)
+        if selected_competition and selected_season
+        else None
+    )
+    ai_settings = load_ai_daily_brief_settings()
+    ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
+    ai_team_summary_actions = ""
+    ai_team_summary_admin_editor = ""
+    if selected_competition and selected_season:
+        if ai_configured and (not ai_team_season_summary or is_admin_user(ctx.current_user)):
+            ai_team_summary_actions = f"""
+            <form method="post" action="/teams/{escape(team_id)}" class="m-0">
+              <input type="hidden" name="action" value="generate_ai_team_season_summary">
+              <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
+              <input type="hidden" name="season_name" value="{escape(selected_season)}">
+              <button type="submit" class="btn btn-dark">{'重生成 AI 战队赛季总结' if ai_team_season_summary else '生成 AI 战队赛季总结'}</button>
+            </form>
+            """
+        elif not ai_configured and is_admin_user(ctx.current_user):
+            ai_team_summary_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+        if ai_team_season_summary and is_admin_user(ctx.current_user):
+            ai_team_summary_admin_editor = f"""
+            <div class="form-panel p-3 p-lg-4 mt-4">
+              <h3 class="h5 mb-2">管理员编辑总结</h3>
+              <p class="section-copy mb-3">可以直接修改当前总结正文。保存后会立即覆盖展示内容。</p>
+              <form method="post" action="/teams/{escape(team_id)}">
+                <input type="hidden" name="action" value="save_ai_team_season_summary">
+                <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
+                <input type="hidden" name="season_name" value="{escape(selected_season)}">
+                <div class="mb-3">
+                  <textarea class="form-control" name="summary_content" rows="12">{escape(ai_team_season_summary.get('content') or '')}</textarea>
+                </div>
+                <div class="d-flex flex-wrap gap-2">
+                  <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
+                </div>
+              </form>
+            </div>
+            """
+    ai_team_summary_panel = ""
+    if selected_season:
+        ai_team_summary_panel = (
+            f"""
+            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+                <div>
+                  <h2 class="section-title mb-2">AI 战队赛季总结</h2>
+                  <p class="section-copy mb-0">基于当前战队在这个赛事赛季下的真实战绩、队员数据和比赛记录生成总结。首次生成对所有访客开放；生成后仅管理员可重生成或编辑。</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">{ai_team_summary_actions}</div>
+              </div>
+              <div class="small text-secondary mb-3">生成时间 {escape(ai_team_season_summary.get('generated_at') or '未生成')} · 模型 {escape(ai_team_season_summary.get('model') or ai_settings.get('model') or DEFAULT_AI_DAILY_BRIEF_MODEL)}</div>
+              <div class="editorial-copy mb-0">{render_ai_daily_brief_html(ai_team_season_summary.get('content') or '')}</div>
+              {ai_team_summary_admin_editor}
+            </section>
+            """
+            if ai_team_season_summary
+            else f"""
+            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+                <div>
+                  <h2 class="section-title mb-2">AI 战队赛季总结</h2>
+                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成战队赛季总结。')}</p>
+                </div>
+                <div class="d-flex flex-wrap gap-2">{ai_team_summary_actions}</div>
+              </div>
+            </section>
+            """
+        )
 
     competition_sections = []
     for competition_name, matches in competition_groups.items():
@@ -6139,6 +6302,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     {team_dimension_panel}
     {guild_panel}
     {team_match_player_score_section}
+    {ai_team_summary_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
@@ -6398,6 +6562,87 @@ def build_team_match_player_score_section(
     """
 
 
+def build_ai_team_season_summary_prompt(
+    team: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    team_row: dict[str, Any],
+    roster_rows: list[dict[str, Any]],
+    season_team_rows: list[dict[str, Any]],
+    recent_matches: list[dict[str, Any]],
+) -> str:
+    prompt_templates = load_ai_prompt_templates()
+    roster_lines = [
+        f"- {row['display_name']} | 出场 {row['games_played']} | 战绩 {row['record']} | "
+        f"总积分 {float(row['points_earned_total']):.2f} | 场均 {float(row['average_points']):.2f} | 胜率 {format_pct(row['win_rate'])}"
+        for row in roster_rows[:12]
+    ]
+    team_board_lines = [
+        f"- 第{row.get('points_rank', '-')}名 {row['name']} | 场次 {row['matches_represented']} | "
+        f"上场队员 {row['player_count']} | 总积分 {float(row['points_earned_total']):.2f} | 胜率 {format_pct(row['win_rate'])}"
+        for row in season_team_rows[:10]
+    ]
+    recent_match_lines = [
+        f"- {item['played_on']} | {competition_name} / {season_name} | {item['stage']} | 第 {item['round']} 轮 | "
+        f"对手 {item['opponents']} | 台次 {item['table_label']} | 胜利阵营 {item['winning_camp']} | "
+        f"本队 {float(item['team_score']):.2f} : 对手 {float(item['opponent_score']):.2f}"
+        for item in recent_matches[:12]
+    ]
+    return render_ai_prompt_template(
+        prompt_templates["team_season_summary_user_prompt"],
+        {
+            "team_name": team.get("name") or team.get("team_id") or "未知战队",
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "rank": team_row.get("points_rank", "-"),
+            "player_count": team_row.get("player_count", 0),
+            "matches_represented": team_row.get("matches_represented", 0),
+            "points_total": f"{float(team_row.get('points_earned_total', 0.0)):.2f}",
+            "points_per_match": f"{float(team_row.get('points_per_match', 0.0)):.2f}",
+            "win_rate": format_pct(team_row.get("win_rate", 0.0)),
+            "stance_rate": format_pct(team_row.get("stance_rate", 0.0)),
+            "season_team_board": "\n".join(team_board_lines) if team_board_lines else "- 当前赛季暂无战队积分榜数据",
+            "roster_board": "\n".join(roster_lines) if roster_lines else "- 当前赛季暂无队员战绩数据",
+            "recent_matches": "\n".join(recent_match_lines) if recent_match_lines else "- 当前赛季暂无比赛明细",
+        },
+        "战队赛季总结用户提示词模板",
+    )
+
+
+def generate_ai_team_season_summary(
+    team: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    team_row: dict[str, Any],
+    roster_rows: list[dict[str, Any]],
+    season_team_rows: list[dict[str, Any]],
+    recent_matches: list[dict[str, Any]],
+) -> tuple[str, str]:
+    settings = load_ai_daily_brief_settings()
+    prompt_templates = load_ai_prompt_templates()
+    base_url = str(settings.get("base_url") or "").strip()
+    api_key = str(settings.get("api_key") or "").strip()
+    model = str(settings.get("model") or DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or DEFAULT_AI_DAILY_BRIEF_MODEL
+    if not base_url or not api_key:
+        raise ValueError("AI 战队赛季总结尚未配置 Base URL 或 API Key。")
+    report_text = request_openai_compatible_completion(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        system_prompt=prompt_templates["team_season_summary_system_prompt"],
+        user_prompt=build_ai_team_season_summary_prompt(
+            team,
+            competition_name,
+            season_name,
+            team_row,
+            roster_rows,
+            season_team_rows,
+            recent_matches,
+        ),
+    )
+    return report_text, model
+
+
 def build_guild_honor_rows(data: dict[str, Any], guild_id: str) -> list[dict[str, str]]:
     guild = get_guild_by_id(data, guild_id)
     if not guild:
@@ -6539,6 +6784,179 @@ def generate_ai_player_season_summary(
         ),
     )
     return report_text, model
+
+
+def handle_team_page(ctx: RequestContext, start_response, team_id: str):
+    if ctx.method == "GET":
+        return start_response_html(start_response, "200 OK", get_team_page(ctx, team_id))
+
+    action = form_value(ctx.form, "action").strip()
+    competition_name = form_value(ctx.form, "competition_name").strip()
+    season_name = form_value(ctx.form, "season_name").strip()
+    page_query = {
+        "competition": [competition_name] if competition_name else [],
+        "season": [season_name] if season_name else [],
+    }
+    page_ctx = RequestContext(
+        method="GET",
+        path=f"/teams/{team_id}",
+        query={key: value for key, value in page_query.items() if value},
+        form={},
+        files={},
+        current_user=ctx.current_user,
+        now_label=ctx.now_label,
+    )
+
+    if not competition_name or not season_name:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert="请先切换到具体赛事和赛季，再生成 AI 战队赛季总结。"),
+        )
+
+    existing_summary = load_ai_team_season_summary(
+        team_id,
+        competition_name,
+        season_name,
+    )
+    if action == "save_ai_team_season_summary":
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
+        summary_content = form_value(ctx.form, "summary_content").strip()
+        if not summary_content:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_team_page(page_ctx, team_id, alert="总结正文不能为空。"),
+            )
+        save_ai_team_season_summary(
+            team_id,
+            competition_name,
+            season_name,
+            summary_content,
+            "管理员手动编辑",
+        )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert="AI 战队赛季总结已保存。"),
+        )
+
+    if action != "generate_ai_team_season_summary":
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert="未识别的操作。"),
+        )
+
+    if existing_summary and not is_admin_user(ctx.current_user):
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert="当前总结已生成，只有管理员可以重生成。"),
+        )
+
+    data = load_validated_data()
+    team_lookup = {item["team_id"]: item for item in data["teams"]}
+    team = team_lookup.get(team_id)
+    if not team:
+        return start_response_html(
+            start_response,
+            "404 Not Found",
+            layout("未找到战队", '<div class="alert alert-danger">没有找到对应的战队。</div>', ctx),
+        )
+
+    season_matches = [
+        match
+        for match in data["matches"]
+        if any(str(entry.get("team_id") or "").strip() == team_id for entry in match["players"])
+        and get_match_competition_name(match) == competition_name
+        and str(match.get("season") or "").strip() == season_name
+    ]
+    if not season_matches:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert="当前战队在这个赛季下还没有可用于总结的比赛数据。"),
+        )
+
+    season_team_rows = [
+        row
+        for row in build_team_rows(data, competition_name, season_name)
+        if row["matches_represented"] > 0
+    ]
+    season_team_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", 9999),
+            -row["points_earned_total"],
+            row["name"],
+        )
+    )
+    team_row = next((row for row in season_team_rows if row["team_id"] == team_id), None)
+    if not team_row or not team_row.get("matches_represented"):
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert="当前战队在这个赛季下还没有可用于总结的战绩数据。"),
+        )
+
+    season_player_rows = [
+        row
+        for row in build_player_rows(data, competition_name, season_name)
+        if row["games_played"] > 0
+    ]
+    roster_player_ids = set(resolve_team_player_ids(data, team_id, competition_name, season_name))
+    roster_rows = [row for row in season_player_rows if row["player_id"] in roster_player_ids]
+    roster_rows.sort(
+        key=lambda row: (
+            row.get("rank", 9999),
+            -row["points_earned_total"],
+            row["display_name"],
+        )
+    )
+    recent_matches = [
+        summarize_team_match(team_id, match, team_lookup)
+        for match in sorted(
+            season_matches,
+            key=lambda item: (
+                item["played_on"],
+                item["round"],
+                item["game_no"],
+                item["match_id"],
+            ),
+            reverse=True,
+        )
+    ]
+    try:
+        report_text, model = generate_ai_team_season_summary(
+            team,
+            competition_name,
+            season_name,
+            team_row,
+            roster_rows,
+            season_team_rows,
+            recent_matches,
+        )
+        save_ai_team_season_summary(
+            team_id,
+            competition_name,
+            season_name,
+            report_text,
+            model,
+        )
+    except ValueError as exc:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_page(page_ctx, team_id, alert=str(exc)),
+        )
+
+    return start_response_html(
+        start_response,
+        "200 OK",
+        get_team_page(page_ctx, team_id, alert="AI 战队赛季总结已生成。"),
+    )
 
 
 def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str:
@@ -8688,7 +9106,7 @@ def app(environ, start_response):
             return handle_player_page(ctx, start_response, player_id)
         if path.startswith("/teams/"):
             team_id = path.split("/", 2)[2]
-            return start_response_html(start_response, "200 OK", get_team_page(ctx, team_id))
+            return handle_team_page(ctx, start_response, team_id)
 
         guard = require_login(ctx, start_response)
         if guard is not None:

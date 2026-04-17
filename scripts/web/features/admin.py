@@ -68,6 +68,8 @@ def get_accounts_page(
         "season_summary_user_prompt": str((form_values or {}).get("season_summary_user_prompt") or ai_prompt_templates.get("season_summary_user_prompt") or "").strip(),
         "player_season_summary_system_prompt": str((form_values or {}).get("player_season_summary_system_prompt") or ai_prompt_templates.get("player_season_summary_system_prompt") or "").strip(),
         "player_season_summary_user_prompt": str((form_values or {}).get("player_season_summary_user_prompt") or ai_prompt_templates.get("player_season_summary_user_prompt") or "").strip(),
+        "team_season_summary_system_prompt": str((form_values or {}).get("team_season_summary_system_prompt") or ai_prompt_templates.get("team_season_summary_system_prompt") or "").strip(),
+        "team_season_summary_user_prompt": str((form_values or {}).get("team_season_summary_user_prompt") or ai_prompt_templates.get("team_season_summary_user_prompt") or "").strip(),
     }
     users = load_users()
     data = legacy.load_validated_data()
@@ -189,7 +191,7 @@ def get_accounts_page(
     ai_status_text = (
         f'已启用，当前地址 {escape(ai_settings["base_url"])}，模型 {escape(ai_settings["model"])}，Key {escape(mask_api_key(ai_settings["api_key"]))}'
         if ai_configured
-        else "尚未配置。配置完成后，比赛日页面、赛季页和选手页都会出现对应的 AI 生成按钮。"
+        else "尚未配置。配置完成后，比赛日页面、赛季页、战队页和选手页都会出现对应的 AI 生成按钮。"
     )
 
     body = f"""
@@ -237,7 +239,7 @@ def get_accounts_page(
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
           <h2 class="section-title mb-2">AI 提示词模板</h2>
-          <p class="section-copy mb-0">这里可以分别修改比赛日报、赛季总结和选手赛季总结的系统提示词、用户提示词模板。用户模板支持占位符。</p>
+          <p class="section-copy mb-0">这里可以分别修改比赛日报、赛季总结、战队赛季总结和选手赛季总结的系统提示词、用户提示词模板。用户模板支持占位符。</p>
         </div>
       </div>
       <div class="form-panel p-3 p-lg-4">
@@ -279,6 +281,18 @@ def get_accounts_page(
               <label class="form-label">用户提示词模板</label>
               <textarea class="form-control" name="player_season_summary_user_prompt" rows="16">{escape(ai_prompt_form['player_season_summary_user_prompt'])}</textarea>
               <div class="small text-secondary mt-2">可用占位符：`{"{player_name}"}`、`{"{team_name}"}`、`{"{competition_name}"}`、`{"{season_name}"}`、`{"{rank}"}`、`{"{games_played}"}`、`{"{record}"}`、`{"{overall_win_rate}"}`、`{"{villagers_win_rate}"}`、`{"{werewolves_win_rate}"}`、`{"{points_total}"}`、`{"{average_points}"}`、`{"{stance_summary}"}`、`{"{role_summary}"}`、`{"{season_player_board}"}`、`{"{season_team_board}"}`、`{"{recent_matches}"}`。</div>
+            </div>
+            <div class="col-12">
+              <h3 class="h5 mb-3">战队赛季总结</h3>
+            </div>
+            <div class="col-12 col-xl-4">
+              <label class="form-label">系统提示词</label>
+              <textarea class="form-control" name="team_season_summary_system_prompt" rows="8">{escape(ai_prompt_form['team_season_summary_system_prompt'])}</textarea>
+            </div>
+            <div class="col-12 col-xl-8">
+              <label class="form-label">用户提示词模板</label>
+              <textarea class="form-control" name="team_season_summary_user_prompt" rows="16">{escape(ai_prompt_form['team_season_summary_user_prompt'])}</textarea>
+              <div class="small text-secondary mt-2">可用占位符：`{"{team_name}"}`、`{"{competition_name}"}`、`{"{season_name}"}`、`{"{rank}"}`、`{"{player_count}"}`、`{"{matches_represented}"}`、`{"{points_total}"}`、`{"{points_per_match}"}`、`{"{win_rate}"}`、`{"{stance_rate}"}`、`{"{season_team_board}"}`、`{"{roster_board}"}`、`{"{recent_matches}"}`。</div>
             </div>
           </div>
           <div class="d-flex flex-wrap gap-2 mt-4">
@@ -543,6 +557,8 @@ def handle_accounts(ctx: RequestContext, start_response):
         season_summary_user_prompt = form_value(ctx.form, "season_summary_user_prompt").strip()
         player_season_summary_system_prompt = form_value(ctx.form, "player_season_summary_system_prompt").strip()
         player_season_summary_user_prompt = form_value(ctx.form, "player_season_summary_user_prompt").strip()
+        team_season_summary_system_prompt = form_value(ctx.form, "team_season_summary_system_prompt").strip()
+        team_season_summary_user_prompt = form_value(ctx.form, "team_season_summary_user_prompt").strip()
         if not all(
             [
                 match_day_system_prompt,
@@ -551,6 +567,8 @@ def handle_accounts(ctx: RequestContext, start_response):
                 season_summary_user_prompt,
                 player_season_summary_system_prompt,
                 player_season_summary_user_prompt,
+                team_season_summary_system_prompt,
+                team_season_summary_user_prompt,
             ]
         ):
             return start_response_html(
@@ -558,7 +576,7 @@ def handle_accounts(ctx: RequestContext, start_response):
                 "200 OK",
                 get_accounts_page(
                     ctx,
-                    alert="六个提示词模板都需要填写。",
+                    alert="八个提示词模板都需要填写。",
                     form_values={
                         "match_day_system_prompt": match_day_system_prompt,
                         "match_day_user_prompt": match_day_user_prompt,
@@ -566,6 +584,8 @@ def handle_accounts(ctx: RequestContext, start_response):
                         "season_summary_user_prompt": season_summary_user_prompt,
                         "player_season_summary_system_prompt": player_season_summary_system_prompt,
                         "player_season_summary_user_prompt": player_season_summary_user_prompt,
+                        "team_season_summary_system_prompt": team_season_summary_system_prompt,
+                        "team_season_summary_user_prompt": team_season_summary_user_prompt,
                     },
                 ),
             )
@@ -576,6 +596,8 @@ def handle_accounts(ctx: RequestContext, start_response):
             season_summary_user_prompt=season_summary_user_prompt,
             player_season_summary_system_prompt=player_season_summary_system_prompt,
             player_season_summary_user_prompt=player_season_summary_user_prompt,
+            team_season_summary_system_prompt=team_season_summary_system_prompt,
+            team_season_summary_user_prompt=team_season_summary_user_prompt,
         )
         return start_response_html(
             start_response,

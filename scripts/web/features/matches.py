@@ -14,6 +14,7 @@ from zipfile import ZipFile
 
 import web_app as legacy
 from sqlite_store import (
+    clear_season_dimension_stats,
     load_season_player_dimension_stats,
     load_season_team_dimension_stats,
     save_season_dimension_stats,
@@ -450,6 +451,30 @@ def build_dimension_import_panel(
           <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
         </div>
       </form>
+      <div class="border-top mt-4 pt-4">
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+          <div>
+            <h3 class="h5 mb-2">清空当前赛季维度数据</h3>
+            <p class="section-copy mb-0">只会删除当前赛事 + 赛季下已导入的选手维度和战队维度数据，不会删除比赛、战队、队员主档，也不会影响其他赛季。</p>
+          </div>
+        </div>
+        <form method="post" action="/matches/new" onsubmit="return confirm('确认清空当前赛事赛季下的全部维度数据吗？清空后需要重新上传。');">
+          <input type="hidden" name="action" value="clear_dimension_stats">
+          <div class="row g-3">
+            <div class="col-12 col-xl-4">
+              <label class="form-label">地区赛事页</label>
+              {competition_field_html}
+            </div>
+            <div class="col-12 col-xl-3">
+              <label class="form-label">赛季</label>
+              {season_field_html}
+            </div>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <button type="submit" class="btn btn-outline-danger">清空这个赛季的维度数据</button>
+          </div>
+        </form>
+      </div>
     </section>
     """
 
@@ -2898,6 +2923,69 @@ def handle_match_create(ctx: RequestContext, start_response):
             season_name,
         )
         return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
+    if action == "clear_dimension_stats":
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season").strip()
+        if not competition_name:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert="请先选择要清空的地区赛事页。"),
+            )
+        if not season_name:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert="请先选择要清空的赛季。"),
+            )
+        if not can_manage_matches(ctx.current_user, data, competition_name):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=f"你没有权限清空 {competition_name} 下的维度数据。"),
+            )
+        competition_error = validate_match_competition_selection(data, competition_name)
+        if competition_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=competition_error),
+            )
+        season_error = validate_match_season_selection(
+            data,
+            competition_name,
+            season_name,
+            include_non_ongoing=True,
+        )
+        if season_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=season_error),
+            )
+        try:
+            deleted_player_count, deleted_team_count = clear_season_dimension_stats(
+                competition_name,
+                season_name,
+            )
+        except Exception as exc:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=f"清空维度数据失败：{exc}"),
+            )
+        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
+            "/competitions",
+            competition_name,
+            season_name,
+        )
+        return redirect(
+            start_response,
+            append_alert_query(
+                next_path or "/competitions",
+                f"已清空维度数据：选手 {deleted_player_count} 条，战队 {deleted_team_count} 条。",
+            ),
+        )
     if action == "import_team_logo_excel":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()

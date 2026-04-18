@@ -13,6 +13,7 @@ LEGACY_OUTPUT_FILE = OUTPUT_DIR / "match-result-upload-template.xlsx"
 PREPARED_FORMULA_ROWS = 1000
 WEREWOLF_ROLE_KEYWORDS = (
     "狼",
+    "梦魇",
     "石像鬼",
     "恶灵骑士",
     "黑蝙蝠",

@@ -15,8 +15,6 @@ from zipfile import ZipFile
 import web_app as legacy
 from sqlite_store import (
     clear_season_dimension_stats,
-    load_season_player_dimension_stats,
-    load_season_team_dimension_stats,
     save_season_dimension_stats,
 )
 
@@ -446,7 +444,7 @@ def build_dimension_import_panel(
             <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </div>
         </div>
-        <div class="small text-secondary mt-3">目前按京城大师赛维度模板识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。导入时会按你选定的赛事和赛季，用战队名、选手主档名做完全一致匹配；找不到会直接报错，不会自动创建新档案。建议先完成比赛录入，再上传维度数据。</div>
+        <div class="small text-secondary mt-3">目前按京城大师赛维度模板识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。导入时会按你选定的赛事和赛季，用战队名、选手主档名做完全一致匹配；找不到会直接报错，不会自动创建新档案。重复上传会按同一赛事、赛季、日期下的选手或战队主键逐条更新，不会清空其他日期的数据。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
         </div>
@@ -1652,6 +1650,20 @@ def build_team_dimension_stats_from_rows(
     return parsed_rows
 
 
+def dedupe_dimension_rows(
+    rows: list[dict[str, object]],
+    key_fields: tuple[str, ...],
+) -> list[dict[str, object]]:
+    deduped_rows: dict[tuple[object, ...], dict[str, object]] = {}
+    for row in rows:
+        key = tuple(
+            int(row.get(field_name) or 0) if field_name == "seat" else row.get(field_name)
+            for field_name in key_fields
+        )
+        deduped_rows[key] = row
+    return list(deduped_rows.values())
+
+
 def import_dimension_stats_from_excel(
     ctx: RequestContext,
     data: dict[str, object],
@@ -1695,42 +1707,16 @@ def import_dimension_stats_from_excel(
     except ValueError as exc:
         return None, None, str(exc)
 
-    existing_player_rows = list(load_season_player_dimension_stats())
-    existing_team_rows = list(load_season_team_dimension_stats())
-    imported_player_days = {
-        str(row.get("played_on") or "").strip()
-        for row in imported_player_rows
-        if str(row.get("played_on") or "").strip()
-    }
-    imported_team_days = {
-        str(row.get("played_on") or "").strip()
-        for row in imported_team_rows
-        if str(row.get("played_on") or "").strip()
-    }
-
-    next_player_rows = [
-        row
-        for row in existing_player_rows
-        if not (
-            str(row.get("competition_name") or "").strip() == competition_name
-            and str(row.get("season_name") or "").strip() == season_name
-            and str(row.get("played_on") or "").strip() in imported_player_days
-        )
-    ]
-    next_team_rows = [
-        row
-        for row in existing_team_rows
-        if not (
-            str(row.get("competition_name") or "").strip() == competition_name
-            and str(row.get("season_name") or "").strip() == season_name
-            and str(row.get("played_on") or "").strip() in imported_team_days
-        )
-    ]
-
-    next_player_rows.extend(imported_player_rows)
-    next_team_rows.extend(imported_team_rows)
+    next_player_rows = dedupe_dimension_rows(
+        imported_player_rows,
+        ("competition_name", "season_name", "played_on", "player_id"),
+    )
+    next_team_rows = dedupe_dimension_rows(
+        imported_team_rows,
+        ("competition_name", "season_name", "played_on", "team_id", "seat"),
+    )
     summary = (
-        f"维度数据导入完成：选手 {len(imported_player_rows)} 条，战队 {len(imported_team_rows)} 条。"
+        f"维度数据导入完成：选手 {len(next_player_rows)} 条，战队 {len(next_team_rows)} 条。"
     )
     return next_player_rows, next_team_rows, summary
 

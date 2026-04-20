@@ -1715,8 +1715,39 @@ def import_dimension_stats_from_excel(
         imported_team_rows,
         ("competition_name", "season_name", "played_on", "team_id", "seat"),
     )
+    existing_player_rows = list(load_season_player_dimension_stats())
+    existing_team_rows = list(load_season_team_dimension_stats())
+    imported_player_days = {
+        str(row.get("played_on") or "").strip()
+        for row in next_player_rows
+        if str(row.get("played_on") or "").strip()
+    }
+    imported_team_days = {
+        str(row.get("played_on") or "").strip()
+        for row in next_team_rows
+        if str(row.get("played_on") or "").strip()
+    }
+
+    next_player_rows = [
+        row
+        for row in existing_player_rows
+        if not (
+            str(row.get("competition_name") or "").strip() == competition_name
+            and str(row.get("season_name") or "").strip() == season_name
+            and str(row.get("played_on") or "").strip() in imported_player_days
+        )
+    ] + next_player_rows
+    next_team_rows = [
+        row
+        for row in existing_team_rows
+        if not (
+            str(row.get("competition_name") or "").strip() == competition_name
+            and str(row.get("season_name") or "").strip() == season_name
+            and str(row.get("played_on") or "").strip() in imported_team_days
+        )
+    ] + next_team_rows
     summary = (
-        f"维度数据导入完成：选手 {len(next_player_rows)} 条，战队 {len(next_team_rows)} 条。"
+        f"维度数据导入完成：选手 {len(imported_player_rows)} 条，战队 {len(imported_team_rows)} 条。"
     )
     return next_player_rows, next_team_rows, summary
 

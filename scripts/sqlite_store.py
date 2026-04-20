@@ -718,6 +718,12 @@ def replace_repository_data(
     guilds: list[dict[str, Any]] | None = None,
 ) -> None:
     guild_rows = guilds or []
+    existing_sessions = connection.execute(
+        """
+        SELECT session_token, username, created_at
+        FROM user_sessions
+        """
+    ).fetchall()
     with connection:
         connection.execute("DELETE FROM match_players")
         connection.execute("DELETE FROM matches")
@@ -753,6 +759,32 @@ def replace_repository_data(
                     user.get("gender") or "",
                     user.get("bio") or "",
                     user.get("photo") or DEFAULT_USER_PHOTO,
+                ),
+            )
+
+        valid_usernames = {
+            str(user.get("username") or "").strip()
+            for user in users
+            if str(user.get("username") or "").strip()
+        }
+        for row in existing_sessions:
+            username = str(row["username"] or "").strip()
+            session_token = str(row["session_token"] or "").strip()
+            created_at = str(row["created_at"] or "").strip()
+            if not username or not session_token or username not in valid_usernames:
+                continue
+            connection.execute(
+                """
+                INSERT INTO user_sessions (session_token, username, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_token) DO UPDATE SET
+                    username = excluded.username,
+                    created_at = excluded.created_at
+                """,
+                (
+                    session_token,
+                    username,
+                    created_at,
                 ),
             )
 

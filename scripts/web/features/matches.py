@@ -15,6 +15,8 @@ from zipfile import ZipFile
 import web_app as legacy
 from sqlite_store import (
     clear_season_dimension_stats,
+    load_season_player_dimension_stats,
+    load_season_team_dimension_stats,
     save_season_dimension_stats,
 )
 

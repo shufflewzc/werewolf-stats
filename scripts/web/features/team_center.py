@@ -6,8 +6,8 @@ from typing import Any
 import web_app as legacy
 
 RequestContext = legacy.RequestContext
-SESSIONS = legacy.SESSIONS
 SESSION_COOKIE = legacy.SESSION_COOKIE
+SESSION_COOKIE_MAX_AGE_SECONDS = legacy.SESSION_COOKIE_MAX_AGE_SECONDS
 can_manage_matches = legacy.can_manage_matches
 form_value = legacy.form_value
 get_team_captain_id = legacy.get_team_captain_id
@@ -21,6 +21,7 @@ redirect = legacy.redirect
 remove_user_player_binding = legacy.remove_user_player_binding
 revoke_user_sessions = legacy.revoke_user_sessions
 save_repository_state = legacy.save_repository_state
+save_session = legacy.save_session
 set_user_primary_player_id = legacy.set_user_primary_player_id
 start_response_html = legacy.start_response_html
 user_has_match_history = legacy.user_has_match_history
@@ -97,11 +98,16 @@ def dissolve_team(
 def issue_fresh_team_center_session(start_response, username: str):
     revoke_user_sessions(username)
     token = secrets.token_urlsafe(24)
-    SESSIONS[token] = username
+    save_session(token, username)
     return redirect(
         start_response,
         "/team-center",
-        headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; HttpOnly; SameSite=Lax")],
+        headers=[
+            (
+                "Set-Cookie",
+                f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax",
+            )
+        ],
     )
 
 

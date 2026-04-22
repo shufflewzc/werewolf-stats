@@ -52,6 +52,7 @@ JCDS_TEMPLATE_COLUMNS = [
     ("team_name", "战队名"),
     ("player_name", "选手"),
     ("match_id", "局号"),
+    ("group_label", "分组"),
     ("role", "身份"),
     ("result_points", "胜负分"),
     ("vote_points", "投票分"),
@@ -90,6 +91,7 @@ def build_sample_rows(
         "season_name": season_name,
         "stage": "regular_season",
         "match_id": "gz-s-260410-01",
+        "group_label": "A组",
         "score_model": score_model,
         "played_on": "2026-04-10",
         "format": "经典十二人局",
@@ -98,7 +100,7 @@ def build_sample_rows(
         "mvp_player_name": "",
         "svp_player_name": "",
         "scapegoat_player_name": "",
-        "notes": "一行就是一个选手在这一局里的数据；系统会优先按比赛编号定位比赛。战队分组、赛段、房间都沿用预创建比赛，这里不需要填写。MVP/SVP/背锅列填“是”或留空即可。",
+        "notes": "一行就是一个选手在这一局里的数据；系统会优先按比赛编号定位比赛。常规赛如果需要分组，可以在上传页面统一选填；京城大师赛模板也支持直接填写分组列；留空也能正常导入。MVP/SVP/背锅列填“是”或留空即可。",
     }
     player_rows = [
         {

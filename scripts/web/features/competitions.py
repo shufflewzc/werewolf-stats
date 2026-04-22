@@ -1111,7 +1111,6 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
             <tr>
               <td>{row.get('points_rank', '-')}</td>
               <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{legacy.escape(build_scoped_path('/teams/' + row['team_id'], competition_name, season_name, region_name, series_slug))}">{legacy.escape(row['name'])}</a></td>
-              <td>{legacy.escape(competition_name)} / {legacy.escape(season_name)}</td>
               <td>{row['matches_represented']}</td>
               <td>{format_pct(row['win_rate'])}</td>
               <td>{row['points_earned_total']:.2f}</td>
@@ -1133,7 +1132,6 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
                 <tr>
                   <th>排名</th>
                   <th>战队</th>
-                  <th>赛事赛季</th>
                   <th>场次</th>
                   <th>胜率</th>
                   <th>总积分</th>

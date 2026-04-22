@@ -332,7 +332,7 @@ def build_batch_create_form(
           <div class="col-12 col-md-6 col-xl-3">
             <label class="form-label">房间</label>
             <input class="form-control" name="room_label" value="{escape(current['room_label'])}">
-            <div class="small text-secondary mt-2">分组信息可以先留到补录比赛详情时再填写。</div>
+            <div class="small text-secondary mt-2">这里只先批量生成赛程壳子；如果常规赛需要分组，后续可以在 Excel 批量补录时选填。</div>
           </div>
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">开始日期</label>
@@ -351,7 +351,8 @@ def build_batch_create_form(
     """
 
 
-def build_excel_import_panel() -> str:
+def build_excel_import_panel(values: dict[str, str] | None = None) -> str:
+    current = values or {"group_label": ""}
     try:
         data = load_validated_data()
         series_catalog = load_series_catalog(data)
@@ -389,11 +390,18 @@ def build_excel_import_panel() -> str:
       </div>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
         <input type="hidden" name="action" value="import_match_excel">
-        <div class="mb-3">
-          <label class="form-label">选择 Excel 文件</label>
-          <input class="form-control" type="file" name="match_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+        <div class="row g-3">
+          <div class="col-12 col-lg-4">
+            <label class="form-label">本次上传分组（选填）</label>
+            <input class="form-control" name="group_label" value="{escape(current['group_label'])}" placeholder="如 A组 / B组">
+            <div class="small text-secondary mt-2">只有常规赛这类需要分组时再填；留空也可以正常上传。</div>
+          </div>
+          <div class="col-12 col-lg-8">
+            <label class="form-label">选择 Excel 文件</label>
+            <input class="form-control" type="file" name="match_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          </div>
         </div>
-        <div class="small text-secondary">模板只用于补录已经批量创建好的比赛。系统会优先按 `match_id` 定位比赛；如果没有比赛编号，才会回退到赛事、赛季、日期这些信息辅助匹配。战队分组、赛段、房间都沿用预创建比赛，Excel 里都不需要填写；MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
+        <div class="small text-secondary mt-3">模板只用于补录已经批量创建好的比赛。系统会优先按 `match_id` 定位比赛；如果没有比赛编号，才会回退到赛事、赛季、日期这些信息辅助匹配。这里的分组如果填写，会统一写入本次上传的每场比赛；如果留空，系统才会读取 Excel 里的 `分组` 列。MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入</button>
         </div>
@@ -1430,7 +1438,7 @@ def find_existing_match_for_excel_import(
     hint = "；".join(candidate_labels)
     if hint:
         raise ValueError(
-            "找到了多场同日期比赛，请在 Excel 中补充比赛编号、赛段或房间后重试。"
+            "找到了多场同日期比赛，请在 Excel 中补充比赛编号、赛段、房间或分组后重试。"
             f" 当前候选：{hint}"
         )
     raise ValueError("找到了多场同日期比赛，请优先填写比赛编号后重试。")
@@ -1442,6 +1450,7 @@ def merge_excel_import_match(
 ) -> dict[str, object]:
     merged_match = dict(existing_match)
     for field in (
+        "group_label",
         "score_model",
         "table_label",
         "format",
@@ -1477,6 +1486,7 @@ def import_matches_from_excel(
     ctx: RequestContext,
     data: dict[str, object],
     upload: UploadedFile,
+    group_label_override: str = "",
 ) -> tuple[list[dict[str, object]] | None, str]:
     try:
         flat_rows = read_first_available_sheet_rows(upload, ["records", "比赛记录", "单局成绩表"])
@@ -1525,6 +1535,8 @@ def import_matches_from_excel(
             source_matches.append(build_match_from_excel_rows(row, players_by_key.get(match_key, [])))
 
     for current_match in source_matches:
+        if group_label_override:
+            current_match["group_label"] = group_label_override
         match_key = describe_excel_import_match(current_match)
         import_mode = "update" if str(current_match.get("match_id") or "").strip() in existing_by_id else "create"
         match_id = str(current_match.get("match_id") or "").strip()
@@ -1949,7 +1961,6 @@ def batch_create_matches(
     end_date: str,
     round_start: int,
     matches_per_day: int,
-    group_label: str,
     room_label: str,
 ) -> list[dict[str, object]]:
     start_dt = parse_date_input(start_date)
@@ -1979,7 +1990,7 @@ def batch_create_matches(
                     round_no,
                     game_no,
                     played_on,
-                    group_label.strip(),
+                    "",
                     room_label.strip(),
                 )
             )
@@ -2579,6 +2590,7 @@ def get_match_create_page(
     alert: str = "",
     field_values: dict[str, object] | None = None,
     batch_form_values: dict[str, str] | None = None,
+    excel_form_values: dict[str, str] | None = None,
 ) -> str:
     current = ensure_match_form_players(field_values or build_empty_match(
         form_value(ctx.query, "competition").strip(),
@@ -2610,7 +2622,7 @@ def get_match_create_page(
     )
     management_panel_html = build_match_management_panel(ctx)
     batch_panel_html = build_batch_create_form(ctx, get_batch_create_form_values(ctx, batch_form_values))
-    excel_panel_html = build_excel_import_panel()
+    excel_panel_html = build_excel_import_panel(excel_form_values)
     dimension_panel_html = build_dimension_import_panel(ctx)
     team_logo_panel_html = build_team_logo_import_panel(ctx)
     player_photo_panel_html = build_player_photo_import_panel(ctx)
@@ -2793,7 +2805,6 @@ def handle_match_create(ctx: RequestContext, start_response):
         end_date = form_value(ctx.form, "end_date").strip()
         round_start_raw = form_value(ctx.form, "round_start", "1").strip()
         matches_per_day_raw = form_value(ctx.form, "matches_per_day", "1").strip()
-        group_label = form_value(ctx.form, "group_label").strip()
         room_label = form_value(ctx.form, "room_label", "1号房").strip()
         batch_form_values = {
             "competition_name": competition_name,
@@ -2842,7 +2853,6 @@ def handle_match_create(ctx: RequestContext, start_response):
                 end_date,
                 int(round_start_raw or "0"),
                 int(matches_per_day_raw or "0"),
-                group_label,
                 room_label,
             )
         except ValueError as exc:
@@ -2872,20 +2882,22 @@ def handle_match_create(ctx: RequestContext, start_response):
             append_alert_query(next_path or "/competitions", f"已批量创建 {len(new_matches)} 场待补录比赛。"),
         )
     if action == "import_match_excel":
+        group_label = form_value(ctx.form, "group_label").strip()
+        excel_form_values = {"group_label": group_label}
         upload = file_value(ctx.files, "match_excel_file")
         upload_error = validate_excel_upload(upload)
         if upload_error:
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=upload_error),
+                get_match_create_page(ctx, alert=upload_error, excel_form_values=excel_form_values),
             )
-        next_matches, import_message = import_matches_from_excel(ctx, data, upload)
+        next_matches, import_message = import_matches_from_excel(ctx, data, upload, group_label)
         if next_matches is None:
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=import_message),
+                get_match_create_page(ctx, alert=import_message, excel_form_values=excel_form_values),
             )
         users = load_users()
         normalized_matches, _ = canonicalize_match_ids(next_matches)
@@ -2897,7 +2909,11 @@ def handle_match_create(ctx: RequestContext, start_response):
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert="Excel 导入保存失败：" + "；".join(errors[:3])),
+                get_match_create_page(
+                    ctx,
+                    alert="Excel 导入保存失败：" + "；".join(errors[:3]),
+                    excel_form_values=excel_form_values,
+                ),
             )
         next_path = form_value(ctx.query, "next").strip() or "/competitions"
         alert_message = import_message

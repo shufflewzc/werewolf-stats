@@ -7873,11 +7873,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             item["played_on"],
             build_scoped_path("/teams/" + team_id, selected_competition, selected_season),
         )
-        team_result_label = (
-            "胜利"
-            if item["team_score"] > item["opponent_score"]
-            else ("失利" if item["team_score"] < item["opponent_score"] else "战平")
-        )
         match_row = next(
             (
                 match
@@ -7885,6 +7880,23 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                 if match["match_id"] == item["match_id"]
             ),
             None,
+        )
+        team_result_value = next(
+            (
+                str(entry.get("result") or "").strip()
+                for entry in (match_row or {}).get("players", [])
+                if str(entry.get("team_id") or "").strip() == team_id
+                and str(entry.get("result") or "").strip()
+            ),
+            "",
+        )
+        team_result_label = (
+            RESULT_OPTIONS.get(team_result_value, "")
+            or (
+                "胜利"
+                if item["team_score"] > item["opponent_score"]
+                else ("失利" if item["team_score"] < item["opponent_score"] else "战平")
+            )
         )
         team_award_labels = [
             label
@@ -7904,6 +7916,20 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             f'<span class="player-stat-pill">{escape(label)}</span>'
             for label in team_award_labels
         ) or '<span class="player-stat-pill">无特殊奖励</span>'
+        team_player_score_pills = "".join(
+            f'<span class="player-stat-pill">{escape(player_lookup.get(str(entry.get("player_id") or "").strip(), {}).get("display_name", str(entry.get("player_name") or entry.get("player_id") or "未命名队员")))} {float(entry.get("points_earned") or 0.0):.2f}</span>'
+            for entry in sorted(
+                [
+                    participant
+                    for participant in (match_row or {}).get("players", [])
+                    if str(participant.get("team_id") or "").strip() == team_id
+                ],
+                key=lambda participant: (
+                    -float(participant.get("points_earned") or 0.0),
+                    int(participant.get("seat") or 0),
+                ),
+            )
+        ) or '<span class="player-stat-pill">暂无队员得分</span>'
         recent_match_cards.append(
             f"""
             <article class="team-match-card">
@@ -7916,10 +7942,10 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
               </div>
               <div class="team-scoreboard">
                 <strong>{item["team_score"]:.2f}</strong>
-                <span>{escape(team_short_label)}</span>
-                <span>:</span>
-                <strong>{item["opponent_score"]:.2f}</strong>
-                <span>对手总分</span>
+                <span>{escape(team_short_label)} 本队得分</span>
+              </div>
+              <div class="team-insight-tags">
+                {team_player_score_pills}
               </div>
               <div class="team-insight-tags">
                 <span class="player-stat-pill">{escape(team_result_label)}</span>

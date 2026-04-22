@@ -525,6 +525,15 @@ def build_player_details(
                         "stance_result_label": to_chinese_stance(
                             normalize_stance_result(entry)
                         ),
+                        "award_labels": [
+                            label
+                            for label, award_player_id in [
+                                ("MVP", str(match.get("mvp_player_id") or "").strip()),
+                                ("SVP", str(match.get("svp_player_id") or "").strip()),
+                                ("背锅", str(match.get("scapegoat_player_id") or "").strip()),
+                            ]
+                            if award_player_id == player_id
+                        ],
                         "notes": entry["notes"],
                     }
                 )

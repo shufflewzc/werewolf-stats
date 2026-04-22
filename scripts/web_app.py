@@ -1615,9 +1615,38 @@ def build_region_picker(
     """
 
 
+def is_management_path(path: str) -> bool:
+    if path in {
+        "/accounts",
+        "/permissions",
+        "/profile",
+        "/bindings",
+        "/team-center",
+        "/team-admin",
+        "/series-manage",
+        "/matches/new",
+    }:
+        return True
+    if path.startswith("/matches/") and path.endswith("/edit"):
+        return True
+    if path.startswith("/players/") and path.endswith("/edit"):
+        return True
+    return False
+
+
+def build_nav_link(label: str, href: str, active: bool = False) -> str:
+    return (
+        f'<a class="nav-link nav-pill px-0{" is-active" if active else ""}" '
+        f'href="{escape(href)}">{escape(label)}</a>'
+    )
+
+
 def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
+    is_admin_layout = is_management_path(ctx.path)
+    body_class = "app-admin" if is_admin_layout else "app-public"
     user_html = ""
     nav_links = []
+    admin_nav_links: list[str] = []
     if ctx.current_user:
         display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
         role_label = account_role_label(ctx.current_user)
@@ -1625,31 +1654,55 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         user_html = f"""
         <div class="account-actions d-flex flex-wrap align-items-center gap-3">
           <span class="small text-secondary">当前登录：{escape(display_name)} · {escape(role_label)}{' · ' + escape(region_label) if region_label else ''}</span>
+          {'' if is_admin_layout else '<a class="btn btn-outline-dark btn-sm" href="/profile">进入控制台</a>'}
           <form method="post" action="/logout" class="m-0">
             <button type="submit" class="btn btn-outline-dark btn-sm">退出登录</button>
           </form>
         </div>
         """
         nav_links = [
-            '<a class="nav-link nav-pill px-0" href="/dashboard">首页</a>',
-            '<a class="nav-link nav-pill px-0" href="/competitions">比赛页面</a>',
-            '<a class="nav-link nav-pill px-0" href="/guilds">门派</a>',
-            '<a class="nav-link nav-pill px-0" href="/profile">个人中心</a>',
-            '<a class="nav-link nav-pill px-0" href="/team-center">战队认领</a>',
+            build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
+            build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
+            build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
+        ]
+        admin_nav_links = [
+            build_nav_link("控制台总览", "/profile", ctx.path == "/profile"),
+            build_nav_link("战队认领", "/team-center", ctx.path == "/team-center"),
         ]
         if can_manage_matches(ctx.current_user):
-            nav_links.append('<a class="nav-link nav-pill px-0" href="/matches/new">比赛管理</a>')
+            admin_nav_links.append(
+                build_nav_link(
+                    "比赛管理",
+                    "/matches/new",
+                    ctx.path == "/matches/new"
+                    or (ctx.path.startswith("/matches/") and ctx.path.endswith("/edit")),
+                )
+            )
         if can_access_series_management(ctx.current_user):
-            nav_links.append('<a class="nav-link nav-pill px-0" href="/series-manage">系列赛管理</a>')
+            admin_nav_links.append(
+                build_nav_link(
+                    "系列赛管理",
+                    "/series-manage",
+                    ctx.path == "/series-manage",
+                )
+            )
         if is_admin_user(ctx.current_user):
-            nav_links.append('<a class="nav-link nav-pill px-0" href="/accounts">账号管理</a>')
-            nav_links.append('<a class="nav-link nav-pill px-0" href="/permissions">权限控制</a>')
-            nav_links.append('<a class="nav-link nav-pill px-0" href="/team-admin">战队管理</a>')
+            admin_nav_links.append(
+                build_nav_link("账号管理", "/accounts", ctx.path == "/accounts")
+            )
+            admin_nav_links.append(
+                build_nav_link("权限控制", "/permissions", ctx.path == "/permissions")
+            )
+            admin_nav_links.append(
+                build_nav_link("战队管理", "/team-admin", ctx.path == "/team-admin")
+            )
+        if is_admin_layout:
+            nav_links = admin_nav_links
     else:
         nav_links = [
-            '<a class="nav-link nav-pill px-0" href="/dashboard">首页</a>',
-            '<a class="nav-link nav-pill px-0" href="/competitions">比赛页面</a>',
-            '<a class="nav-link nav-pill px-0" href="/guilds">门派</a>',
+            build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
+            build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
+            build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
         user_html = """
         <div class="account-actions d-flex flex-wrap align-items-center gap-2">
@@ -1661,6 +1714,32 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
     alert_html = ""
     if alert:
         alert_html = f'<div class="alert alert-warning border-0 shadow-sm">{escape(alert)}</div>'
+
+    brand_kicker = "Control Console" if is_admin_layout else "League Site"
+    brand_title = "一颗小草后台管理台" if is_admin_layout else "一颗小草赛事数据中心"
+    brand_copy = (
+        "录入、审核、权限分配与赛事维护"
+        if is_admin_layout
+        else f"当前时间：{escape(ctx.now_label)}"
+    )
+    admin_return_link = (
+        '<a class="admin-return-link" href="/dashboard">返回公开首页</a>'
+        if is_admin_layout
+        else ""
+    )
+    admin_status = ""
+    if is_admin_layout:
+        current_scope = get_user_region_label(ctx.current_user) or "未绑定地区"
+        admin_status = f"""
+        <div class="admin-console-strip">
+          <div class="admin-console-copy">
+            <span class="admin-console-label">Workspace</span>
+            <strong>{escape(title)}</strong>
+            <span>{escape(current_scope)}</span>
+          </div>
+          {admin_return_link}
+        </div>
+        """
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -1675,21 +1754,21 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.8/dist/css/bootstrap.min.css">
     <style>
       :root {{
-        --bg: #eef2f7;
-        --bg-alt: #fafbfd;
-        --surface: rgba(255, 255, 255, 0.68);
-        --surface-strong: rgba(255, 255, 255, 0.92);
-        --ink: #111827;
-        --muted: #667085;
-        --accent: #2d7ff9;
-        --accent-dark: #175cd3;
-        --accent-soft: rgba(45, 127, 249, 0.12);
-        --sky-soft: rgba(182, 219, 255, 0.24);
-        --sun-soft: rgba(255, 255, 255, 0.52);
+        --bg: #eef6fb;
+        --bg-alt: #fbfdff;
+        --surface: rgba(255, 255, 255, 0.72);
+        --surface-strong: rgba(255, 255, 255, 0.94);
+        --ink: #16324a;
+        --muted: #678093;
+        --accent: #77bce8;
+        --accent-dark: #3b7fb1;
+        --accent-soft: rgba(119, 188, 232, 0.14);
+        --sky-soft: rgba(190, 224, 255, 0.32);
+        --sun-soft: rgba(255, 255, 255, 0.58);
         --line: rgba(15, 23, 42, 0.08);
         --line-strong: rgba(15, 23, 42, 0.12);
-        --shadow: 0 1rem 2.8rem rgba(15, 23, 42, 0.12);
-        --shadow-soft: 0 0.65rem 1.6rem rgba(15, 23, 42, 0.07);
+        --shadow: 0 1rem 2.8rem rgba(94, 131, 160, 0.12);
+        --shadow-soft: 0 0.65rem 1.6rem rgba(94, 131, 160, 0.08);
       }}
       * {{
         box-sizing: border-box;
@@ -1702,9 +1781,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         color: var(--ink);
         font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
         background:
-          radial-gradient(circle at top left, rgba(182, 219, 255, 0.4), transparent 28%),
-          radial-gradient(circle at top right, rgba(221, 236, 255, 0.48), transparent 24%),
-          radial-gradient(circle at bottom right, rgba(203, 227, 255, 0.3), transparent 30%),
+          radial-gradient(circle at top left, rgba(198, 224, 255, 0.42), transparent 28%),
+          radial-gradient(circle at top right, rgba(216, 233, 255, 0.48), transparent 24%),
+          radial-gradient(circle at bottom right, rgba(208, 225, 247, 0.28), transparent 30%),
           linear-gradient(180deg, var(--bg-alt) 0%, var(--bg) 100%);
       }}
       body::before {{
@@ -1713,8 +1792,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         inset: 0;
         pointer-events: none;
         background:
-          linear-gradient(135deg, rgba(255, 255, 255, 0.42), transparent 42%),
-          radial-gradient(circle at 20% 20%, rgba(255, 255, 255, 0.34), transparent 26%);
+          linear-gradient(135deg, rgba(255, 255, 255, 0.46), transparent 42%),
+          radial-gradient(circle at 20% 20%, rgba(233, 243, 255, 0.4), transparent 26%);
         opacity: 0.8;
       }}
       body::after {{
@@ -1729,7 +1808,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         opacity: 0.18;
       }}
       .shell {{
-        max-width: 1560px;
+        max-width: 1380px;
       }}
       a {{
         color: var(--accent-dark);
@@ -1752,13 +1831,15 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .panel,
       .form-panel {{
         background: var(--surface);
-        border-radius: 22px;
+        border-radius: 18px;
       }}
       .topbar {{
         position: sticky;
         top: 0.75rem;
         z-index: 40;
-        background: linear-gradient(135deg, rgba(255, 255, 255, 0.84), rgba(246, 249, 255, 0.88));
+        background:
+          radial-gradient(circle at top right, rgba(210, 230, 255, 0.36), transparent 24%),
+          linear-gradient(135deg, rgba(255, 255, 255, 0.92), rgba(245, 249, 255, 0.94));
       }}
       .topbar.mb-4,
       .hero.mb-4,
@@ -1773,7 +1854,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         padding: 0.32rem 0.72rem;
         margin-bottom: 0.5rem;
         border-radius: 999px;
-        background: rgba(255, 255, 255, 0.74);
+        background: rgba(255, 255, 255, 0.82);
         color: var(--accent-dark);
         font-size: 0.7rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
@@ -1786,8 +1867,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         width: 0.55rem;
         height: 0.55rem;
         border-radius: 50%;
-        background: linear-gradient(135deg, #ffffff, #74b6ff 65%, var(--accent));
-        box-shadow: 0 0 0 0.24rem rgba(45, 127, 249, 0.12);
+        background: linear-gradient(135deg, #ffffff, #a9d4ff 55%, var(--accent));
+        box-shadow: 0 0 0 0.24rem rgba(119, 188, 232, 0.14);
       }}
       .brand-title {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
@@ -1799,47 +1880,50 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         justify-content: flex-end;
       }}
       .primary-nav {{
-        row-gap: 0.7rem;
+        row-gap: 0.45rem;
       }}
       .hero {{
         position: relative;
         overflow: hidden;
         isolation: isolate;
         background:
-          linear-gradient(135deg, rgba(255, 255, 255, 0.78), rgba(248, 250, 255, 0.68) 42%, rgba(231, 241, 255, 0.72)),
-          linear-gradient(180deg, rgba(255, 255, 255, 0.54), rgba(255, 255, 255, 0.24));
+          linear-gradient(135deg, rgba(255, 255, 255, 0.86), rgba(245, 249, 255, 0.82) 42%, rgba(235, 244, 255, 0.8)),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.62), rgba(255, 255, 255, 0.3));
         color: var(--ink);
         border: 1px solid rgba(255, 255, 255, 0.84);
-        border-radius: 26px;
+        border-radius: 20px;
         box-shadow: var(--shadow);
+        padding: 1rem 1.1rem !important;
       }}
       .hero::before {{
         content: "";
         position: absolute;
         right: -10%;
         bottom: -24%;
-        width: min(42vw, 420px);
+        width: min(30vw, 300px);
         aspect-ratio: 1 / 1;
         border-radius: 50%;
-        background: radial-gradient(circle, rgba(119, 188, 255, 0.42), rgba(119, 188, 255, 0));
+        background: radial-gradient(circle, rgba(154, 203, 255, 0.42), rgba(154, 203, 255, 0));
         z-index: -1;
+        opacity: 0.78;
       }}
       .hero::after {{
         content: "";
         position: absolute;
         left: -10%;
         top: -20%;
-        width: min(36vw, 340px);
+        width: min(24vw, 220px);
         aspect-ratio: 1 / 1;
         border-radius: 50%;
         background: radial-gradient(circle, rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0));
         z-index: -1;
+        opacity: 0.68;
       }}
       .hero-layout {{
         display: grid;
-        grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.92fr);
-        gap: 1rem;
-        align-items: stretch;
+        grid-template-columns: minmax(0, 1.72fr) minmax(220px, 0.72fr);
+        gap: 0.65rem;
+        align-items: start;
       }}
       .eyebrow {{
         display: inline-flex;
@@ -1850,7 +1934,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         font-weight: 700;
         letter-spacing: 0.18em;
         text-transform: uppercase;
-        color: var(--accent-dark);
+        color: #3b7fb1;
       }}
       .eyebrow::before {{
         content: "";
@@ -1860,29 +1944,30 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-title {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.8rem, 3.3vw, 3.5rem);
-        line-height: 1.02;
+        font-size: clamp(1.6rem, 2.9vw, 3rem);
+        line-height: 1;
         letter-spacing: -0.06em;
       }}
       .hero-copy {{
-        max-width: 58ch;
+        max-width: 64ch;
         color: rgba(17, 24, 39, 0.74);
-        font-size: clamp(0.92rem, 1.05vw, 1rem);
+        font-size: clamp(0.88rem, 0.98vw, 0.96rem);
+        line-height: 1.45;
       }}
       .hero-switchers {{
         display: flex;
         flex-wrap: wrap;
-        gap: 0.5rem;
+        gap: 0.38rem;
       }}
       .hero-kpis {{
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
-        gap: 0.65rem;
-        margin-top: 1rem;
+        gap: 0.55rem;
+        margin-top: 0.8rem;
       }}
       .hero-pill {{
-        padding: 0.72rem 0.82rem;
-        border-radius: 18px;
+        padding: 0.62rem 0.72rem;
+        border-radius: 14px;
         background: rgba(255, 255, 255, 0.5);
         border: 1px solid rgba(255, 255, 255, 0.88);
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
@@ -1898,8 +1983,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-pill strong {{
         display: block;
-        margin-top: 0.32rem;
-        font-size: clamp(1.02rem, 1.5vw, 1.25rem);
+        margin-top: 0.24rem;
+        font-size: clamp(0.98rem, 1.4vw, 1.16rem);
         line-height: 1.1;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
         font-weight: 800;
@@ -1907,15 +1992,18 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-pill small {{
         display: block;
-        margin-top: 0.2rem;
+        margin-top: 0.16rem;
         color: var(--muted);
-        font-size: 0.78rem;
+        font-size: 0.74rem;
       }}
       .hero-stage-card {{
         position: relative;
         min-height: 100%;
-        padding: 1.05rem;
-        border-radius: 22px;
+        padding: 0.9rem;
+        border-radius: 18px;
+        max-width: 340px;
+        width: 100%;
+        justify-self: end;
         overflow: hidden;
         color: #f8fbff;
         background:
@@ -1963,35 +2051,35 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         background: linear-gradient(135deg, #ffffff, #7cc2ff);
       }}
       .hero-stage-label {{
-        margin-top: 0.7rem;
+        margin-top: 0.55rem;
         font-size: 0.76rem;
         letter-spacing: 0.14em;
         text-transform: uppercase;
         color: rgba(244, 247, 255, 0.66);
       }}
       .hero-stage-title {{
-        margin-top: 0.55rem;
+        margin-top: 0.42rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.45rem, 2.2vw, 2.2rem);
+        font-size: clamp(1.28rem, 1.95vw, 1.9rem);
         font-weight: 800;
         line-height: 1.02;
         letter-spacing: -0.05em;
       }}
       .hero-stage-note {{
-        margin-top: 0.55rem;
+        margin-top: 0.42rem;
         color: rgba(244, 247, 255, 0.74);
-        line-height: 1.5;
-        font-size: 0.9rem;
+        line-height: 1.35;
+        font-size: 0.82rem;
       }}
       .hero-stage-grid {{
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 0.6rem;
-        margin-top: 0.9rem;
+        gap: 0.5rem;
+        margin-top: 0.72rem;
       }}
       .hero-stage-metric {{
-        padding: 0.72rem 0.8rem;
-        border-radius: 16px;
+        padding: 0.62rem 0.68rem;
+        border-radius: 13px;
         background: rgba(255, 255, 255, 0.08);
         border: 1px solid rgba(255, 255, 255, 0.1);
       }}
@@ -2004,9 +2092,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .hero-stage-metric strong {{
         display: block;
-        margin-top: 0.35rem;
+        margin-top: 0.28rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: 1.08rem;
+        font-size: 1rem;
         font-weight: 800;
         line-height: 1.08;
         letter-spacing: -0.04em;
@@ -2019,23 +2107,23 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .section-title {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.15rem, 2.1vw, 1.55rem);
+        font-size: clamp(1.05rem, 1.8vw, 1.36rem);
         letter-spacing: -0.04em;
       }}
       .section-copy {{
         color: var(--muted);
         max-width: 68ch;
-        font-size: 0.92rem;
-        line-height: 1.5;
+        font-size: 0.86rem;
+        line-height: 1.38;
       }}
       .editorial-copy {{
         max-width: none;
         color: rgba(17, 24, 39, 0.9);
-        font-size: 0.98rem;
-        line-height: 1.85;
+        font-size: 0.94rem;
+        line-height: 1.72;
       }}
       .editorial-copy p {{
-        margin-bottom: 0.95rem;
+        margin-bottom: 0.7rem;
       }}
       .editorial-copy p:last-child {{
         margin-bottom: 0;
@@ -2046,7 +2134,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .editorial-copy h4,
       .editorial-copy h5,
       .editorial-copy h6 {{
-        margin: 1.4rem 0 0.8rem;
+        margin: 1.1rem 0 0.65rem;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
         letter-spacing: -0.04em;
         line-height: 1.3;
@@ -2109,13 +2197,14 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         font-size: 0.74rem;
         letter-spacing: 0.14em;
         text-transform: uppercase;
-        color: var(--accent-dark);
+        color: #3b7fb1;
         font-weight: 700;
         font-family: "Manrope", "Noto Sans SC", sans-serif;
       }}
       .stat-card {{
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 249, 255, 0.78));
-        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(245, 252, 251, 0.88));
+        border-radius: 14px;
+        padding: 0.75rem !important;
       }}
       .stat-label {{
         font-size: 0.76rem;
@@ -2127,28 +2216,29 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .stat-value {{
         font-family: "Manrope", "Noto Sans SC", sans-serif;
-        font-size: clamp(1.35rem, 2.2vw, 1.9rem);
+        font-size: clamp(1.2rem, 1.9vw, 1.65rem);
         line-height: 1;
         font-weight: 800;
         letter-spacing: -0.05em;
       }}
       .team-link-card {{
         display: block;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 249, 255, 0.78));
-        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 251, 250, 0.86));
+        border-radius: 14px;
+        padding: 0.8rem !important;
         color: inherit;
         text-decoration: none;
         transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
       }}
       .team-link-card:hover {{
         transform: translateY(-2px);
-        border-color: rgba(45, 127, 249, 0.2);
-        box-shadow: 0 0.8rem 1.8rem rgba(15, 23, 42, 0.1);
+        border-color: rgba(119, 188, 232, 0.22);
+        box-shadow: 0 0.8rem 1.8rem rgba(102, 147, 176, 0.12);
       }}
       .table-responsive {{
         overflow: auto;
-        border-radius: 18px;
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.82), rgba(248, 250, 255, 0.76));
+        border-radius: 14px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(245, 251, 252, 0.82));
       }}
       .table {{
         --bs-table-bg: transparent;
@@ -2164,19 +2254,39 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         text-transform: uppercase;
         color: var(--muted);
         background: rgba(246, 248, 252, 0.86);
-        padding-top: 0.72rem;
-        padding-bottom: 0.72rem;
+        padding-top: 0.58rem;
+        padding-bottom: 0.58rem;
       }}
       .table tbody td {{
-        padding-top: 0.62rem;
-        padding-bottom: 0.62rem;
-        font-size: 0.92rem;
+        padding-top: 0.5rem;
+        padding-bottom: 0.5rem;
+        font-size: 0.88rem;
+      }}
+      .panel,
+      .form-panel {{
+        padding: 0.9rem 1rem !important;
+      }}
+      .panel > :last-child,
+      .form-panel > :last-child,
+      .hero > :last-child {{
+        margin-bottom: 0 !important;
+      }}
+      .panel p,
+      .form-panel p,
+      .hero p {{
+        margin-bottom: 0.45rem;
+      }}
+      .panel h2,
+      .panel h3,
+      .form-panel h2,
+      .form-panel h3 {{
+        margin-bottom: 0.35rem;
       }}
       .table tbody tr {{
         transition: background-color 0.18s ease;
       }}
       .table tbody tr:hover {{
-        background: rgba(226, 238, 255, 0.44);
+        background: rgba(218, 235, 255, 0.48);
       }}
       .table.is-mobile-stack td::before {{
         content: attr(data-label);
@@ -2185,11 +2295,11 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .schedule-calendar-grid {{
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-        gap: 0.9rem;
+        gap: 0.72rem;
       }}
       .schedule-calendar-month {{
-        padding: 0.9rem;
-        border-radius: 18px;
+        padding: 0.75rem;
+        border-radius: 14px;
         background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(246, 249, 255, 0.82));
         border: 1px solid var(--line);
         box-shadow: var(--shadow-soft);
@@ -2218,11 +2328,11 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         padding-bottom: 0.15rem;
       }}
       .schedule-calendar-day {{
-        min-height: 60px;
-        border-radius: 14px;
+        min-height: 54px;
+        border-radius: 12px;
         border: 1px solid rgba(15, 23, 42, 0.06);
         background: rgba(255, 255, 255, 0.52);
-        padding: 0.45rem;
+        padding: 0.35rem;
       }}
       .schedule-calendar-day.is-outside {{
         opacity: 0.28;
@@ -2265,19 +2375,19 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: inline-flex;
         align-items: center;
         border-radius: 999px;
-        padding: 0.28rem 0.7rem;
-        background: linear-gradient(135deg, rgba(255, 255, 255, 0.82), rgba(225, 238, 255, 0.72));
+        padding: 0.22rem 0.58rem;
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.88), rgba(226, 239, 255, 0.82));
         color: var(--accent-dark);
-        font-size: 0.8rem;
+        font-size: 0.76rem;
         font-weight: 600;
-        border: 1px solid rgba(45, 127, 249, 0.12);
+        border: 1px solid rgba(119, 188, 232, 0.14);
       }}
       .hero .chip {{
         background: rgba(255, 255, 255, 0.5);
         border-color: rgba(255, 255, 255, 0.82);
       }}
       .form-panel {{
-        border-radius: 20px;
+        border-radius: 18px;
       }}
       .form-label {{
         font-size: 0.82rem;
@@ -2286,11 +2396,11 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       .form-control,
       .form-select {{
-        border-radius: 14px;
+        border-radius: 12px;
         border-color: rgba(17, 24, 39, 0.08);
         background: rgba(255, 255, 255, 0.86);
         color: var(--ink);
-        padding: 0.62rem 0.85rem;
+        padding: 0.52rem 0.74rem;
         box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
       }}
       .form-control:focus,
@@ -2300,12 +2410,12 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         background: #ffffff;
       }}
       textarea.form-control {{
-        min-height: 110px;
+        min-height: 96px;
       }}
       .player-photo-frame {{
         width: min(100%, 220px);
         aspect-ratio: 1 / 1;
-        border-radius: 22px;
+        border-radius: 18px;
         overflow: hidden;
         background:
           radial-gradient(circle at top, rgba(168, 208, 255, 0.3), transparent 42%),
@@ -2335,8 +2445,8 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 2.3rem;
-        padding: 0.45rem 0.85rem !important;
+        min-height: 2.1rem;
+        padding: 0.38rem 0.72rem !important;
         border-radius: 999px;
         background: rgba(255, 255, 255, 0.56);
         border: 1px solid rgba(255, 255, 255, 0.78);
@@ -2345,20 +2455,26 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .nav-pill:hover {{
         transform: translateY(-1px);
         background: rgba(255, 255, 255, 0.78);
-        border-color: rgba(45, 127, 249, 0.12);
+        border-color: rgba(119, 188, 232, 0.14);
+      }}
+      .nav-pill.is-active {{
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(226, 239, 255, 0.94));
+        border-color: rgba(119, 188, 232, 0.16);
+        color: var(--accent-dark);
+        box-shadow: 0 0.8rem 1.7rem rgba(102, 147, 176, 0.08);
       }}
       .switcher-chip {{
         display: inline-flex;
         align-items: center;
         justify-content: center;
-        min-height: 2.2rem;
-        padding: 0.42rem 0.82rem;
+        min-height: 2rem;
+        padding: 0.34rem 0.7rem;
         border-radius: 999px;
         border: 1px solid rgba(255, 255, 255, 0.82);
         background: rgba(255, 255, 255, 0.56);
         color: var(--ink);
         text-decoration: none;
-        font-size: 0.84rem;
+        font-size: 0.8rem;
         font-weight: 600;
         transition: transform 0.18s ease, background-color 0.18s ease, box-shadow 0.18s ease;
       }}
@@ -2368,15 +2484,15 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         box-shadow: 0 0.9rem 1.8rem rgba(15, 23, 42, 0.08);
       }}
       .switcher-chip.is-active {{
-        background: linear-gradient(135deg, rgba(255, 255, 255, 0.9), rgba(225, 238, 255, 0.9));
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(228, 240, 255, 0.94));
         color: var(--accent-dark);
-        border-color: rgba(45, 127, 249, 0.12);
+        border-color: rgba(119, 188, 232, 0.14);
       }}
       .btn {{
         border-radius: 999px;
         font-weight: 700;
         letter-spacing: -0.01em;
-        padding: 0.5rem 0.95rem;
+        padding: 0.42rem 0.82rem;
         transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease;
       }}
       .btn:hover {{
@@ -2386,17 +2502,17 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         padding: 0.34rem 0.7rem;
       }}
       .btn-dark {{
-        background: linear-gradient(135deg, #5aa7ff, var(--accent-dark));
+        background: linear-gradient(135deg, #9bd0ff, var(--accent-dark));
         border-color: transparent;
         color: #ffffff;
-        box-shadow: 0 0.9rem 1.9rem rgba(45, 127, 249, 0.22);
+        box-shadow: 0 0.9rem 1.9rem rgba(119, 188, 232, 0.22);
       }}
       .btn-dark:hover,
       .btn-dark:focus {{
         color: #ffffff;
-        background: linear-gradient(135deg, #3d93fb, #0f5cc6);
+        background: linear-gradient(135deg, #82bfff, #2f78ad);
         border-color: transparent;
-        box-shadow: 0 1.05rem 2.1rem rgba(45, 127, 249, 0.24);
+        box-shadow: 0 1.05rem 2.1rem rgba(119, 188, 232, 0.24);
       }}
       .btn-outline-dark {{
         background: rgba(255, 255, 255, 0.62);
@@ -2407,7 +2523,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .btn-outline-dark:focus {{
         color: var(--accent-dark);
         background: rgba(255, 255, 255, 0.86);
-        border-color: rgba(45, 127, 249, 0.16);
+        border-color: rgba(119, 188, 232, 0.18);
       }}
       .btn-light {{
         background: rgba(255, 255, 255, 0.72);
@@ -2418,22 +2534,69 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .btn-light:focus {{
         color: var(--accent-dark);
         background: rgba(255, 255, 255, 0.92);
-        border-color: rgba(45, 127, 249, 0.12);
+        border-color: rgba(119, 188, 232, 0.14);
       }}
       .alert {{
-        border-radius: 16px;
+        border-radius: 14px;
         border: 1px solid rgba(255, 204, 102, 0.3);
         background: linear-gradient(135deg, rgba(255, 252, 243, 0.96), rgba(255, 247, 228, 0.94));
         color: #7a5b14;
         box-shadow: var(--shadow-soft);
       }}
+      .p-4,
+      .p-lg-4,
+      .p-md-5 {{
+        padding: 1rem !important;
+      }}
+      .p-3 {{
+        padding: 0.8rem !important;
+      }}
+      .py-3 {{
+        padding-top: 0.8rem !important;
+        padding-bottom: 0.8rem !important;
+      }}
+      .px-4,
+      .px-lg-4 {{
+        padding-left: 1rem !important;
+        padding-right: 1rem !important;
+      }}
+      .mb-4 {{
+        margin-bottom: 0.75rem !important;
+      }}
+      .mb-3 {{
+        margin-bottom: 0.55rem !important;
+      }}
+      .mb-2 {{
+        margin-bottom: 0.35rem !important;
+      }}
+      .mt-5 {{
+        margin-top: 0.9rem !important;
+      }}
+      .mt-4 {{
+        margin-top: 0.7rem !important;
+      }}
+      .mt-3 {{
+        margin-top: 0.5rem !important;
+      }}
+      .pt-1 {{
+        padding-top: 0.12rem !important;
+      }}
+      .gap-4 {{
+        gap: 0.8rem !important;
+      }}
+      .gap-3 {{
+        gap: 0.55rem !important;
+      }}
+      .gap-2 {{
+        gap: 0.42rem !important;
+      }}
       .row.g-3 {{
-        --bs-gutter-x: 0.8rem;
-        --bs-gutter-y: 0.8rem;
+        --bs-gutter-x: 0.65rem;
+        --bs-gutter-y: 0.65rem;
       }}
       .row.g-4 {{
-        --bs-gutter-x: 1rem;
-        --bs-gutter-y: 1rem;
+        --bs-gutter-x: 0.8rem;
+        --bs-gutter-y: 0.8rem;
       }}
       .link-dark,
       .link-dark:focus,
@@ -2444,7 +2607,1376 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .link-underline-opacity-75-hover:hover {{
         color: var(--accent-dark) !important;
       }}
+      .dashboard-home {{
+        display: grid;
+        gap: 1rem;
+      }}
+      .dashboard-hero {{
+        position: relative;
+        overflow: hidden;
+        padding: 1.3rem !important;
+        border-radius: 24px;
+        border: 1px solid rgba(142, 191, 236, 0.24);
+        background:
+          radial-gradient(circle at top left, rgba(188, 220, 255, 0.38), transparent 28%),
+          radial-gradient(circle at 85% 18%, rgba(244, 222, 208, 0.2), transparent 20%),
+          linear-gradient(145deg, #fafdff 0%, #f2f8ff 54%, #edf4ff 100%);
+        box-shadow: 0 1.3rem 3rem rgba(105, 149, 177, 0.16);
+        color: #18324a;
+      }}
+      .dashboard-hero::before {{
+        content: "";
+        position: absolute;
+        inset: auto -8% -26% auto;
+        width: min(32vw, 340px);
+        aspect-ratio: 1 / 1;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(151, 197, 255, 0.34), rgba(151, 197, 255, 0));
+        pointer-events: none;
+      }}
+      .dashboard-hero::after {{
+        content: "";
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background-image: linear-gradient(rgba(91, 136, 163, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(91, 136, 163, 0.05) 1px, transparent 1px);
+        background-size: 24px 24px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.38), transparent 75%);
+        opacity: 0.22;
+      }}
+      .dashboard-hero .hero-layout {{
+        grid-template-columns: minmax(0, 1.48fr) minmax(300px, 0.9fr);
+        gap: 0.9rem;
+      }}
+      .dashboard-hero .eyebrow {{
+        color: #3b7fb1;
+      }}
+      .dashboard-hero .eyebrow::before {{
+        background: currentColor;
+      }}
+      .dashboard-hero .hero-title {{
+        color: #17324d;
+        font-size: clamp(2rem, 4.2vw, 4.1rem);
+        line-height: 0.95;
+        text-wrap: balance;
+      }}
+      .dashboard-hero .hero-copy {{
+        max-width: 58ch;
+        color: rgba(60, 91, 117, 0.78);
+        font-size: 0.96rem;
+        line-height: 1.62;
+      }}
+      .dashboard-status-row {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-top: 0.8rem;
+      }}
+      .dashboard-status-chip {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.42rem;
+        padding: 0.38rem 0.72rem;
+        border-radius: 999px;
+        border: 1px solid rgba(142, 191, 236, 0.16);
+        background: rgba(255, 255, 255, 0.7);
+        color: #35516e;
+        font-size: 0.78rem;
+        font-weight: 600;
+      }}
+      .dashboard-status-chip strong {{
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.82rem;
+        letter-spacing: -0.03em;
+      }}
+      .dashboard-filter-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.72rem;
+        margin-top: 0.95rem;
+      }}
+      .dashboard-filter-block {{
+        min-height: 100%;
+        padding: 0.82rem 0.88rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.66);
+        border: 1px solid rgba(142, 191, 236, 0.12);
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36);
+      }}
+      .dashboard-filter-label {{
+        margin-bottom: 0.55rem;
+        color: rgba(72, 113, 158, 0.78);
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }}
+      .dashboard-filter-block .hero-switchers {{
+        gap: 0.48rem;
+      }}
+      .dashboard-home .dashboard-filter-block .switcher-chip {{
+        min-height: 2.1rem;
+        background: rgba(255, 255, 255, 0.82);
+        border-color: rgba(142, 191, 236, 0.12);
+        color: #35516e;
+      }}
+      .dashboard-home .dashboard-filter-block .switcher-chip:hover {{
+        background: rgba(255, 255, 255, 0.98);
+        color: #17324d;
+        box-shadow: none;
+      }}
+      .dashboard-home .dashboard-filter-block .switcher-chip.is-active {{
+        background: linear-gradient(135deg, rgba(201, 226, 255, 0.96), rgba(230, 239, 255, 0.98));
+        border-color: rgba(142, 191, 236, 0.22);
+        color: #356d9c;
+        box-shadow: 0 0.8rem 1.7rem rgba(118, 168, 195, 0.12);
+      }}
+      .dashboard-home .dashboard-filter-block form {{
+        margin: 0;
+      }}
+      .dashboard-home .dashboard-filter-block label {{
+        color: rgba(72, 113, 158, 0.84) !important;
+      }}
+      .dashboard-home .dashboard-filter-block .form-select {{
+        min-width: 100% !important;
+        background: rgba(255, 255, 255, 0.92);
+        border-color: rgba(142, 191, 236, 0.14);
+        color: #17324d;
+      }}
+      .dashboard-home .dashboard-filter-block .form-select:focus {{
+        background: #ffffff;
+        border-color: rgba(142, 191, 236, 0.22);
+        box-shadow: 0 0 0 0.22rem rgba(142, 191, 236, 0.14);
+      }}
+      .dashboard-hero-side {{
+        display: grid;
+        gap: 0.72rem;
+      }}
+      .dashboard-spotlight-card,
+      .dashboard-brief-card {{
+        position: relative;
+        overflow: hidden;
+        border-radius: 20px;
+        border: 1px solid rgba(142, 191, 236, 0.14);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.84), rgba(247, 252, 255, 0.72));
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.4);
+      }}
+      .dashboard-spotlight-card {{
+        padding: 1rem;
+      }}
+      .dashboard-spotlight-card::after {{
+        content: "";
+        position: absolute;
+        top: -20%;
+        right: -18%;
+        width: 56%;
+        height: 56%;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(192, 216, 255, 0.22), rgba(192, 216, 255, 0));
+        pointer-events: none;
+      }}
+      .dashboard-panel-kicker {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.45rem;
+        color: rgba(72, 113, 158, 0.78);
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }}
+      .dashboard-panel-kicker::before {{
+        content: "";
+        width: 0.52rem;
+        height: 0.52rem;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #b8d8ff, #93cfff);
+      }}
+      .dashboard-spotlight-title {{
+        margin-top: 0.6rem;
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.28rem, 2vw, 1.9rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        line-height: 1.02;
+      }}
+      .dashboard-spotlight-copy {{
+        margin-top: 0.48rem;
+        color: rgba(76, 102, 125, 0.76);
+        font-size: 0.85rem;
+        line-height: 1.48;
+      }}
+      .dashboard-spotlight-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.55rem;
+        margin-top: 0.8rem;
+      }}
+      .dashboard-spotlight-metric {{
+        padding: 0.72rem;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid rgba(142, 191, 236, 0.12);
+      }}
+      .dashboard-spotlight-metric span {{
+        display: block;
+        color: rgba(72, 113, 158, 0.68);
+        font-size: 0.7rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }}
+      .dashboard-spotlight-metric strong {{
+        display: block;
+        margin-top: 0.28rem;
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 1rem;
+        font-weight: 800;
+        line-height: 1.12;
+        letter-spacing: -0.04em;
+      }}
+      .dashboard-spotlight-metric small {{
+        display: block;
+        margin-top: 0.14rem;
+        color: rgba(76, 102, 125, 0.62);
+        font-size: 0.74rem;
+      }}
+      .dashboard-brief-card {{
+        padding: 0.9rem;
+      }}
+      .dashboard-brief-list {{
+        display: grid;
+        gap: 0.58rem;
+        margin-top: 0.78rem;
+      }}
+      .dashboard-brief-item {{
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 0.62rem;
+        align-items: center;
+      }}
+      .dashboard-rank-badge {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2rem;
+        height: 2rem;
+        border-radius: 14px;
+        background: linear-gradient(135deg, rgba(195, 223, 255, 0.9), rgba(226, 236, 255, 0.92));
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.84rem;
+        font-weight: 800;
+      }}
+      .dashboard-brief-name {{
+        color: #17324d;
+        font-size: 0.9rem;
+        font-weight: 700;
+      }}
+      .dashboard-brief-meta {{
+        color: rgba(98, 121, 143, 0.72);
+        font-size: 0.76rem;
+      }}
+      .dashboard-brief-value {{
+        color: #3b7fb1;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.96rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        text-align: right;
+      }}
+      .dashboard-brief-value small {{
+        display: block;
+        color: rgba(98, 121, 143, 0.6);
+        font-size: 0.68rem;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }}
+      .dashboard-metrics-grid {{
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.8rem;
+      }}
+      .dashboard-metric-card {{
+        position: relative;
+        min-height: 100%;
+        padding: 1rem;
+        border-radius: 20px;
+        border: 1px solid rgba(17, 24, 39, 0.06);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(246, 249, 255, 0.88));
+        box-shadow: 0 1rem 2.2rem rgba(15, 23, 42, 0.08);
+      }}
+      .dashboard-metric-card::before {{
+        content: "";
+        position: absolute;
+        inset: 0 auto auto 0;
+        width: 100%;
+        height: 4px;
+        border-radius: 20px 20px 0 0;
+        background: linear-gradient(90deg, #72b7ef, #a4cff8, #f1c8af);
+        opacity: 0.88;
+      }}
+      .dashboard-metric-label {{
+        color: #667085;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }}
+      .dashboard-metric-value {{
+        margin-top: 0.46rem;
+        color: #0f172a;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.6rem, 2.6vw, 2.4rem);
+        font-weight: 800;
+        letter-spacing: -0.06em;
+        line-height: 0.94;
+      }}
+      .dashboard-metric-copy {{
+        margin-top: 0.36rem;
+        color: #64748b;
+        font-size: 0.82rem;
+        line-height: 1.45;
+      }}
+      .dashboard-grid {{
+        display: grid;
+        grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.82fr);
+        gap: 0.9rem;
+      }}
+      .dashboard-section-panel {{
+        padding: 1rem !important;
+        border-radius: 22px;
+      }}
+      .dashboard-section-head {{
+        display: flex;
+        flex-wrap: wrap;
+        align-items: end;
+        justify-content: space-between;
+        gap: 0.8rem;
+        margin-bottom: 0.9rem;
+      }}
+      .dashboard-section-copy {{
+        max-width: 62ch;
+        color: var(--muted);
+        font-size: 0.88rem;
+        line-height: 1.48;
+      }}
+      .dashboard-feature-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 0.85rem;
+      }}
+      .dashboard-feature-card {{
+        position: relative;
+        overflow: hidden;
+        min-height: 100%;
+        padding: 1rem;
+        border-radius: 22px;
+        background:
+          radial-gradient(circle at top right, rgba(190, 221, 255, 0.18), transparent 24%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(244, 251, 250, 0.94));
+        border: 1px solid rgba(17, 24, 39, 0.06);
+        box-shadow: 0 1rem 2.2rem rgba(15, 23, 42, 0.08);
+      }}
+      .dashboard-feature-card::after {{
+        content: "";
+        position: absolute;
+        right: -16%;
+        bottom: -28%;
+        width: 46%;
+        aspect-ratio: 1 / 1;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(151, 197, 255, 0.16), rgba(151, 197, 255, 0));
+        pointer-events: none;
+      }}
+      .dashboard-feature-top {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.6rem;
+      }}
+      .dashboard-feature-tag {{
+        display: inline-flex;
+        align-items: center;
+        padding: 0.28rem 0.6rem;
+        border-radius: 999px;
+        background: rgba(190, 221, 255, 0.16);
+        color: #3b7fb1;
+        font-size: 0.72rem;
+        font-weight: 700;
+      }}
+      .dashboard-feature-title {{
+        margin-top: 0.85rem;
+        color: #0f172a;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.2rem, 1.8vw, 1.7rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }}
+      .dashboard-feature-copy {{
+        margin-top: 0.38rem;
+        color: #475569;
+        font-size: 0.86rem;
+        line-height: 1.5;
+      }}
+      .dashboard-feature-stats {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.55rem;
+        margin-top: 0.85rem;
+      }}
+      .dashboard-feature-stat {{
+        padding: 0.62rem 0.68rem;
+        border-radius: 15px;
+        background: rgba(255, 255, 255, 0.78);
+        border: 1px solid rgba(17, 24, 39, 0.06);
+      }}
+      .dashboard-feature-stat span {{
+        display: block;
+        color: #64748b;
+        font-size: 0.7rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }}
+      .dashboard-feature-stat strong {{
+        display: block;
+        margin-top: 0.26rem;
+        color: #111827;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.98rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }}
+      .dashboard-feature-actions {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.52rem;
+        margin-top: 0.95rem;
+      }}
+      .dashboard-side-panel {{
+        padding: 1rem !important;
+        border-radius: 22px;
+      }}
+      .dashboard-ranking-list {{
+        display: grid;
+        gap: 0.68rem;
+        margin-top: 0.9rem;
+      }}
+      .dashboard-ranking-item {{
+        display: grid;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        gap: 0.7rem;
+        align-items: center;
+        padding: 0.78rem 0.82rem;
+        border-radius: 18px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 249, 255, 0.82));
+        border: 1px solid rgba(17, 24, 39, 0.05);
+        color: inherit;
+        text-decoration: none;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+      }}
+      .dashboard-ranking-item:hover {{
+        transform: translateY(-1px);
+        box-shadow: 0 0.9rem 1.8rem rgba(15, 23, 42, 0.08);
+        border-color: rgba(29, 78, 216, 0.12);
+      }}
+      .dashboard-ranking-index {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.2rem;
+        height: 2.2rem;
+        border-radius: 16px;
+        background: linear-gradient(135deg, #0f172a, #1d4ed8);
+        color: #ffffff;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.84rem;
+        font-weight: 800;
+      }}
+      .dashboard-ranking-name {{
+        color: #0f172a;
+        font-size: 0.92rem;
+        font-weight: 700;
+      }}
+      .dashboard-ranking-meta {{
+        color: #64748b;
+        font-size: 0.76rem;
+        line-height: 1.4;
+      }}
+      .dashboard-ranking-score {{
+        text-align: right;
+        color: #0f172a;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.98rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+      }}
+      .dashboard-ranking-score small {{
+        display: block;
+        color: #64748b;
+        font-size: 0.68rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }}
+      .dashboard-day-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.85rem;
+      }}
+      .dashboard-day-card {{
+        display: block;
+        min-height: 100%;
+        padding: 1rem;
+        border-radius: 22px;
+        background:
+          radial-gradient(circle at top right, rgba(198, 224, 255, 0.18), transparent 22%),
+          linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(246, 252, 251, 0.9));
+        border: 1px solid rgba(17, 24, 39, 0.06);
+        box-shadow: 0 1rem 2.2rem rgba(15, 23, 42, 0.08);
+        color: inherit;
+        text-decoration: none;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+      }}
+      .dashboard-day-card:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 1.1rem 2.3rem rgba(102, 147, 176, 0.1);
+        border-color: rgba(142, 191, 236, 0.24);
+      }}
+      .dashboard-day-top {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.7rem;
+      }}
+      .dashboard-day-kicker {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.4rem;
+        color: #3b7fb1;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.14em;
+        text-transform: uppercase;
+      }}
+      .dashboard-day-kicker::before {{
+        content: "";
+        width: 0.5rem;
+        height: 0.5rem;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #bfdcff, #9bd0ff);
+      }}
+      .dashboard-day-count {{
+        padding: 0.28rem 0.58rem;
+        border-radius: 999px;
+        background: rgba(198, 224, 255, 0.28);
+        color: #3b7fb1;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }}
+      .dashboard-day-title {{
+        margin-top: 0.92rem;
+        color: #0f172a;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.28rem, 1.9vw, 1.86rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }}
+      .dashboard-day-copy {{
+        margin-top: 0.32rem;
+        color: #64748b;
+        font-size: 0.84rem;
+        line-height: 1.48;
+      }}
+      .dashboard-day-tags {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.42rem;
+        margin-top: 0.78rem;
+      }}
+      .dashboard-day-tag {{
+        display: inline-flex;
+        align-items: center;
+        padding: 0.26rem 0.55rem;
+        border-radius: 999px;
+        background: rgba(15, 23, 42, 0.05);
+        color: #334155;
+        font-size: 0.74rem;
+        font-weight: 600;
+      }}
+      .player-showcase-grid {{
+        display: grid;
+        grid-template-columns: minmax(0, 1.3fr) minmax(320px, 0.9fr);
+        gap: 0.9rem;
+      }}
+      .player-showcase-card,
+      .player-insight-card,
+      .player-role-card,
+      .player-match-card,
+      .player-season-card,
+      .player-competition-card {{
+        position: relative;
+        overflow: hidden;
+        border-radius: 22px;
+        border: 1px solid rgba(17, 24, 39, 0.06);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 250, 255, 0.9));
+        box-shadow: 0 1rem 2.2rem rgba(15, 23, 42, 0.08);
+      }}
+      .player-showcase-card,
+      .player-insight-card {{
+        padding: 1rem;
+      }}
+      .player-showcase-card::after,
+      .player-insight-card::after {{
+        content: "";
+        position: absolute;
+        right: -12%;
+        bottom: -20%;
+        width: 42%;
+        aspect-ratio: 1 / 1;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(153, 201, 255, 0.18), rgba(153, 201, 255, 0));
+        pointer-events: none;
+      }}
+      .player-masthead {{
+        display: flex;
+        align-items: flex-start;
+        gap: 0.9rem;
+      }}
+      .player-masthead-copy {{
+        min-width: 0;
+        flex: 1;
+      }}
+      .player-masthead-meta {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.42rem;
+        margin-top: 0.78rem;
+      }}
+      .player-headline {{
+        margin-top: 0.3rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.4rem, 2.4vw, 2.2rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        color: #17324d;
+      }}
+      .player-subtitle {{
+        color: #64748b;
+        font-size: 0.9rem;
+        line-height: 1.55;
+      }}
+      .player-badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.34rem 0.68rem;
+        border-radius: 999px;
+        background: rgba(226, 239, 255, 0.72);
+        color: #356d9c;
+        font-size: 0.76rem;
+        font-weight: 700;
+      }}
+      .player-kpi-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.72rem;
+        margin-top: 1rem;
+      }}
+      .player-kpi-card {{
+        padding: 0.78rem 0.82rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid rgba(17, 24, 39, 0.06);
+      }}
+      .player-kpi-label {{
+        color: #64748b;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }}
+      .player-kpi-value {{
+        margin-top: 0.34rem;
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.25rem, 1.9vw, 1.7rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }}
+      .player-kpi-copy {{
+        margin-top: 0.18rem;
+        color: #6b7f93;
+        font-size: 0.76rem;
+        line-height: 1.4;
+      }}
+      .player-insight-card {{
+        display: grid;
+        gap: 0.7rem;
+      }}
+      .player-skill-row {{
+        display: grid;
+        gap: 0.32rem;
+      }}
+      .player-skill-head {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.7rem;
+      }}
+      .player-skill-head strong {{
+        color: #17324d;
+        font-size: 0.88rem;
+      }}
+      .player-skill-head span {{
+        color: #64748b;
+        font-size: 0.76rem;
+      }}
+      .player-skill-track {{
+        position: relative;
+        height: 0.55rem;
+        border-radius: 999px;
+        background: rgba(217, 230, 243, 0.9);
+        overflow: hidden;
+      }}
+      .player-skill-fill {{
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #88bffd, #63d4c7);
+      }}
+      .player-note-grid {{
+        display: grid;
+        gap: 0.62rem;
+      }}
+      .player-note-item {{
+        padding: 0.78rem 0.82rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid rgba(17, 24, 39, 0.06);
+      }}
+      .player-note-label {{
+        color: #64748b;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }}
+      .player-note-value {{
+        margin-top: 0.2rem;
+        color: #17324d;
+        font-weight: 700;
+        line-height: 1.5;
+      }}
+      .player-roles-grid,
+      .player-season-grid,
+      .player-competition-grid,
+      .player-match-grid {{
+        display: grid;
+        gap: 0.8rem;
+      }}
+      .player-roles-grid {{
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }}
+      .player-season-grid,
+      .player-competition-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .player-role-card,
+      .player-season-card,
+      .player-competition-card,
+      .player-match-card {{
+        padding: 0.9rem;
+      }}
+      .player-role-top,
+      .player-season-top,
+      .player-competition-top,
+      .player-match-top {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.7rem;
+      }}
+      .player-role-name,
+      .player-season-name,
+      .player-competition-name,
+      .player-match-name {{
+        color: #17324d;
+        font-size: 0.98rem;
+        font-weight: 800;
+        line-height: 1.3;
+      }}
+      .player-role-meta,
+      .player-season-meta,
+      .player-competition-meta,
+      .player-match-meta {{
+        color: #64748b;
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }}
+      .player-role-count,
+      .player-season-points,
+      .player-competition-points,
+      .player-match-points {{
+        color: #3b7fb1;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        white-space: nowrap;
+      }}
+      .player-role-track {{
+        margin-top: 0.75rem;
+        height: 0.52rem;
+        border-radius: 999px;
+        background: rgba(217, 230, 243, 0.9);
+        overflow: hidden;
+      }}
+      .player-role-fill {{
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #9fc4ff, #74d2c8);
+      }}
+      .player-role-share {{
+        margin-top: 0.42rem;
+        color: #64748b;
+        font-size: 0.76rem;
+      }}
+      .player-season-stats,
+      .player-competition-stats,
+      .player-match-tags {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.4rem;
+        margin-top: 0.75rem;
+      }}
+      .player-stat-pill {{
+        display: inline-flex;
+        align-items: center;
+        padding: 0.24rem 0.52rem;
+        border-radius: 999px;
+        background: rgba(226, 239, 255, 0.7);
+        color: #356d9c;
+        font-size: 0.74rem;
+        font-weight: 700;
+      }}
+      .player-match-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .player-match-card {{
+        display: grid;
+        gap: 0.72rem;
+      }}
+      .player-match-result {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 4.6rem;
+        padding: 0.34rem 0.62rem;
+        border-radius: 999px;
+        background: rgba(234, 179, 8, 0.12);
+        color: #a16207;
+        font-size: 0.76rem;
+        font-weight: 700;
+      }}
+      .player-match-result.is-win {{
+        background: rgba(34, 197, 94, 0.12);
+        color: #15803d;
+      }}
+      .player-match-result.is-loss {{
+        background: rgba(239, 68, 68, 0.1);
+        color: #b91c1c;
+      }}
+      .player-match-actions {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+      }}
+      .team-showcase-grid {{
+        display: grid;
+        grid-template-columns: minmax(0, 1.26fr) minmax(320px, 0.94fr);
+        gap: 0.9rem;
+      }}
+      .team-showcase-card,
+      .team-insight-card,
+      .team-roster-card,
+      .team-match-card {{
+        position: relative;
+        overflow: hidden;
+        border-radius: 22px;
+        border: 1px solid rgba(17, 24, 39, 0.06);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(245, 250, 255, 0.9));
+        box-shadow: 0 1rem 2.2rem rgba(15, 23, 42, 0.08);
+      }}
+      .team-showcase-card,
+      .team-insight-card {{
+        padding: 1rem;
+      }}
+      .team-showcase-card::after,
+      .team-insight-card::after {{
+        content: "";
+        position: absolute;
+        right: -12%;
+        bottom: -22%;
+        width: 42%;
+        aspect-ratio: 1 / 1;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(153, 201, 255, 0.18), rgba(153, 201, 255, 0));
+        pointer-events: none;
+      }}
+      .team-headline {{
+        margin-top: 0.3rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.42rem, 2.45vw, 2.2rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+        color: #17324d;
+      }}
+      .team-subtitle {{
+        color: #64748b;
+        font-size: 0.9rem;
+        line-height: 1.55;
+      }}
+      .team-badge-row,
+      .team-insight-tags,
+      .team-roster-tags {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.42rem;
+      }}
+      .team-badge {{
+        display: inline-flex;
+        align-items: center;
+        gap: 0.35rem;
+        padding: 0.34rem 0.68rem;
+        border-radius: 999px;
+        background: rgba(226, 239, 255, 0.72);
+        color: #356d9c;
+        font-size: 0.76rem;
+        font-weight: 700;
+      }}
+      .team-kpi-grid {{
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 0.72rem;
+        margin-top: 1rem;
+      }}
+      .team-kpi-card {{
+        padding: 0.78rem 0.82rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.74);
+        border: 1px solid rgba(17, 24, 39, 0.06);
+      }}
+      .team-kpi-label {{
+        color: #64748b;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }}
+      .team-kpi-value {{
+        margin-top: 0.34rem;
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: clamp(1.2rem, 1.85vw, 1.64rem);
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }}
+      .team-kpi-copy {{
+        margin-top: 0.18rem;
+        color: #6b7f93;
+        font-size: 0.76rem;
+        line-height: 1.4;
+      }}
+      .team-insight-card {{
+        display: grid;
+        gap: 0.7rem;
+      }}
+      .team-meter-row {{
+        display: grid;
+        gap: 0.32rem;
+      }}
+      .team-meter-head {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.7rem;
+      }}
+      .team-meter-head strong {{
+        color: #17324d;
+        font-size: 0.88rem;
+      }}
+      .team-meter-head span {{
+        color: #64748b;
+        font-size: 0.76rem;
+      }}
+      .team-meter-track {{
+        position: relative;
+        height: 0.55rem;
+        border-radius: 999px;
+        background: rgba(217, 230, 243, 0.9);
+        overflow: hidden;
+      }}
+      .team-meter-fill {{
+        position: absolute;
+        inset: 0 auto 0 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #88bffd, #63d4c7);
+      }}
+      .team-note-grid,
+      .team-roster-grid,
+      .team-match-grid {{
+        display: grid;
+        gap: 0.8rem;
+      }}
+      .team-note-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .team-note-item {{
+        padding: 0.78rem 0.82rem;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.76);
+        border: 1px solid rgba(17, 24, 39, 0.06);
+      }}
+      .team-note-label {{
+        color: #64748b;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+      }}
+      .team-note-value {{
+        margin-top: 0.2rem;
+        color: #17324d;
+        font-weight: 700;
+        line-height: 1.5;
+      }}
+      .team-roster-grid {{
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }}
+      .team-match-grid {{
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }}
+      .team-roster-card,
+      .team-match-card {{
+        padding: 0.9rem;
+      }}
+      .team-roster-card {{
+        display: grid;
+        gap: 0.72rem;
+      }}
+      .team-roster-top,
+      .team-match-top {{
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 0.7rem;
+      }}
+      .team-roster-name,
+      .team-match-name {{
+        color: #17324d;
+        font-size: 0.98rem;
+        font-weight: 800;
+        line-height: 1.3;
+      }}
+      .team-roster-meta,
+      .team-match-meta {{
+        color: #64748b;
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }}
+      .team-roster-value,
+      .team-match-value {{
+        color: #3b7fb1;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 1rem;
+        font-weight: 800;
+        letter-spacing: -0.04em;
+        white-space: nowrap;
+      }}
+      .team-match-card {{
+        display: grid;
+        gap: 0.72rem;
+      }}
+      .team-scoreboard {{
+        display: flex;
+        align-items: baseline;
+        gap: 0.5rem;
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+      }}
+      .team-scoreboard strong {{
+        font-size: 1.16rem;
+        font-weight: 800;
+        letter-spacing: -0.05em;
+      }}
+      .team-scoreboard span {{
+        color: #64748b;
+        font-size: 0.78rem;
+      }}
+      .team-match-actions {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+      }}
+      .compact-list-wrap {{
+        overflow: visible;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }}
+      .compact-scope-block + .compact-scope-block {{
+        margin-top: 1rem;
+        padding-top: 1rem;
+        border-top: 1px solid rgba(15, 23, 42, 0.08);
+      }}
+      .admin-console-strip {{
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.75rem;
+        margin-bottom: 0.95rem;
+        padding: 0.95rem 1rem;
+        border-radius: 20px;
+        border: 1px solid rgba(125, 166, 210, 0.18);
+        background:
+          radial-gradient(circle at top right, rgba(165, 214, 255, 0.28), transparent 24%),
+          linear-gradient(135deg, rgba(244, 251, 255, 0.98), rgba(236, 245, 255, 0.95));
+        box-shadow: 0 1rem 2.2rem rgba(117, 145, 179, 0.16);
+      }}
+      .admin-console-copy {{
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 0.55rem;
+        color: #5f7288;
+      }}
+      .admin-console-copy strong {{
+        color: #17324d;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: -0.03em;
+      }}
+      .admin-console-label {{
+        display: inline-flex;
+        align-items: center;
+        padding: 0.3rem 0.6rem;
+        border-radius: 999px;
+        background: rgba(113, 197, 188, 0.18);
+        color: #0f766e;
+        font-size: 0.72rem;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-weight: 800;
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+      }}
+      .admin-return-link {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 2.2rem;
+        padding: 0.42rem 0.86rem;
+        border-radius: 999px;
+        border: 1px solid rgba(125, 166, 210, 0.18);
+        background: rgba(255, 255, 255, 0.72);
+        color: #17324d;
+        text-decoration: none;
+        font-weight: 700;
+      }}
+      .admin-return-link:hover {{
+        color: #0f5cc6;
+        background: rgba(255, 255, 255, 0.96);
+      }}
+      body.app-admin {{
+        background:
+          radial-gradient(circle at top left, rgba(152, 230, 223, 0.22), transparent 28%),
+          radial-gradient(circle at top right, rgba(176, 220, 255, 0.28), transparent 24%),
+          radial-gradient(circle at bottom right, rgba(196, 234, 255, 0.22), transparent 24%),
+          linear-gradient(180deg, #f5fbff 0%, #edf6fb 100%);
+        color: #19324a;
+      }}
+      body.app-admin::before {{
+        background:
+          linear-gradient(135deg, rgba(255, 255, 255, 0.46), transparent 42%),
+          radial-gradient(circle at 20% 20%, rgba(150, 219, 214, 0.22), transparent 24%);
+      }}
+      body.app-admin::after {{
+        background-image: linear-gradient(rgba(148, 163, 184, 0.05) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(148, 163, 184, 0.05) 1px, transparent 1px);
+        opacity: 0.16;
+      }}
+      body.app-admin .topbar,
+      body.app-admin .panel,
+      body.app-admin .form-panel,
+      body.app-admin .table-responsive,
+      body.app-admin .team-link-card,
+      body.app-admin .stat-card {{
+        border-color: rgba(125, 166, 210, 0.14);
+        box-shadow: 0 1rem 2.4rem rgba(126, 151, 180, 0.12);
+        backdrop-filter: blur(18px);
+        -webkit-backdrop-filter: blur(18px);
+      }}
+      body.app-admin .topbar,
+      body.app-admin .panel,
+      body.app-admin .form-panel {{
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.86), rgba(247, 251, 255, 0.8));
+      }}
+      body.app-admin .topbar {{
+        background:
+          radial-gradient(circle at top right, rgba(178, 224, 255, 0.28), transparent 22%),
+          linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(242, 249, 255, 0.9));
+      }}
+      body.app-admin .brand-kicker {{
+        background: rgba(113, 197, 188, 0.14);
+        color: #0f766e;
+      }}
+      body.app-admin .brand-title,
+      body.app-admin .nav-link,
+      body.app-admin .section-title,
+      body.app-admin .dashboard-metric-value,
+      body.app-admin .dashboard-ranking-name,
+      body.app-admin .dashboard-feature-title,
+      body.app-admin .dashboard-day-title {{
+        color: #17324d;
+      }}
+      body.app-admin .small,
+      body.app-admin .small-muted,
+      body.app-admin .section-copy,
+      body.app-admin .dashboard-section-copy,
+      body.app-admin .dashboard-feature-copy,
+      body.app-admin .dashboard-day-copy,
+      body.app-admin .dashboard-ranking-meta,
+      body.app-admin .form-label,
+      body.app-admin .text-secondary {{
+        color: #6f869b !important;
+      }}
+      body.app-admin .nav-pill {{
+        background: rgba(255, 255, 255, 0.74);
+        border-color: rgba(125, 166, 210, 0.16);
+        color: #35516e;
+      }}
+      body.app-admin .nav-pill:hover {{
+        background: rgba(255, 255, 255, 0.96);
+        border-color: rgba(84, 156, 231, 0.22);
+      }}
+      body.app-admin .nav-pill.is-active {{
+        background: linear-gradient(135deg, rgba(136, 219, 209, 0.82), rgba(173, 220, 255, 0.92));
+        border-color: rgba(105, 184, 203, 0.26);
+        color: #0f4c81;
+      }}
+      body.app-admin .hero {{
+        background:
+          radial-gradient(circle at top right, rgba(170, 225, 255, 0.34), transparent 24%),
+          radial-gradient(circle at left bottom, rgba(160, 231, 222, 0.24), transparent 24%),
+          linear-gradient(145deg, rgba(248, 252, 255, 0.96), rgba(239, 248, 255, 0.92));
+        border-color: rgba(125, 166, 210, 0.14);
+        color: #17324d;
+      }}
+      body.app-admin .hero-copy,
+      body.app-admin .hero p,
+      body.app-admin .opacity-75 {{
+        color: rgba(47, 82, 112, 0.78) !important;
+      }}
+      body.app-admin .chip,
+      body.app-admin .hero .chip {{
+        background: rgba(173, 220, 255, 0.28);
+        border-color: rgba(125, 166, 210, 0.16);
+        color: #0f5cc6;
+      }}
+      body.app-admin .team-link-card,
+      body.app-admin .stat-card,
+      body.app-admin .dashboard-feature-card,
+      body.app-admin .dashboard-day-card,
+      body.app-admin .dashboard-ranking-item,
+      body.app-admin .dashboard-metric-card {{
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.94), rgba(244, 250, 255, 0.88));
+        border-color: rgba(125, 166, 210, 0.12);
+      }}
+      body.app-admin .dashboard-feature-tag,
+      body.app-admin .dashboard-day-tag,
+      body.app-admin .dashboard-day-count {{
+        background: rgba(173, 220, 255, 0.28);
+        color: #0f5cc6;
+      }}
+      body.app-admin .dashboard-ranking-index,
+      body.app-admin .dashboard-rank-badge {{
+        background: linear-gradient(135deg, #86ddd2, #6daeff);
+      }}
+      body.app-admin .dashboard-ranking-score,
+      body.app-admin .dashboard-brief-value {{
+        color: #d97706;
+      }}
+      body.app-admin .form-control,
+      body.app-admin .form-select {{
+        background: rgba(255, 255, 255, 0.92);
+        border-color: rgba(125, 166, 210, 0.16);
+        color: #17324d;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+      }}
+      body.app-admin .form-control:focus,
+      body.app-admin .form-select:focus {{
+        background: #ffffff;
+        border-color: rgba(84, 156, 231, 0.26);
+        box-shadow: 0 0 0 0.24rem rgba(84, 156, 231, 0.14);
+        color: #0f2740;
+      }}
+      body.app-admin .btn-outline-dark,
+      body.app-admin .btn-light {{
+        background: rgba(255, 255, 255, 0.84);
+        border-color: rgba(125, 166, 210, 0.16);
+        color: #35516e;
+      }}
+      body.app-admin .btn-outline-dark:hover,
+      body.app-admin .btn-light:hover {{
+        background: rgba(255, 255, 255, 1);
+        color: #0f5cc6;
+      }}
+      body.app-admin .table {{
+        color: #19324a;
+      }}
+      body.app-admin .table thead th {{
+        background: rgba(230, 243, 255, 0.9);
+        color: #3b6a93;
+      }}
+      body.app-admin .table tbody tr:hover {{
+        background: rgba(173, 220, 255, 0.18);
+      }}
+      body.app-admin .alert {{
+        border-color: rgba(251, 191, 36, 0.2);
+        background: linear-gradient(135deg, rgba(255, 250, 235, 0.96), rgba(255, 244, 214, 0.92));
+        color: #9a6700;
+      }}
       @media (max-width: 991.98px) {{
+        .dashboard-hero .hero-layout,
+        .dashboard-grid,
+        .player-showcase-grid,
+        .team-showcase-grid {{
+          grid-template-columns: 1fr;
+        }}
+        .dashboard-metrics-grid {{
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }}
+        .dashboard-day-grid,
+        .dashboard-feature-grid {{
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }}
         .hero-layout {{
           grid-template-columns: 1fr;
         }}
@@ -2452,7 +3984,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         .panel,
         .form-panel,
         .hero {{
-          border-radius: 20px;
+          border-radius: 16px;
         }}
         .topbar {{
           position: relative;
@@ -2463,6 +3995,28 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         }}
       }}
       @media (max-width: 767.98px) {{
+        .dashboard-hero {{
+          padding: 1rem !important;
+        }}
+        .dashboard-filter-grid,
+        .dashboard-feature-grid,
+        .dashboard-day-grid,
+        .player-roles-grid,
+        .player-season-grid,
+        .player-competition-grid,
+        .player-match-grid,
+        .team-roster-grid,
+        .team-match-grid {{
+          grid-template-columns: 1fr;
+        }}
+        .dashboard-metrics-grid {{
+          grid-template-columns: 1fr 1fr;
+          gap: 0.7rem;
+        }}
+        .dashboard-feature-stats,
+        .dashboard-spotlight-grid {{
+          grid-template-columns: 1fr 1fr;
+        }}
         .container-fluid {{
           padding-left: 1rem !important;
           padding-right: 1rem !important;
@@ -2482,10 +4036,11 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           width: 100%;
         }}
         .hero {{
-          border-radius: 28px;
+          border-radius: 18px;
+          padding: 0.85rem !important;
         }}
         .hero-title {{
-          font-size: clamp(1.6rem, 10vw, 2.4rem);
+          font-size: clamp(1.45rem, 9vw, 2.1rem);
         }}
         .hero-kpis {{
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2493,8 +4048,19 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         .hero-stage-grid {{
           grid-template-columns: 1fr 1fr;
         }}
+        .player-kpi-grid {{
+          grid-template-columns: 1fr 1fr;
+        }}
+        .team-kpi-grid,
+        .team-note-grid {{
+          grid-template-columns: 1fr 1fr;
+        }}
         .section-title {{
-          font-size: clamp(1.08rem, 5vw, 1.42rem);
+          font-size: clamp(1rem, 4.8vw, 1.24rem);
+        }}
+        .panel,
+        .form-panel {{
+          padding: 0.8rem !important;
         }}
         .schedule-calendar-grid {{
           grid-template-columns: 1fr;
@@ -2535,26 +4101,26 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         }}
         .table.is-mobile-stack tbody {{
           display: grid;
-          gap: 0.7rem;
+          gap: 0.55rem;
         }}
         .table.is-mobile-stack tbody tr {{
           display: block;
           border: 1px solid var(--line);
-          border-radius: 16px;
+          border-radius: 14px;
           background: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(246, 249, 255, 0.84));
           box-shadow: var(--shadow-soft);
-          padding: 0.5rem 0.75rem;
+          padding: 0.42rem 0.62rem;
         }}
         .table.is-mobile-stack tbody td {{
           display: grid;
           grid-template-columns: minmax(5.2rem, max-content) minmax(0, 1fr);
-          gap: 0.75rem;
+          gap: 0.55rem;
           align-items: start;
           white-space: normal;
           word-break: break-word;
           border: 0;
-          padding: 0.34rem 0;
-          font-size: 0.9rem;
+          padding: 0.28rem 0;
+          font-size: 0.86rem;
         }}
         .table.is-mobile-stack tbody td::before {{
           display: block;
@@ -2570,6 +4136,18 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         }}
       }}
       @media (max-width: 575.98px) {{
+        .dashboard-metrics-grid,
+        .dashboard-feature-stats,
+        .dashboard-spotlight-grid {{
+          grid-template-columns: 1fr;
+        }}
+        .player-kpi-grid {{
+          grid-template-columns: 1fr;
+        }}
+        .team-kpi-grid,
+        .team-note-grid {{
+          grid-template-columns: 1fr;
+        }}
         .hero-kpis,
         .hero-stage-grid {{
           grid-template-columns: 1fr;
@@ -2580,22 +4158,23 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
     </style>
   </head>
-  <body>
-    <div class="container-fluid px-3 px-md-4 px-xl-4 py-3">
+  <body class="{body_class}">
+    <div class="container-fluid px-2 px-md-3 px-xl-3 py-2">
       <div class="shell mx-auto">
-        <div class="topbar shadow-sm px-3 px-lg-4 py-2 py-lg-3 mb-4">
-          <div class="d-flex flex-column flex-xl-row justify-content-between gap-3 align-items-xl-center">
+        <div class="topbar shadow-sm px-3 py-2 py-lg-2 mb-4">
+          <div class="d-flex flex-column flex-xl-row justify-content-between gap-2 align-items-xl-center">
             <div>
-              <div class="brand-kicker">League Site</div>
-              <div class="brand-title">一颗小草赛事数据中心</div>
-              <div class="small text-secondary">当前时间：{escape(ctx.now_label)}</div>
+              <div class="brand-kicker">{brand_kicker}</div>
+              <div class="brand-title">{brand_title}</div>
+              <div class="small text-secondary">{brand_copy}</div>
             </div>
-            <div class="topbar-actions d-flex flex-wrap align-items-center gap-3 gap-xl-4">
-              <nav class="primary-nav d-flex flex-wrap gap-2 gap-lg-3">{''.join(nav_links)}</nav>
+            <div class="topbar-actions d-flex flex-wrap align-items-center gap-2 gap-xl-3">
+              <nav class="primary-nav d-flex flex-wrap gap-2">{''.join(nav_links)}</nav>
               {user_html}
             </div>
           </div>
         </div>
+        {admin_status}
         {alert_html}
         {body}
       </div>
@@ -4225,43 +5804,67 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         else "赛季待录入"
     )
     region_switcher_html = (
-        f'<div class="hero-switchers mt-4">{region_switcher}</div>' if region_switcher else ""
+        f'<div class="hero-switchers">{region_switcher}</div>' if region_switcher else ""
     )
     series_switcher_html = (
-        f'<div class="hero-switchers mt-3">{series_switcher}</div>' if series_switcher else ""
+        f'<div class="hero-switchers">{series_switcher}</div>' if series_switcher else ""
     )
     competition_switcher_html = (
-        f'<div class="hero-switchers mt-3">{competition_switcher}</div>'
-        if competition_switcher and selected_competition
+        f'<div class="hero-switchers">{competition_switcher}</div>'
+        if competition_switcher
         else ""
     )
     season_switcher_html = (
-        f'<div class="hero-switchers mt-3">{season_switcher}</div>' if season_switcher else ""
+        f'<div class="hero-switchers">{season_switcher}</div>' if season_switcher else ""
     )
-    stat_cards = f"""
-    <div class="row g-3 g-lg-4 mb-4">
-      <div class="col-6 col-xl-4">
-        <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">快照 · 战队</div>
-          <div class="stat-value mt-2">{active_team_count}</div>
-          <div class="small-muted mt-2">{escape(scope_label)} 口径</div>
-        </div>
-      </div>
-      <div class="col-6 col-xl-4">
-        <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">快照 · 队员</div>
-          <div class="stat-value mt-2">{active_player_count}</div>
-          <div class="small-muted mt-2">当前口径下已出场队员</div>
-        </div>
-      </div>
-      <div class="col-6 col-xl-4">
-        <div class="stat-card h-100 p-4 shadow-sm border-0">
-          <div class="stat-label">快照 · 对局</div>
-          <div class="stat-value mt-2">{active_match_count}</div>
-          <div class="small-muted mt-2">当前口径下比赛记录</div>
-        </div>
-      </div>
-    </div>
+    dashboard_scope_label = selected_competition or featured_label
+    latest_match_day_path = build_scoped_path(
+        "/competitions",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    scope_summary_line = (
+        f"{escape(selected_region or DEFAULT_REGION_NAME)}赛区"
+        + (
+            f" · {escape(selected_series_row['series_name'])}"
+            if selected_series_row
+            else ""
+        )
+        + (f" · {escape(selected_competition)}" if selected_competition else "")
+        + (f" · {escape(selected_season)}" if selected_season else "")
+    )
+    summary_description = (
+        f"当前正在查看 {scope_summary_line} 的实时统计。"
+        "先锁定赛区和系列赛，再决定是否下钻到单个赛事赛季。"
+    )
+    top_team = displayed_team_rows[0] if displayed_team_rows else None
+    top_player = displayed_player_rows[0] if displayed_player_rows else None
+
+    metrics_cards = f"""
+    <section class="dashboard-metrics-grid">
+      <article class="dashboard-metric-card">
+        <div class="dashboard-metric-label">收录战队</div>
+        <div class="dashboard-metric-value">{active_team_count}</div>
+        <div class="dashboard-metric-copy">{escape(scope_label)} 口径下有成绩的战队数量。</div>
+      </article>
+      <article class="dashboard-metric-card">
+        <div class="dashboard-metric-label">出场队员</div>
+        <div class="dashboard-metric-value">{active_player_count}</div>
+        <div class="dashboard-metric-copy">当前视角里已经出场并生成统计的选手数量。</div>
+      </article>
+      <article class="dashboard-metric-card">
+        <div class="dashboard-metric-label">比赛场次</div>
+        <div class="dashboard-metric-value">{active_match_count}</div>
+        <div class="dashboard-metric-copy">包含已录入比分、阵营和个人表现的有效对局。</div>
+      </article>
+      <article class="dashboard-metric-card">
+        <div class="dashboard-metric-label">最近比赛日</div>
+        <div class="dashboard-metric-value">{escape(latest_played_on)}</div>
+        <div class="dashboard-metric-copy">{escape(featured_seasons)} · 继续往下可以查看当天总览。</div>
+      </article>
+    </section>
     """
 
     series_cards = []
@@ -4291,37 +5894,32 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         )
         series_cards.append(
             f"""
-            <div class="col-12 col-md-6">
-              <div class="team-link-card shadow-sm p-4 h-100">
-                <div class="d-flex justify-content-between align-items-start gap-3">
-                  <div>
-                    <div class="card-kicker mb-2">{escape(selected_region or DEFAULT_REGION_NAME)} · Series Topic</div>
-                    <h2 class="h4 mb-1">{escape(row['series_name'])}</h2>
-                    <div class="small-muted">赛季 {escape('、'.join(row['seasons'])) if row['seasons'] else '未设置'}</div>
-                    <div class="small-muted mt-1">最近比赛日 {escape(row['latest_played_on'] or '待更新')}</div>
-                  </div>
-                  <span class="chip">专题页 + 地区站点</span>
+            <article class="dashboard-feature-card">
+              <div class="dashboard-feature-top">
+                <div class="card-kicker">{escape(selected_region or DEFAULT_REGION_NAME)} · Series Topic</div>
+                <span class="dashboard-feature-tag">专题页 + 地区站点</span>
+              </div>
+              <h2 class="dashboard-feature-title">{escape(row['series_name'])}</h2>
+              <p class="dashboard-feature-copy">赛季 {escape('、'.join(row['seasons'])) if row['seasons'] else '未设置'} · 最近比赛日 {escape(row['latest_played_on'] or '待更新')}。先看专题，再按地区进入具体赛事。</p>
+              <div class="dashboard-feature-stats">
+                <div class="dashboard-feature-stat">
+                  <span>战队</span>
+                  <strong>{row['team_count']} 支</strong>
                 </div>
-                <div class="row g-3 mt-2">
-                  <div class="col-4">
-                    <div class="small text-secondary">战队</div>
-                    <div class="fw-semibold">{row['team_count']} 支</div>
-                  </div>
-                  <div class="col-4">
-                    <div class="small text-secondary">队员</div>
-                    <div class="fw-semibold">{row['player_count']} 名</div>
-                  </div>
-                  <div class="col-4">
-                    <div class="small text-secondary">对局</div>
-                    <div class="fw-semibold">{row['match_count']} 场</div>
-                  </div>
+                <div class="dashboard-feature-stat">
+                  <span>队员</span>
+                  <strong>{row['player_count']} 名</strong>
                 </div>
-                <div class="d-flex flex-wrap gap-2 mt-4">
-                  <a class="btn btn-dark" href="{escape(topic_path)}">查看系列专题</a>
-                  <a class="btn btn-outline-dark" href="{escape(competition_path)}">进入地区赛事页</a>
+                <div class="dashboard-feature-stat">
+                  <span>对局</span>
+                  <strong>{row['match_count']} 场</strong>
                 </div>
               </div>
-            </div>
+              <div class="dashboard-feature-actions">
+                <a class="btn btn-dark" href="{escape(topic_path)}">查看系列专题</a>
+                <a class="btn btn-outline-dark" href="{escape(competition_path)}">进入地区赛事页</a>
+              </div>
+            </article>
             """
         )
 
@@ -4341,6 +5939,17 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         if has_match:
             relevant_days.append(played_on)
     relevant_days = sort_match_days_by_relevance(relevant_days, china_today_label())
+    if relevant_days:
+        latest_match_day_path = build_match_day_path(
+            relevant_days[0],
+            build_scoped_path(
+                "/dashboard",
+                selected_competition,
+                selected_season,
+                selected_region,
+                selected_series_slug,
+            ),
+        )
 
     recent_day_cards = []
     for played_on in relevant_days[:6]:
@@ -4361,95 +5970,182 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         day_competitions = sorted({get_match_competition_name(match) for match in day_matches})
         recent_day_cards.append(
             f"""
-            <div class="col-12 col-md-6 col-xl-4">
-              <a class="team-link-card shadow-sm p-4 h-100" href="{escape(build_match_day_path(played_on, build_scoped_path('/dashboard', selected_competition, selected_season, selected_region, selected_series_slug)))}">
-                <div class="d-flex justify-content-between align-items-start gap-3">
-                  <div>
-                    <div class="card-kicker mb-2">Match Day</div>
-                    <h2 class="h4 mb-1">{escape(played_on)}</h2>
-                    <div class="small-muted">系列赛 {len(day_competitions)} 个 · 比赛 {len(day_matches)} 场</div>
-                    <div class="small-muted mt-1">{escape('、'.join(day_competitions[:2]))}{' 等' if len(day_competitions) > 2 else ''}</div>
-                  </div>
-                  <span class="chip">查看当日总览</span>
-                </div>
-              </a>
-            </div>
+            <a class="dashboard-day-card" href="{escape(build_match_day_path(played_on, build_scoped_path('/dashboard', selected_competition, selected_season, selected_region, selected_series_slug)))}">
+              <div class="dashboard-day-top">
+                <div class="dashboard-day-kicker">Match Day</div>
+                <div class="dashboard-day-count">{len(day_matches)} 场</div>
+              </div>
+              <h2 class="dashboard-day-title">{escape(played_on)}</h2>
+              <p class="dashboard-day-copy">覆盖 {len(day_competitions)} 个系列赛，可以直接进入当天总览继续看单场详情。</p>
+              <div class="dashboard-day-tags">
+                {''.join(f'<span class="dashboard-day-tag">{escape(name)}</span>' for name in day_competitions[:3])}
+                {('<span class="dashboard-day-tag">更多赛事</span>' if len(day_competitions) > 3 else '')}
+              </div>
+            </a>
+            """
+        )
+
+    top_team_items = []
+    for row in displayed_team_rows[:3]:
+        top_team_items.append(
+            f"""
+            <a class="dashboard-ranking-item" href="{escape(build_scoped_path('/teams/' + row['team_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">
+              <span class="dashboard-ranking-index">{row['rank']:02d}</span>
+              <div>
+                <div class="dashboard-ranking-name">{escape(row['name'])}</div>
+                <div class="dashboard-ranking-meta">胜率 {format_pct(row['win_rate'])} · 对局 {row['matches_represented']} 场</div>
+              </div>
+              <div class="dashboard-ranking-score">{row['points_earned_total']:.2f}<small>总积分</small></div>
+            </a>
+            """
+        )
+
+    top_player_items = []
+    for row in displayed_player_rows[:3]:
+        top_player_items.append(
+            f"""
+            <a class="dashboard-ranking-item" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">
+              <span class="dashboard-ranking-index">{row['rank']:02d}</span>
+              <div>
+                <div class="dashboard-ranking-name">{escape(row['display_name'])}</div>
+                <div class="dashboard-ranking-meta">胜率 {format_pct(row['win_rate'])} · 出场 {row['games_played']} 次</div>
+              </div>
+              <div class="dashboard-ranking-score">{row['points_earned_total']:.2f}<small>总积分</small></div>
+            </a>
             """
         )
 
     body = f"""
-    <section class="hero p-4 p-md-5 shadow-lg mb-4">
-      <div class="hero-layout">
-        <div>
-          <div class="eyebrow mb-3">一颗小草赛事数据中心</div>
-          <h1 class="hero-title mb-3">{escape(selected_region or DEFAULT_REGION_NAME)}赛区首页<br>赛事统计和赛程</h1>
-          <p class="hero-copy mb-0">未登录时首页默认显示广州赛区；登录后会优先按你的账号地区展示对应赛区。先切换地区，再切换系列赛；如果进入某个地区赛事页，就可以继续选择赛季，并查看该站独立的战队和队员数据。</p>
-          {region_switcher_html}
-          {series_switcher_html}
-          {competition_switcher_html}
-          {season_switcher_html}
-          <div class="hero-kpis">
-            <div class="hero-pill">
-              <span>地区系列赛</span>
-              <strong>{len(scoped_competition_rows)}</strong>
-              <small>{escape(selected_region or DEFAULT_REGION_NAME)} 当前站点</small>
+    <div class="dashboard-home">
+      <section class="dashboard-hero hero shadow-lg">
+        <div class="hero-layout">
+          <div>
+            <div class="eyebrow mb-3">Match Control Room</div>
+            <h1 class="hero-title mb-3">{escape(selected_region or DEFAULT_REGION_NAME)}赛区<br>赛事指挥台</h1>
+            <p class="hero-copy mb-0">{summary_description}</p>
+            <div class="dashboard-status-row">
+              <span class="dashboard-status-chip"><strong>当前焦点</strong>{escape(dashboard_scope_label)}</span>
+              <span class="dashboard-status-chip"><strong>数据时间</strong>{escape(ctx.now_label)}</span>
+              <span class="dashboard-status-chip"><strong>比赛日</strong>{escape(latest_played_on)}</span>
             </div>
-            <div class="hero-pill">
-              <span>当前对局</span>
-              <strong>{active_match_count}</strong>
-              <small>{escape(scope_label)}</small>
+            <div class="dashboard-filter-grid">
+              <div class="dashboard-filter-block">
+                <div class="dashboard-filter-label">赛区视角</div>
+                {region_switcher_html or '<div class="small text-secondary">暂无赛区数据</div>'}
+              </div>
+              <div class="dashboard-filter-block">
+                <div class="dashboard-filter-label">系列赛筛选</div>
+                {series_switcher_html or '<div class="small text-secondary">暂无系列赛目录</div>'}
+              </div>
+              <div class="dashboard-filter-block">
+                <div class="dashboard-filter-label">赛事入口</div>
+                {competition_switcher_html or '<div class="small text-secondary">当前还没有可切换赛事</div>'}
+              </div>
+              <div class="dashboard-filter-block">
+                <div class="dashboard-filter-label">赛季切换</div>
+                {season_switcher_html or '<div class="small text-secondary">先选择赛事后再切换赛季</div>'}
+              </div>
             </div>
-          </div>
-        </div>
-        <div class="hero-stage-card">
-          <div class="official-mark">Data Panel</div>
-          <div class="hero-stage-label">Featured Scope</div>
-          <div class="hero-stage-title">{escape(featured_label)}</div>
-          <div class="hero-stage-note">数据更新时间 {escape(ctx.now_label)}。当前视角为 {escape(scope_label)}，适合先总览榜单，再继续进入单个赛事页面。</div>
-          <div class="hero-stage-grid">
-            <div class="hero-stage-metric">
-              <span>最近比赛日</span>
-              <strong>{escape(latest_played_on)}</strong>
-              <small>{escape(featured_seasons)}</small>
-            </div>
-            <div class="hero-stage-metric">
-              <span>收录战队</span>
-              <strong>{active_team_count}</strong>
-              <small>当前口径下战队</small>
-            </div>
-            <div class="hero-stage-metric">
-              <span>收录队员</span>
-              <strong>{active_player_count}</strong>
-              <small>当前口径下出场</small>
+            <div class="d-flex flex-wrap gap-2 mt-4">
+              <a class="btn btn-light" href="{escape(latest_match_day_path)}">打开比赛日时间线</a>
+              <a class="btn btn-outline-dark" href="/competitions">打开全部赛事</a>
             </div>
           </div>
+          <div class="dashboard-hero-side">
+            <section class="dashboard-spotlight-card">
+              <div class="dashboard-panel-kicker">Featured Scope</div>
+              <div class="dashboard-spotlight-title">{escape(featured_label)}</div>
+              <p class="dashboard-spotlight-copy">当前仪表盘会优先展示这个视角下最值得继续查看的范围，你可以先看榜单，再进入某个系列赛或某一天的比赛记录。</p>
+              <div class="dashboard-spotlight-grid">
+                <div class="dashboard-spotlight-metric">
+                  <span>赛季范围</span>
+                  <strong>{escape(featured_seasons)}</strong>
+                  <small>优先展示最近活跃数据</small>
+                </div>
+                <div class="dashboard-spotlight-metric">
+                  <span>对局规模</span>
+                  <strong>{active_match_count} 场</strong>
+                  <small>{escape(scope_label)}</small>
+                </div>
+                <div class="dashboard-spotlight-metric">
+                  <span>头名战队</span>
+                  <strong>{escape(top_team['name']) if top_team else '等待录入'}</strong>
+                  <small>{f"{top_team['points_earned_total']:.2f} 分" if top_team else '暂无战绩'}</small>
+                </div>
+                <div class="dashboard-spotlight-metric">
+                  <span>头名选手</span>
+                  <strong>{escape(top_player['display_name']) if top_player else '等待录入'}</strong>
+                  <small>{f"{top_player['points_earned_total']:.2f} 分" if top_player else '暂无战绩'}</small>
+                </div>
+              </div>
+            </section>
+            <section class="dashboard-brief-card">
+              <div class="dashboard-panel-kicker">Quick Brief</div>
+              <div class="dashboard-brief-list">
+                <div class="dashboard-brief-item">
+                  <span class="dashboard-rank-badge">T</span>
+                  <div>
+                    <div class="dashboard-brief-name">{escape(top_team['name']) if top_team else '暂无战队头名'}</div>
+                    <div class="dashboard-brief-meta">{f"胜率 {format_pct(top_team['win_rate'])} · 对局 {top_team['matches_represented']} 场" if top_team else '当前口径下还没有有效战绩'}</div>
+                  </div>
+                  <div class="dashboard-brief-value">{f"{top_team['points_earned_total']:.2f}" if top_team else '--'}<small>team</small></div>
+                </div>
+                <div class="dashboard-brief-item">
+                  <span class="dashboard-rank-badge">P</span>
+                  <div>
+                    <div class="dashboard-brief-name">{escape(top_player['display_name']) if top_player else '暂无选手头名'}</div>
+                    <div class="dashboard-brief-meta">{f"胜率 {format_pct(top_player['win_rate'])} · 出场 {top_player['games_played']} 次" if top_player else '当前口径下还没有有效战绩'}</div>
+                  </div>
+                  <div class="dashboard-brief-value">{f"{top_player['points_earned_total']:.2f}" if top_player else '--'}<small>player</small></div>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
-      </div>
-    </section>
-    {stat_cards}
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-        <div>
-          <h2 class="section-title mb-2">系列赛专题入口</h2>
-          <p class="section-copy mb-0">这里优先展示当前地区的系列赛专题。进入专题后，可以把同一品牌下不同地区的比赛一起查看；进入地区赛事页，则会保留单站视角。</p>
+      </section>
+      {metrics_cards}
+      <section class="dashboard-grid">
+        <section class="panel dashboard-section-panel shadow-sm">
+          <div class="dashboard-section-head">
+            <div>
+              <h2 class="section-title mb-2">系列赛专题入口</h2>
+              <p class="dashboard-section-copy mb-0">首页先把“值得点进去的专题”摆出来。你可以先看系列赛品牌页，再根据需要落到某个地区赛事站点。</p>
+            </div>
+            <a class="btn btn-outline-dark" href="/competitions">进入全部赛事</a>
+          </div>
+          <div class="dashboard-feature-grid">
+            {''.join(series_cards) or '<div class="alert alert-secondary mb-0">当前地区还没有系列赛，请先创建系列赛目录。</div>'}
+          </div>
+        </section>
+        <aside class="panel dashboard-side-panel shadow-sm">
+          <div class="dashboard-section-head">
+            <div>
+              <h2 class="section-title mb-2">即时榜单</h2>
+              <p class="dashboard-section-copy mb-0">首页不放大表格，先给你当前口径下最能代表走势的头部名单。</p>
+            </div>
+          </div>
+          <div class="dashboard-panel-kicker">Top Teams</div>
+          <div class="dashboard-ranking-list">
+            {''.join(top_team_items) or '<div class="alert alert-secondary mb-0">当前没有可展示的战队榜单。</div>'}
+          </div>
+          <div class="dashboard-panel-kicker mt-4">Top Players</div>
+          <div class="dashboard-ranking-list">
+            {''.join(top_player_items) or '<div class="alert alert-secondary mb-0">当前没有可展示的选手榜单。</div>'}
+          </div>
+        </aside>
+      </section>
+      <section class="panel dashboard-section-panel shadow-sm">
+        <div class="dashboard-section-head">
+          <div>
+            <h2 class="section-title mb-2">最近比赛日</h2>
+            <p class="dashboard-section-copy mb-0">把有比赛的日期做成时间卡片，方便从“今天发生了什么”这个入口快速下钻，而不是先读一堆说明文字。</p>
+          </div>
         </div>
-        <a class="btn btn-outline-dark" href="/competitions">进入全部赛事</a>
-      </div>
-      <div class="row g-3 g-lg-4">
-        {''.join(series_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前地区还没有系列赛，请先创建系列赛目录。</div></div>'}
-      </div>
-    </section>
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-        <div>
-          <h2 class="section-title mb-2">最近比赛日</h2>
-          <p class="section-copy mb-0">每个有比赛的日期都可以单独打开一个页面。进入后会按系列赛展示当天总览，并可继续点击单场详情。</p>
+        <div class="dashboard-day-grid">
+          {''.join(recent_day_cards) or '<div class="alert alert-secondary mb-0">当前统计范围还没有比赛日数据。</div>'}
         </div>
-      </div>
-      <div class="row g-3 g-lg-4">
-        {''.join(recent_day_cards)}
-      </div>
-    </section>
+      </section>
+    </div>
     """
     return layout("首页", body, ctx, alert=alert)
 
@@ -6121,6 +7817,128 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             """
         )
 
+    team_short_label = str(team.get("short_name") or team["name"]).strip() or team["name"]
+    team_record = f"{team_stats.get('wins', 0)}-{team_stats.get('losses', 0)}"
+    team_points_total = f"{float(team_stats.get('points_earned_total', 0.0)):.2f}"
+    team_points_per_match = f"{float(team_stats.get('points_per_match', 0.0)):.2f}"
+    team_win_display = format_pct(team_stats.get("win_rate", 0.0))
+    team_rank_copy = (
+        f"当前赛季积分榜第 {team_stats.get('points_rank', '-')} 名 · 战绩 {team_record}"
+        if team_stats.get("matches_represented")
+        else "当前赛季还没有形成有效积分排名"
+    )
+    team_win_width = max(0.0, min(100.0, float(team_stats.get("win_rate", 0.0)) * 100.0))
+    team_point_speed_width = max(
+        0.0,
+        min(100.0, float(team_stats.get("points_per_match", 0.0)) / 12.0 * 100.0),
+    )
+    scoped_match_summaries = [
+        summarize_team_match(team_id, match, team_lookup)
+        for match in team_matches
+        if get_match_competition_name(match) == selected_competition
+        and (not selected_season or str(match.get("season") or "").strip() == selected_season)
+    ]
+    roster_cards_html = "".join(
+        f"""
+        <a class="team-roster-card text-decoration-none" href="{escape(build_scoped_path('/players/' + player['player_id'], selected_competition, selected_season))}">
+          <div class="team-roster-top">
+            <div>
+              <div class="team-roster-name">{escape(player["display_name"])}</div>
+              <div class="team-roster-meta">{escape('赛季主力轮换' if player["has_stats"] else '赛季档案已创建，等待补录数据')}</div>
+            </div>
+            <div class="team-roster-value">{escape(player["points_total"])} 分</div>
+          </div>
+          <div class="team-roster-tags">
+            {'<span class="player-stat-pill">负责人</span>' if captain_player and captain_player.get("player_id") == player["player_id"] else ''}
+            <span class="player-stat-pill">出场 {player["games_played"]}</span>
+            <span class="player-stat-pill">胜率 {escape(player["win_rate"])}</span>
+            <span class="player-stat-pill">场均 {player["average_points"]:.2f}</span>
+          </div>
+        </a>
+        """
+        for player in players[:6]
+    ) or """
+        <article class="team-roster-card">
+          <div class="team-roster-name">暂无赛季阵容数据</div>
+          <div class="team-roster-meta mt-2">当前统计口径下，这支战队还没有参赛队员数据。</div>
+        </article>
+    """
+    recent_match_cards: list[str] = []
+    for item in scoped_match_summaries[:4]:
+        match_detail_path = (
+            f"/matches/{item['match_id']}?next="
+            f"{quote(build_scoped_path('/teams/' + team_id, selected_competition, selected_season))}"
+        )
+        day_path = build_match_day_path(
+            item["played_on"],
+            build_scoped_path("/teams/" + team_id, selected_competition, selected_season),
+        )
+        team_result_label = (
+            "胜利"
+            if item["team_score"] > item["opponent_score"]
+            else ("失利" if item["team_score"] < item["opponent_score"] else "战平")
+        )
+        match_row = next(
+            (
+                match
+                for match in team_matches
+                if match["match_id"] == item["match_id"]
+            ),
+            None,
+        )
+        team_award_labels = [
+            label
+            for label, award_player_id in [
+                ("MVP", str((match_row or {}).get("mvp_player_id") or "").strip()),
+                ("SVP", str((match_row or {}).get("svp_player_id") or "").strip()),
+                ("背锅", str((match_row or {}).get("scapegoat_player_id") or "").strip()),
+            ]
+            if award_player_id
+            and any(
+                str(entry.get("team_id") or "").strip() == team_id
+                and str(entry.get("player_id") or "").strip() == award_player_id
+                for entry in (match_row or {}).get("players", [])
+            )
+        ]
+        team_award_pills = "".join(
+            f'<span class="player-stat-pill">{escape(label)}</span>'
+            for label in team_award_labels
+        ) or '<span class="player-stat-pill">无特殊奖励</span>'
+        recent_match_cards.append(
+            f"""
+            <article class="team-match-card">
+              <div class="team-match-top">
+                <div>
+                  <div class="team-match-name">第 {item["round"]} 轮 · {escape(item["played_on"])}</div>
+                  <div class="team-match-meta">{escape(selected_season or item["season"])} · {escape(team_result_label)}</div>
+                </div>
+                <div class="team-match-value">{item["team_score"]:.2f}</div>
+              </div>
+              <div class="team-scoreboard">
+                <strong>{item["team_score"]:.2f}</strong>
+                <span>{escape(team_short_label)}</span>
+                <span>:</span>
+                <strong>{item["opponent_score"]:.2f}</strong>
+                <span>对手总分</span>
+              </div>
+              <div class="team-insight-tags">
+                <span class="player-stat-pill">{escape(team_result_label)}</span>
+                {team_award_pills}
+              </div>
+              <div class="team-match-actions">
+                <a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">比赛详情</a>
+                <a class="btn btn-sm btn-light border" href="{escape(day_path)}">当日赛程</a>
+              </div>
+            </article>
+            """
+        )
+    recent_match_cards_html = "".join(recent_match_cards) or """
+        <article class="team-match-card">
+          <div class="team-match-name">暂无近期比赛</div>
+          <div class="team-match-meta mt-2">当前统计口径下，这支战队还没有可展示的赛季比赛记录。</div>
+        </article>
+    """
+
     competition_sections = []
     for competition_name, matches in competition_groups.items():
         if competition_name != selected_competition:
@@ -6157,7 +7975,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                   <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(day_path)}">{escape(item['played_on'])}</a></td>
                   <td>{escape(item['stage'])}</td>
                   <td>第 {item['round']} 轮</td>
-                  <td>{escape(item['opponents'])}</td>
                   <td>{escape(item['table_label'])}</td>
                   <td>{escape(item['format'])}</td>
                   <td>{escape(item['winning_camp'])}</td>
@@ -6189,7 +8006,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                       <th>日期</th>
                       <th>阶段</th>
                       <th>轮次</th>
-                      <th>对手</th>
                       <th>房间</th>
                       <th>板型</th>
                       <th>胜利阵营</th>
@@ -6208,30 +8024,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             """
         )
 
-    roster_html = "".join(
-        f"""
-        <a class="team-link-card shadow-sm p-3 h-100" href="{escape(build_scoped_path('/players/' + player['player_id'], selected_competition, selected_season))}">
-          <div class="d-flex justify-content-between align-items-start gap-3">
-            <div>
-              <div class="fw-semibold mb-1">{escape(player["display_name"])}</div>
-              <div class="small text-secondary">{f'出场 {player["games_played"]} 次 · 场均得分 {player["average_points"]:.2f}' if player["has_stats"] else '赛季档案已建档，等待补录比赛数据'}</div>
-            </div>
-            <span class="chip">查看队员</span>
-          </div>
-          <div class="row g-2 mt-2">
-            <div class="col-6">
-              <div class="small text-secondary">胜率</div>
-              <div class="fw-semibold">{player["win_rate"]}</div>
-            </div>
-            <div class="col-6">
-              <div class="small text-secondary">总积分</div>
-              <div class="fw-semibold">{player["points_total"]}</div>
-            </div>
-          </div>
-        </a>
-        """
-        for player in players
-    )
     guild_options_html = "".join(
         f'<option value="{escape(item["guild_id"])}">{escape(item["name"])}</option>'
         for item in sorted(data.get("guilds", []), key=lambda row: row["name"])
@@ -6298,19 +8090,123 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
       if team_status == "completed"
       else ''
     )}
-    {team_manage_panel if (can_edit_team_page or can_delete_team or can_manage_team_profile) else ''}
-    {team_dimension_panel}
-    {guild_panel}
-    {team_match_player_score_section}
     {ai_team_summary_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
-          <h2 class="section-title mb-2">该赛季参赛队员</h2>
-          <p class="section-copy mb-0">点击任意队员卡片，可以继续查看该队员在同一系列赛和赛季口径下的综合数据。</p>
+          <h2 class="section-title mb-2">战队赛季主页</h2>
+          <p class="section-copy mb-0">把这个赛季最该先看的信息收在一屏里：战绩、阵容、状态和最近比赛走势。</p>
         </div>
       </div>
-      <div class="row g-3">{roster_html or '<div class="col-12"><div class="alert alert-secondary mb-0">当前统计口径下，这支战队还没有参赛队员数据。</div></div>'}</div>
+      <div class="team-showcase-grid">
+        <article class="team-showcase-card">
+          <div class="eyebrow">Team Dossier</div>
+          <div class="team-headline">{escape(team['name'])}</div>
+          <div class="team-subtitle">{escape(selected_competition or team_scope_label(team))} · {escape(selected_season or '当前赛季')} · {escape(team_rank_copy)}</div>
+          <div class="team-badge-row mt-3">
+            <span class="team-badge">{escape(team_status_label)}</span>
+            <span class="team-badge">队员 {roster_count} 名</span>
+            <span class="team-badge">出赛 {team_stats.get('matches_represented', 0)} 场</span>
+            <span class="team-badge">总积分 {team_points_total}</span>
+          </div>
+          <div class="team-kpi-grid">
+            <div class="team-kpi-card">
+              <div class="team-kpi-label">Season Record</div>
+              <div class="team-kpi-value">{team_record}</div>
+              <div class="team-kpi-copy">当前赛季累计胜负走势</div>
+            </div>
+            <div class="team-kpi-card">
+              <div class="team-kpi-label">Win Rate</div>
+              <div class="team-kpi-value">{team_win_display}</div>
+              <div class="team-kpi-copy">按赛季全部出场计算</div>
+            </div>
+            <div class="team-kpi-card">
+              <div class="team-kpi-label">Points Total</div>
+              <div class="team-kpi-value">{team_points_total}</div>
+              <div class="team-kpi-copy">赛季累计积分沉淀</div>
+            </div>
+            <div class="team-kpi-card">
+              <div class="team-kpi-label">Points Per Match</div>
+              <div class="team-kpi-value">{team_points_per_match}</div>
+              <div class="team-kpi-copy">每场比赛的稳定产出</div>
+            </div>
+            <div class="team-kpi-card">
+              <div class="team-kpi-label">Matches Played</div>
+              <div class="team-kpi-value">{team_stats.get('matches_represented', 0)}</div>
+              <div class="team-kpi-copy">当前赛季有效出赛场次</div>
+            </div>
+            <div class="team-kpi-card">
+              <div class="team-kpi-label">Roster Active</div>
+              <div class="team-kpi-value">{team_stats.get('player_count', roster_count)}</div>
+              <div class="team-kpi-copy">当前赛季已上场队员数</div>
+            </div>
+          </div>
+        </article>
+        <aside class="team-insight-card">
+          <div>
+            <h3 class="section-title mb-2">赛季观察</h3>
+            <p class="section-copy mb-0">先看这支队伍现在是稳扎稳打、靠积分效率拉开，还是靠判断和阵容深度取胜。</p>
+          </div>
+          <div class="team-meter-row">
+            <div class="team-meter-head">
+              <strong>胜率表现</strong>
+              <span>{team_win_display}</span>
+            </div>
+            <div class="team-meter-track"><div class="team-meter-fill" style="width: {team_win_width:.1f}%"></div></div>
+          </div>
+          <div class="team-meter-row">
+            <div class="team-meter-head">
+              <strong>积分效率</strong>
+              <span>场均 {team_points_per_match}</span>
+            </div>
+            <div class="team-meter-track"><div class="team-meter-fill" style="width: {team_point_speed_width:.1f}%"></div></div>
+          </div>
+          <div class="team-note-grid">
+            <div class="team-note-item">
+              <div class="team-note-label">Captain</div>
+              <div class="team-note-value">{escape(captain_label or '暂未认领')}</div>
+            </div>
+            <div class="team-note-item">
+              <div class="team-note-label">Guild</div>
+              <div class="team-note-value">{escape(guild['name'] if guild else '未加入门派')}</div>
+            </div>
+            <div class="team-note-item">
+              <div class="team-note-label">Stage Group</div>
+              <div class="team-note-value">{stage_group_summary}</div>
+            </div>
+            <div class="team-note-item">
+              <div class="team-note-label">Notes</div>
+              <div class="team-note-value">{escape(team.get('notes') or '暂无战队备注')}</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="row g-4">
+        <div class="col-12 col-xl-6">
+          <h2 class="section-title mb-2">赛季阵容</h2>
+          <p class="section-copy mb-3">先展示当前赛季最主要的轮换成员，方便从战队页直接下钻到队员档案。</p>
+          <div class="team-roster-grid">{roster_cards_html}</div>
+        </div>
+        <div class="col-12 col-xl-6">
+          <h2 class="section-title mb-2">最近比赛</h2>
+          <p class="section-copy mb-3">把最近几场的比分和比赛详情提上来，不用先翻到底部的大表。</p>
+          <div class="team-match-grid">{recent_match_cards_html}</div>
+        </div>
+      </div>
+    </section>
+    {guild_panel}
+    {team_dimension_panel}
+    {team_match_player_score_section}
+    {team_manage_panel if (can_edit_team_page or can_delete_team or can_manage_team_profile) else ''}
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">完整比赛明细</h2>
+          <p class="section-copy mb-0">下面继续保留完整赛季比赛表，方便你核对每一场的板型、得分和操作入口。</p>
+        </div>
+      </div>
     </section>
     {''.join(competition_sections) if competition_sections else '<div class="alert alert-secondary">该战队在当前统计口径下暂时没有比赛记录。</div>'}
     """
@@ -6497,25 +8393,25 @@ def build_team_match_player_score_section(
                 f"/matches/{match['match_id']}?next="
                 f"{quote(team_page_path)}"
             )
-            item_classes = "py-3"
+            item_classes = "py-2"
             if match_index > 0:
                 item_classes += " border-top"
             match_rows_html.append(
                 f"""
-                <div class="{item_classes}">
+                <li class="{item_classes} list-unstyled">
                   <div class="d-flex flex-column flex-xl-row justify-content-between align-items-xl-center gap-2 mb-2">
                     <div>
                       <div class="fw-semibold">{escape(summary['match_id'])}</div>
-                      <div class="small text-secondary">{escape(summary['played_on'])} · {escape(summary['stage'])} · 第 {summary['round']} 轮 · {escape(summary['table_label'])} · 对手 {escape(summary['opponents'])}</div>
+                      <div class="small text-secondary">{escape(summary['played_on'])} · {escape(summary['stage'])} · 第 {summary['round']} 轮 · {escape(summary['table_label'])}</div>
                     </div>
                     <div class="d-flex flex-wrap gap-2">
                       <span class="chip">{escape(summary['winning_camp'])}</span>
                       <span class="chip">本队 {summary['team_score']:.2f}</span>
-                      <span class="chip">对手 {summary['opponent_score']:.2f}</span>
+                      <span class="chip">另一方 {summary['opponent_score']:.2f}</span>
                       <a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">比赛详情</a>
                     </div>
                   </div>
-                  <div class="table-responsive">
+                  <div class="table-responsive compact-list-wrap">
                     <table class="table table-sm align-middle mb-0">
                       <thead>
                         <tr>
@@ -6531,20 +8427,20 @@ def build_team_match_player_score_section(
                       <tbody>{''.join(participant_rows) or '<tr><td colspan="7" class="text-secondary">当前还没有这支战队的队员成绩明细。</td></tr>'}</tbody>
                     </table>
                   </div>
-                </div>
+                </li>
                 """
             )
         scope_sections.append(
             f"""
-            <div class="form-panel p-3 p-lg-4">
-              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div class="compact-scope-block">
+              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-2">
                 <div>
                   <h3 class="h5 mb-2">{escape(competition_name)} · {escape(season_name or '未命名赛季')}</h3>
                   <p class="section-copy mb-0">{escape(get_team_season_status_label(status))} · 已完成补录 {len(matches)} 场比赛。</p>
                 </div>
                 <a class="btn btn-outline-dark" href="{escape(scope_path)}">切换到这个赛季</a>
               </div>
-              <div class="border rounded-3 px-3 bg-white">{''.join(match_rows_html)}</div>
+              <ul class="list-unstyled mb-0">{''.join(match_rows_html)}</ul>
             </div>
             """
         )
@@ -6557,7 +8453,7 @@ def build_team_match_player_score_section(
           <p class="section-copy mb-0">这里只展示已完成补录的比赛，按赛季状态排序，进行中的赛季优先展示。</p>
         </div>
       </div>
-      <div class="d-grid gap-3">{''.join(scope_sections)}</div>
+      <div>{''.join(scope_sections)}</div>
     </section>
     """
 
@@ -7038,10 +8934,108 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
         f'<div class="d-flex flex-wrap gap-2 mt-3">{"".join(manage_buttons)}</div>' if manage_buttons else ""
     )
     season_chip = f'<span class="chip">{escape(selected_season)}</span>' if selected_season else ""
+    player_team_path = build_scoped_path("/teams/" + team_id, selected_competition, selected_season)
+    overall_win_width = max(0.0, min(100.0, float(player_row.get("win_rate", 0.0)) * 100.0))
+    villagers_win_width = max(0.0, min(100.0, float(player_row.get("villagers_win_rate", 0.0)) * 100.0))
+    werewolves_win_width = max(0.0, min(100.0, float(player_row.get("werewolves_win_rate", 0.0)) * 100.0))
+    role_total = sum(item["games"] for item in detail["roles"])
 
-    role_chips = "".join(
-        f'<span class="chip">{escape(item["role"])} {item["games"]} 局</span>' for item in detail["roles"]
-    ) or '<span class="chip">暂无角色记录</span>'
+    role_cards_html = "".join(
+        f"""
+        <article class="player-role-card">
+          <div class="player-role-top">
+            <div>
+              <div class="player-role-name">{escape(item["role"])}</div>
+              <div class="player-role-meta">当前口径下共登场 {item["games"]} 局</div>
+            </div>
+            <div class="player-role-count">{item["games"]} 局</div>
+          </div>
+          <div class="player-role-track">
+            <div class="player-role-fill" style="width: {safe_rate(item['games'], role_total) * 100:.1f}%"></div>
+          </div>
+          <div class="player-role-share">角色占比 {format_pct(safe_rate(item["games"], role_total))}</div>
+        </article>
+        """
+        for item in detail["roles"][:6]
+    ) or """
+        <article class="player-role-card">
+          <div class="player-role-name">暂无角色记录</div>
+          <div class="player-role-meta mt-2">当前筛选范围内还没有可展示的角色分布数据。</div>
+        </article>
+    """
+
+    season_cards_html = "".join(
+        f"""
+        <article class="player-season-card">
+          <div class="player-season-top">
+            <div>
+              <div class="player-season-name">{escape(item["season_name"])}</div>
+              <div class="player-season-meta">{escape(item["competition_name"])}</div>
+            </div>
+            <div class="player-season-points">{escape(item["points_total"])} 分</div>
+          </div>
+          <div class="player-season-stats">
+            <span class="player-stat-pill">出场 {item["games_played"]}</span>
+            <span class="player-stat-pill">战绩 {escape(item["record"])}</span>
+            <span class="player-stat-pill">总胜率 {escape(item["overall_win_rate"])}</span>
+            <span class="player-stat-pill">场均 {escape(item["average_points"])}</span>
+          </div>
+        </article>
+        """
+        for item in detail["season_stats"][:4]
+    ) or """
+        <article class="player-season-card">
+          <div class="player-season-name">暂无赛季切片</div>
+          <div class="player-season-meta mt-2">当前筛选范围内还没有形成可展示的小赛季统计。</div>
+        </article>
+    """
+
+    recent_match_cards: list[str] = []
+    for item in detail["history"][:4]:
+        match_detail_path = (
+            f"/matches/{item['match_id']}?next="
+            f"{quote(build_scoped_path('/players/' + player_id, selected_competition, selected_season))}"
+        )
+        day_path = build_match_day_path(
+            item["played_on"],
+            build_scoped_path("/players/" + player_id, selected_competition, selected_season),
+        )
+        result_class = ""
+        if item["result_label"] == "胜利":
+            result_class = " is-win"
+        elif item["result_label"] == "失利":
+            result_class = " is-loss"
+        award_pills = "".join(
+            f'<span class="player-stat-pill">{escape(label)}</span>'
+            for label in item.get("award_labels", [])
+        ) or '<span class="player-stat-pill">无特殊奖励</span>'
+        recent_match_cards.append(
+            f"""
+            <article class="player-match-card">
+              <div class="player-match-top">
+                <div>
+                  <div class="player-match-name">{escape(item["competition_name"])}</div>
+                  <div class="player-match-meta">{escape(item["season"])} · {escape(item["stage_label"])} · 第 {item["round"]} 轮 · {escape(item["played_on"])}</div>
+                </div>
+                <span class="player-match-result{result_class}">{escape(item["result_label"])}</span>
+              </div>
+              <div class="player-match-tags">
+                <span class="player-stat-pill">得分 {item["points_earned"]:.2f}</span>
+                {award_pills}
+              </div>
+              <div class="player-match-actions">
+                <a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">比赛详情</a>
+                <a class="btn btn-sm btn-light border" href="{escape(day_path)}">当日赛程</a>
+              </div>
+            </article>
+            """
+        )
+    recent_match_cards_html = "".join(recent_match_cards) or """
+        <article class="player-match-card">
+          <div class="player-match-name">暂无近期比赛</div>
+          <div class="player-match-meta mt-2">当前筛选范围内还没有可展示的对局记录。</div>
+        </article>
+    """
 
     history_rows = []
     for item in detail["history"]:
@@ -7072,21 +9066,6 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
             """
         )
 
-    competition_rows = []
-    for item in detail["competition_stats"]:
-        competition_rows.append(
-            f"""
-            <tr>
-              <td>{escape(item['competition_name'])}</td>
-              <td>{escape(item['team_name'])}</td>
-              <td>{item['games_played']}</td>
-              <td>{escape(item['record'])}</td>
-              <td>{escape(item['win_rate'])}</td>
-              <td>{escape(item['points_total'])}</td>
-              <td>{escape(item['average_points'])}</td>
-            </tr>
-            """
-        )
     season_rows = []
     for item in detail["season_stats"]:
         season_rows.append(
@@ -7104,6 +9083,41 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
             </tr>
             """
         )
+    season_detail_section = (
+        f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">完整赛季明细</h2>
+          <p class="section-copy mb-0">这里保留完整表格，方便继续核对每个小赛季的胜率和积分口径。</p>
+        </div>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr>
+              <th>赛事</th>
+              <th>赛季</th>
+              <th>出场</th>
+              <th>战绩</th>
+              <th>总胜率</th>
+              <th>好人胜率</th>
+              <th>狼人胜率</th>
+              <th>总积分</th>
+              <th>场均得分</th>
+            </tr>
+          </thead>
+          <tbody>
+            {''.join(season_rows) or '<tr><td colspan="9" class="text-secondary">当前统计口径下暂无赛季胜率数据。</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </section>
+    """
+        if len(detail["season_stats"]) > 1
+        else ""
+    )
+    competition_detail_section = ""
     player_dimension_panel = build_player_dimension_panel(
         ctx,
         data,
@@ -7208,142 +9222,146 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
     {player_dimension_panel}
     {ai_player_summary_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="row g-3">
-        <div class="col-12 col-lg-7">
-          <h2 class="section-title mb-3">个人资料</h2>
-          <div class="row g-3">
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">当前统计战队</div>
-                <div class="fw-semibold mt-2"><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(build_scoped_path('/teams/' + team_id, selected_competition, selected_season))}">{escape(detail['team_name'])}</a></div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">总出场</div>
-                <div class="stat-value mt-2">{detail['games_played']}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">场均得分</div>
-                <div class="stat-value mt-2">{escape(detail['average_points'])}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">总胜率</div>
-                <div class="fw-semibold mt-2">{escape(detail['overall_win_rate'])}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">累计得分</div>
-                <div class="fw-semibold mt-2">{escape(detail['points_total'])}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">好人胜率</div>
-                <div class="fw-semibold mt-2">{escape(detail['villagers_win_rate'])}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">狼人胜率</div>
-                <div class="fw-semibold mt-2">{escape(detail['werewolves_win_rate'])}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">站对边</div>
-                <div class="fw-semibold mt-2">{detail['correct_stances']} / {detail['stance_calls']}</div>
-              </div>
-            </div>
-            <div class="col-6 col-xl-4">
-              <div class="stat-card h-100 p-3 shadow-sm border-0">
-                <div class="stat-label">站错边</div>
-                <div class="fw-semibold mt-2">{detail['incorrect_stances']}</div>
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">选手数据档案</h2>
+          <p class="section-copy mb-0">先用一屏把这位选手的状态、特征和近期走势讲清楚，下面再接完整明细表。</p>
+        </div>
+      </div>
+      <div class="player-showcase-grid">
+        <article class="player-showcase-card">
+          <div class="player-masthead">
+            <div class="player-masthead-copy">
+              <div class="eyebrow">Player Dossier</div>
+              <div class="player-headline">{escape(detail['display_name'])}</div>
+              <div class="player-subtitle">{escape(detail['team_name'])} · 当前排名第 {detail['rank']} 名 · 战绩 {escape(detail['record'])}</div>
+              <div class="player-masthead-meta">
+                <span class="player-badge">总出场 {detail['games_played']}</span>
+                <span class="player-badge">总积分 {escape(detail['points_total'])}</span>
+                <span class="player-badge">场均 {escape(detail['average_points'])}</span>
               </div>
             </div>
           </div>
-        </div>
-        <div class="col-12 col-lg-5">
-          <h2 class="section-title mb-3">补充信息</h2>
-          <div class="panel h-100 shadow-sm p-3">
-            <div class="mb-3">{build_player_photo_html(detail['photo'], detail['display_name'])}</div>
-            <div class="mb-2"><strong>别名：</strong>{escape(aliases)}</div>
-            <div class="mb-2"><strong>入库日期：</strong>{escape(detail['joined_on'])}</div>
-            <div class="mb-2"><strong>照片路径：</strong>{escape(detail['photo'])}</div>
-            <div class="mb-0"><strong>备注：</strong>{escape(detail['notes'] or '无')}</div>
+          <div class="player-kpi-grid">
+            <div class="player-kpi-card">
+              <div class="player-kpi-label">Current Team</div>
+              <div class="player-kpi-value"><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(player_team_path)}">{escape(detail['team_name'])}</a></div>
+              <div class="player-kpi-copy">按当前赛事筛选口径归属战队</div>
+            </div>
+            <div class="player-kpi-card">
+              <div class="player-kpi-label">Total Games</div>
+              <div class="player-kpi-value">{detail['games_played']}</div>
+              <div class="player-kpi-copy">当前范围内已录入对局数</div>
+            </div>
+            <div class="player-kpi-card">
+              <div class="player-kpi-label">Win Rate</div>
+              <div class="player-kpi-value">{escape(detail['overall_win_rate'])}</div>
+              <div class="player-kpi-copy">综合胜率表现</div>
+            </div>
+            <div class="player-kpi-card">
+              <div class="player-kpi-label">Avg Points</div>
+              <div class="player-kpi-value">{escape(detail['average_points'])}</div>
+              <div class="player-kpi-copy">单局积分产出效率</div>
+            </div>
+            <div class="player-kpi-card">
+              <div class="player-kpi-label">Points Total</div>
+              <div class="player-kpi-value">{escape(detail['points_total'])}</div>
+              <div class="player-kpi-copy">累计积分沉淀</div>
+            </div>
+            <div class="player-kpi-card">
+              <div class="player-kpi-label">Stance Calls</div>
+              <div class="player-kpi-value">{detail['correct_stances']} / {detail['stance_calls']}</div>
+              <div class="player-kpi-copy">站边判断命中次数</div>
+            </div>
           </div>
+        </article>
+        <aside class="player-insight-card">
+          <div>
+            <h3 class="section-title mb-2">核心能力观察</h3>
+            <p class="section-copy mb-0">把几条最关键的指标抽出来，方便一眼看出这名选手更偏稳定型、进攻型还是阵营特化型。</p>
+          </div>
+          <div class="player-skill-row">
+            <div class="player-skill-head">
+              <strong>综合胜率</strong>
+              <span>{escape(detail['overall_win_rate'])}</span>
+            </div>
+            <div class="player-skill-track"><div class="player-skill-fill" style="width: {overall_win_width:.1f}%"></div></div>
+          </div>
+          <div class="player-skill-row">
+            <div class="player-skill-head">
+              <strong>好人胜率</strong>
+              <span>{escape(detail['villagers_win_rate'])}</span>
+            </div>
+            <div class="player-skill-track"><div class="player-skill-fill" style="width: {villagers_win_width:.1f}%"></div></div>
+          </div>
+          <div class="player-skill-row">
+            <div class="player-skill-head">
+              <strong>狼人胜率</strong>
+              <span>{escape(detail['werewolves_win_rate'])}</span>
+            </div>
+            <div class="player-skill-track"><div class="player-skill-fill" style="width: {werewolves_win_width:.1f}%"></div></div>
+          </div>
+          <div class="player-note-grid">
+            <div class="player-note-item">
+              <div class="player-note-label">Aliases</div>
+              <div class="player-note-value">{escape(aliases)}</div>
+            </div>
+            <div class="player-note-item">
+              <div class="player-note-label">Joined</div>
+              <div class="player-note-value">{escape(detail['joined_on'])}</div>
+            </div>
+            <div class="player-note-item">
+              <div class="player-note-label">Profile Status</div>
+              <div class="player-note-value">{escape('已配置头像资料' if detail['photo'] else '使用默认头像')}</div>
+            </div>
+            <div class="player-note-item">
+              <div class="player-note-label">Notes</div>
+              <div class="player-note-value">{escape(detail['notes'] or '暂无补充备注')}</div>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="row g-4">
+        <div class="col-12 col-xl-6">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">角色画像</h2>
+              <p class="section-copy mb-0">不是只显示几个标签，而是直接看出这个人最常站在哪些位置。</p>
+            </div>
+          </div>
+          <div class="player-roles-grid">{role_cards_html}</div>
+        </div>
+        <div class="col-12 col-xl-6">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">最近四场</h2>
+              <p class="section-copy mb-0">用最近对局做一个趋势窗口，刷新时不用先翻整张长表。</p>
+            </div>
+          </div>
+          <div class="player-match-grid">{recent_match_cards_html}</div>
         </div>
       </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-        <div>
-          <h2 class="section-title mb-2">分赛季胜率统计</h2>
-          <p class="section-copy mb-0">先单独统计每个小赛季的好人胜率、狼人胜率和总胜率，再结合上方当前口径查看综合表现。</p>
-        </div>
-      </div>
-      <div class="table-responsive">
-        <table class="table align-middle">
-          <thead>
-            <tr>
-              <th>赛事</th>
-              <th>赛季</th>
-              <th>出场</th>
-              <th>战绩</th>
-              <th>总胜率</th>
-              <th>好人胜率</th>
-              <th>狼人胜率</th>
-              <th>总积分</th>
-              <th>场均得分</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(season_rows) or '<tr><td colspan="9" class="text-secondary">当前统计口径下暂无赛季胜率数据。</td></tr>'}
-          </tbody>
-        </table>
-      </div>
+      <h2 class="section-title mb-2">赛季切片</h2>
+      <p class="section-copy mb-3">当前球员档案按赛季独立建档，所以这里只看这个赛季身份下的阶段表现，不做跨赛事合并。</p>
+      <div class="player-season-grid">{season_cards_html}</div>
     </section>
+    {season_detail_section}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <h2 class="section-title mb-2">角色分布</h2>
-      <p class="section-copy mb-3">按当前录入比赛统计该队员使用过的角色次数。</p>
-      <div class="d-flex flex-wrap gap-2">{role_chips}</div>
-    </section>
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-        <div>
-          <h2 class="section-title mb-2">分赛事统计</h2>
-          <p class="section-copy mb-0">同一个队员可以在不同赛事代表不同战队，这里单独拆开展示。</p>
-        </div>
-      </div>
-      <div class="table-responsive">
-        <table class="table align-middle">
-          <thead>
-            <tr>
-              <th>赛事</th>
-              <th>战队</th>
-              <th>出场</th>
-              <th>战绩</th>
-              <th>胜率</th>
-              <th>总积分</th>
-              <th>场均得分</th>
-            </tr>
-          </thead>
-          <tbody>
-            {''.join(competition_rows) or '<tr><td colspan="7" class="text-secondary">暂无分赛事统计。</td></tr>'}
-          </tbody>
-        </table>
+      <h2 class="section-title mb-2">角色标签摘要</h2>
+      <p class="section-copy mb-3">如果你只想快速扫一眼角色池，也可以直接看这组简洁标签。</p>
+      <div class="d-flex flex-wrap gap-2">
+        {"".join(f'<span class="chip">{escape(item["role"])} {item["games"]} 局</span>' for item in detail["roles"]) or '<span class="chip">暂无角色记录</span>'}
       </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
-          <h2 class="section-title mb-2">最近比赛记录</h2>
-          <p class="section-copy mb-0">这里会展示该队员在当前统计口径下的全部对局明细，方便继续核对赛事归属和表现。</p>
+          <h2 class="section-title mb-2">全部比赛记录</h2>
+          <p class="section-copy mb-0">完整对局明细继续保留在这里，方便你往下查到具体每一盘。</p>
         </div>
       </div>
       <div class="table-responsive">

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 from html import escape
+import json
 import secrets
 from typing import Any
 import web_app as legacy
 
+account_role_label = legacy.account_role_label
 RequestContext = legacy.RequestContext
 DEFAULT_PLAYER_PHOTO = legacy.DEFAULT_PLAYER_PHOTO
 DEFAULT_TEAM_LOGO = legacy.DEFAULT_TEAM_LOGO
+append_alert_query = legacy.append_alert_query
 append_user_player_binding = legacy.append_user_player_binding
 build_guild_honor_rows = legacy.build_guild_honor_rows
 build_scoped_path = legacy.build_scoped_path
@@ -41,6 +44,7 @@ resolve_team_player_ids = legacy.resolve_team_player_ids
 save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
+start_response_json = legacy.start_response_json
 user_has_permission = legacy.user_has_permission
 user_has_team_identity_in_scope = legacy.user_has_team_identity_in_scope
 validate_guild_creation = legacy.validate_guild_creation
@@ -76,41 +80,251 @@ def parse_guild_honors_text(value: str) -> tuple[list[dict[str, str]], str]:
             return [], f"第 {index} 行格式不正确，请使用“荣誉标题 | 战队名 | 赛事赛季”。"
         honors.append({"title": parts[0], "team_name": parts[1], "scope": parts[2]})
     return honors, ""
+
+
+def build_guild_overview_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
+    guilds = sorted(data.get("guilds", []), key=lambda item: item["name"])
+    team_guild_ids = {
+        team["team_id"]: str(team.get("guild_id") or "").strip()
+        for team in data["teams"]
+    }
+    guild_match_ids: dict[str, set[str]] = {}
+    for match in data["matches"]:
+        match_id = str(match.get("match_id") or "").strip()
+        if not match_id:
+            continue
+        represented_guild_ids = {
+            team_guild_ids.get(entry["team_id"], "")
+            for entry in match.get("players", [])
+        }
+        for guild_id in represented_guild_ids:
+            if guild_id:
+                guild_match_ids.setdefault(guild_id, set()).add(match_id)
+
+    rows: list[dict[str, Any]] = []
+    for guild in guilds:
+        guild_id = guild["guild_id"]
+        guild_teams = [
+            team
+            for team in data["teams"]
+            if str(team.get("guild_id") or "").strip() == guild_id
+        ]
+        ongoing_team_count = sum(
+            1 for team in guild_teams if get_team_season_status(data, team) == "ongoing"
+        )
+        rows.append(
+            {
+                "guild_id": guild_id,
+                "name": guild["name"],
+                "short_name": str(guild.get("short_name") or "").strip(),
+                "notes": str(guild.get("notes") or "").strip(),
+                "leader_username": str(guild.get("leader_username") or "").strip(),
+                "team_count": len(guild_teams),
+                "ongoing_team_count": ongoing_team_count,
+                "historical_team_count": max(len(guild_teams) - ongoing_team_count, 0),
+                "match_count": len(guild_match_ids.get(guild_id, set())),
+                "honor_count": len(build_guild_honor_rows(data, guild_id)),
+                "guild": guild,
+            }
+        )
+    return rows
+
+
+def _serialize_guild_card(
+    row: dict[str, Any],
+    current_user: dict[str, Any] | None,
+    can_manage_honors: bool,
+) -> dict[str, Any]:
+    guild = row["guild"]
+    can_manage = can_manage_guild(current_user, guild) or can_manage_honors
+    return {
+        "guild_id": row["guild_id"],
+        "name": row["name"],
+        "short_name": row["short_name"] or "未设置简称",
+        "notes": row["notes"] or "长期存在的战队组织。",
+        "leader_username": row["leader_username"] or "未设置",
+        "team_count": int(row["team_count"]),
+        "ongoing_team_count": int(row["ongoing_team_count"]),
+        "historical_team_count": int(row["historical_team_count"]),
+        "match_count": int(row["match_count"]),
+        "honor_count": int(row["honor_count"]),
+        "href": f"/guilds/{row['guild_id']}",
+        "manage_href": f"/guilds/{row['guild_id']}?view=manage" if can_manage else "",
+    }
+
+
+def build_guilds_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    data = load_validated_data()
+    overview_rows = build_guild_overview_rows(data)
+    can_manage_honors = can_manage_guild_honors(ctx.current_user)
+    team_guild_ids = {
+        team["team_id"]: str(team.get("guild_id") or "").strip()
+        for team in data["teams"]
+    }
+    total_match_count = sum(
+        1
+        for match in data["matches"]
+        if any(team_guild_ids.get(entry["team_id"], "") for entry in match.get("players", []))
+    )
+    featured_row = max(
+        overview_rows,
+        key=lambda item: (
+            item["ongoing_team_count"],
+            item["match_count"],
+            item["honor_count"],
+            item["team_count"],
+            item["name"],
+        ),
+        default=None,
+    )
+    management_href = "/profile" if ctx.current_user else "/login?next=/profile"
+    featured_payload = (
+        {
+            "name": featured_row["name"],
+            "short_name": featured_row["short_name"] or "未设置简称",
+            "notes": featured_row["notes"] or "长期存在的战队组织。",
+            "href": f"/guilds/{featured_row['guild_id']}",
+            "ongoing_team_count": int(featured_row["ongoing_team_count"]),
+            "match_count": int(featured_row["match_count"]),
+            "honor_count": int(featured_row["honor_count"]),
+            "team_count": int(featured_row["team_count"]),
+        }
+        if featured_row
+        else None
+    )
+    return {
+        "alert": form_value(ctx.query, "alert").strip(),
+        "hero": {
+            "title": "全部门派",
+            "copy": "这里是门派的对外展示入口。创建门派和管理操作继续收口在个人中心，公开页只负责浏览和下钻。",
+            "featured": featured_payload,
+        },
+        "metrics": [
+            {
+                "label": "门派总数",
+                "value": str(len(overview_rows)),
+                "copy": "已登记的长期战队组织",
+            },
+            {
+                "label": "进行中赛季战队",
+                "value": str(sum(row["ongoing_team_count"] for row in overview_rows)),
+                "copy": "当前仍在进行中的赛季身份",
+            },
+            {
+                "label": "覆盖比赛",
+                "value": str(total_match_count),
+                "copy": "至少有门派战队参加的比赛数",
+            },
+            {
+                "label": "历届荣誉",
+                "value": str(sum(row["honor_count"] for row in overview_rows)),
+                "copy": "门派归档荣誉条目",
+            },
+        ],
+        "management": {
+            "href": management_href,
+            "label": "进入个人中心" if ctx.current_user else "登录后管理",
+            "copy": (
+                "门派创建和管理入口已经统一放进个人中心，公开页保持轻量浏览。"
+                if ctx.current_user
+                else "登录后可在个人中心创建门派、查看审核入口和进入管理页。"
+            ),
+        },
+        "cards": [
+            _serialize_guild_card(row, ctx.current_user, can_manage_honors)
+            for row in overview_rows
+        ],
+        "legacy_href": "/guilds/legacy",
+    }
+
+
+def build_guilds_frontend_page(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        account_html = f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    else:
+        account_html = """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+
+    bootstrap = json.dumps(
+        {
+            "apiEndpoint": "/api/guilds",
+            "alert": form_value(ctx.query, "alert").strip(),
+        },
+        ensure_ascii=False,
+    )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#e2f0e8">
+    <title>门派</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/guilds-app.css">
+  </head>
+  <body class="guilds-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/guilds">门派</a>
+        <span class="shell-brand-copy">Guild Frontend · API Driven</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link" href="/dashboard">首页</a>
+        <a class="shell-nav-link" href="/competitions">比赛页面</a>
+        <a class="shell-nav-link is-active" href="/guilds">门派</a>
+      </nav>
+      {account_html}
+    </header>
+    <main id="guilds-app" class="guilds-app-root" aria-live="polite">
+      <section class="guilds-loading-shell">
+        <div class="guilds-loading-kicker">Loading Guilds</div>
+        <h1>正在加载门派列表</h1>
+        <p>新前端会通过独立 API 拉取门派概览并渲染页面。</p>
+      </section>
+    </main>
+    <script>window.__WEREWOLF_GUILDS_BOOTSTRAP__ = {bootstrap};</script>
+    <script src="/assets/guilds-app.js" defer></script>
+  </body>
+</html>
+"""
 def get_guilds_page(
     ctx: RequestContext,
     alert: str = "",
     form_values: dict[str, str] | None = None,
 ) -> str:
     data = load_validated_data()
-    guilds = sorted(data.get("guilds", []), key=lambda item: item["name"])
+    guild_rows = build_guild_overview_rows(data)
     cards = []
-    for guild in guilds:
-        guild_teams = [
-            team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild["guild_id"]
-        ]
-        guild_team_count = len(guild_teams)
-        ongoing_team_count = sum(1 for team in guild_teams if get_team_season_status(data, team) == "ongoing")
-        guild_match_count = sum(
-            1
-            for match in data["matches"]
-            if any(
-                str(get_team_by_id(data, entry["team_id"]) and get_team_by_id(data, entry["team_id"]).get("guild_id") or "").strip()
-                == guild["guild_id"]
-                for entry in match["players"]
-            )
-        )
-        honor_count = len(build_guild_honor_rows(data, guild["guild_id"]))
+    for row in guild_rows:
         cards.append(
             f"""
             <div class="col-12 col-md-6 col-xl-4">
-              <a class="team-link-card shadow-sm p-4 h-100" href="/guilds/{escape(guild['guild_id'])}">
+              <a class="team-link-card shadow-sm p-4 h-100" href="/guilds/{escape(row['guild_id'])}">
                 <div class="card-kicker mb-2">门派</div>
-                <h2 class="h4 mb-2">{escape(guild['name'])}</h2>
-                <div class="small-muted mb-3">{escape(guild['notes'] or '长期存在的战队组织。')}</div>
+                <h2 class="h4 mb-2">{escape(row['name'])}</h2>
+                <div class="small-muted mb-3">{escape(row['notes'] or '长期存在的战队组织。')}</div>
                 <div class="row g-3">
-                  <div class="col-4"><div class="small text-secondary">进行中</div><div class="fw-semibold">{ongoing_team_count}</div></div>
-                  <div class="col-4"><div class="small text-secondary">比赛</div><div class="fw-semibold">{guild_match_count}</div></div>
-                  <div class="col-4"><div class="small text-secondary">历届战队</div><div class="fw-semibold">{max(guild_team_count - ongoing_team_count, 0)}</div></div>
+                  <div class="col-3"><div class="small text-secondary">进行中</div><div class="fw-semibold">{row['ongoing_team_count']}</div></div>
+                  <div class="col-3"><div class="small text-secondary">比赛</div><div class="fw-semibold">{row['match_count']}</div></div>
+                  <div class="col-3"><div class="small text-secondary">历届战队</div><div class="fw-semibold">{row['historical_team_count']}</div></div>
+                  <div class="col-3"><div class="small text-secondary">荣誉</div><div class="fw-semibold">{row['honor_count']}</div></div>
                 </div>
               </a>
             </div>
@@ -146,16 +360,52 @@ def get_guild_join_approval_error(
     return ""
 
 
-def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
+def _build_guild_legacy_href(guild_id: str, manage_mode: bool) -> str:
+    base_path = f"/guilds/{guild_id}/legacy"
+    return f"{base_path}?view=manage" if manage_mode else base_path
+
+
+def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
     data = load_validated_data()
     guild = get_guild_by_id(data, guild_id)
     if not guild:
         return layout("未找到门派", '<div class="alert alert-danger">没有找到对应的门派。</div>', ctx)
+
+    manage_mode = form_value(ctx.query, "view").strip() == "manage"
+    bootstrap = json.dumps(
+        {
+            "apiEndpoint": f"/api/guilds/{guild_id}",
+            "legacyHref": _build_guild_legacy_href(guild_id, manage_mode),
+        },
+        ensure_ascii=False,
+    )
+    body = f"""
+    <div id="guild-app" aria-live="polite">
+      <section class="panel shadow-sm p-3 p-lg-4">
+        <div class="small text-secondary">正在加载门派详情，前端会通过独立接口渲染当前页面内容。</div>
+      </section>
+    </div>
+    <script>window.__WEREWOLF_GUILD_BOOTSTRAP__ = {bootstrap};</script>
+    <script src="/assets/guild-app.js" defer></script>
+    """
+    return layout(
+        f"{escape(str(guild.get('name') or guild_id))} 门派页",
+        body,
+        ctx,
+        alert=form_value(ctx.query, "alert").strip(),
+    )
+
+
+def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, str]:
+    data = load_validated_data()
+    guild = get_guild_by_id(data, guild_id)
+    if not guild:
+        return "未找到门派", '<div class="alert alert-danger">没有找到对应的门派。</div>'
     manage_mode = form_value(ctx.query, "view").strip() == "manage"
     can_manage_membership = can_manage_guild(ctx.current_user, guild)
     can_manage_honors = can_manage_guild_honors(ctx.current_user)
     if manage_mode and not (can_manage_membership or can_manage_honors):
-        return layout("没有权限", '<div class="alert alert-danger">你没有权限管理这个门派。</div>', ctx)
+        return "没有权限", '<div class="alert alert-danger">你没有权限管理这个门派。</div>'
     guild_teams = [
         team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild_id
     ]
@@ -402,11 +652,39 @@ def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
       else ''
     )}
     """
-    return layout(f"{guild['name']} 门派页", body, ctx, alert=alert)
+    return f"{guild['name']} 门派页", body
+
+
+def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
+    title, body = _build_guild_page_parts(ctx, guild_id)
+    return layout(title, body, ctx, alert=alert)
+
+
+def build_guild_api_payload(ctx: RequestContext, guild_id: str) -> dict[str, Any]:
+    manage_mode = form_value(ctx.query, "view").strip() == "manage"
+    title, body = _build_guild_page_parts(ctx, guild_id)
+    if title == "未找到门派":
+        return {
+            "not_found": True,
+            "title": title,
+            "body_html": body,
+            "legacy_href": _build_guild_legacy_href(guild_id, manage_mode),
+            "alert": form_value(ctx.query, "alert").strip(),
+        }
+    return {
+        "title": title,
+        "body_html": body,
+        "legacy_href": _build_guild_legacy_href(guild_id, manage_mode),
+        "alert": form_value(ctx.query, "alert").strip(),
+    }
+
+
+def get_guild_legacy_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
+    return get_guild_page(ctx, guild_id, alert)
 
 def handle_guilds(ctx: RequestContext, start_response):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_guilds_page(ctx))
+        return start_response_html(start_response, "200 OK", build_guilds_frontend_page(ctx))
 
     guard = require_login(ctx, start_response)
     if guard is not None:
@@ -552,9 +830,38 @@ def handle_guilds(ctx: RequestContext, start_response):
         layout("请求无效", '<div class="alert alert-danger">未识别的门派操作。</div>', ctx),
     )
 
+
+def handle_guilds_api(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "guilds api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_response_json(
+        start_response,
+        "200 OK",
+        build_guilds_api_payload(ctx),
+    )
+
+
+def handle_guild_api(ctx: RequestContext, start_response, guild_id: str):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "guild api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    payload = build_guild_api_payload(ctx, guild_id)
+    status = "404 Not Found" if payload.get("not_found") else "200 OK"
+    return start_response_json(start_response, status, payload)
+
+
 def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_guild_page(ctx, guild_id))
+        return start_response_html(start_response, "200 OK", build_guild_frontend_page(ctx, guild_id))
 
     guard = require_login(ctx, start_response)
     if guard is not None:
@@ -574,10 +881,15 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
     can_manage_membership = can_manage_guild(ctx.current_user, guild)
     can_manage_honors = can_manage_guild_honors(ctx.current_user)
     if action == "create_guild_team":
-        return start_response_html(
+        redirect_path = f"/guilds/{guild_id}"
+        if form_value(ctx.query, "view").strip() == "manage":
+            redirect_path += "?view=manage"
+        return redirect(
             start_response,
-            "200 OK",
-            get_guild_page(ctx, guild_id, alert="赛季战队不再从门派页手动创建，请先由赛事管理员批量创建，或在录入比赛结果后自动生成。"),
+            append_alert_query(
+                redirect_path,
+                "赛季战队不再从门派页手动创建，请先由赛事管理员批量创建，或在录入比赛结果后自动生成。",
+            ),
         )
 
     if action == "update_guild_honors":
@@ -589,24 +901,22 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
             )
         honors_text = form_value(ctx.form, "honors_text")
         honors, error = parse_guild_honors_text(honors_text)
+        redirect_path = f"/guilds/{guild_id}?view=manage"
         if error:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert=error),
+                append_alert_query(redirect_path, error),
             )
         guild["honors"] = honors
         errors = save_repository_state(data, users)
         if errors:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="保存门派荣誉失败：" + "；".join(errors[:3])),
+                append_alert_query(redirect_path, "保存门派荣誉失败：" + "；".join(errors[:3])),
             )
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_guild_page(ctx, guild_id, alert="门派历届荣誉已更新。"),
+            append_alert_query(redirect_path, "门派历届荣誉已更新。"),
         )
 
     if action in {"approve_guild_join", "reject_guild_join"}:
@@ -618,6 +928,7 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
             )
         requests = load_membership_requests()
         request_id = form_value(ctx.form, "request_id").strip()
+        redirect_path = f"/guilds/{guild_id}?view=manage"
         request_item = next(
             (
                 item
@@ -629,49 +940,43 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
             None,
         )
         if not request_item:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="没有找到对应的入门派申请。"),
+                append_alert_query(redirect_path, "没有找到对应的入门派申请。"),
             )
         if action == "reject_guild_join":
             requests = [item for item in requests if item["request_id"] != request_id]
             save_membership_requests(requests)
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="申请已拒绝。"),
+                append_alert_query(redirect_path, "申请已拒绝。"),
             )
         team = get_team_by_id(data, request_item.get("source_team_id") or "")
         if not team:
             requests = [item for item in requests if item["request_id"] != request_id]
             save_membership_requests(requests)
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="申请对应的战队已经不存在，记录已移除。"),
+                append_alert_query(redirect_path, "申请对应的战队已经不存在，记录已移除。"),
             )
         approval_error = get_guild_join_approval_error(data, team, guild_id)
         if approval_error:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert=approval_error),
+                append_alert_query(redirect_path, approval_error),
             )
         team["guild_id"] = guild_id
         errors = save_repository_state(data, users)
         if errors:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_guild_page(ctx, guild_id, alert="审核失败：" + "；".join(errors[:3])),
+                append_alert_query(redirect_path, "审核失败：" + "；".join(errors[:3])),
             )
         requests = [item for item in requests if item["request_id"] != request_id]
         save_membership_requests(requests)
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_guild_page(ctx, guild_id, alert=f"已通过 {team['name']} 的入门派申请。"),
+            append_alert_query(redirect_path, f"已通过 {team['name']} 的入门派申请。"),
         )
 
     return start_response_html(

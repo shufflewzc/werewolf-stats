@@ -808,6 +808,17 @@ def render_markdown_html(content: str) -> str:
             pattern = r"^[-*]\s+(.+)$" if list_tag == "ul" else r"^\d+\.\s+(.+)$"
             while index < total_lines:
                 current = lines[index].strip()
+                if not current:
+                    look_ahead = index + 1
+                    while look_ahead < total_lines and not lines[look_ahead].strip():
+                        look_ahead += 1
+                    if look_ahead >= total_lines:
+                        index = look_ahead
+                        break
+                    if re.match(pattern, lines[look_ahead].strip()):
+                        index = look_ahead
+                        continue
+                    break
                 match = re.match(pattern, current)
                 if not match:
                     break
@@ -1538,6 +1549,21 @@ def start_response_html(start_response, status: str, body: str, headers: list[tu
         [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(payload)))] + extra_headers,
     )
     return [payload]
+
+
+def start_response_json(
+    start_response,
+    status: str,
+    payload: Any,
+    headers: list[tuple[str, str]] | None = None,
+):
+    extra_headers = headers or []
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    start_response(
+        status,
+        [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(body)))] + extra_headers,
+    )
+    return [body]
 
 
 def redirect(start_response, location: str, headers: list[tuple[str, str]] | None = None):
@@ -5696,6 +5722,466 @@ def _legacy_get_competitions_page_impl(ctx: RequestContext, alert: str = "") -> 
     return impl(ctx, alert)
 
 
+def build_dashboard_frontend_page(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        account_html = f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    else:
+        account_html = """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+
+    bootstrap = json.dumps(
+        {
+            "apiEndpoint": "/api/dashboard",
+            "alert": form_value(ctx.query, "alert").strip(),
+        },
+        ensure_ascii=False,
+    )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#dceef7">
+    <title>首页</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/dashboard-app.css">
+  </head>
+  <body class="dashboard-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/dashboard">一颗小草赛事数据中心</a>
+        <span class="shell-brand-copy">League Site · Frontend App</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link is-active" href="/dashboard">首页</a>
+        <a class="shell-nav-link" href="/competitions">比赛页面</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+      </nav>
+      {account_html}
+    </header>
+    <main id="dashboard-app" class="dashboard-app-root" aria-live="polite">
+      <section class="dashboard-loading-shell">
+        <div class="dashboard-loading-kicker">Loading Dashboard</div>
+        <h1>正在加载赛事首页</h1>
+        <p>前端会通过独立接口拉取数据并渲染页面。</p>
+      </section>
+    </main>
+    <script>window.__WEREWOLF_DASHBOARD_BOOTSTRAP__ = {bootstrap};</script>
+    <script src="/assets/dashboard-app.js" defer></script>
+  </body>
+</html>
+"""
+
+
+def _serialize_dashboard_team_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "rank": int(row["rank"]),
+        "team_id": row["team_id"],
+        "name": row["name"],
+        "short_name": row["short_name"],
+        "logo": row["logo"],
+        "matches_represented": int(row["matches_represented"]),
+        "points_total": f'{float(row["points_earned_total"]):.2f}',
+        "win_rate": format_pct(float(row["win_rate"])),
+        "stance_rate": format_pct(float(row["stance_rate"])),
+        "href": f'/teams/{quote(row["team_id"])}',
+    }
+
+
+def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "rank": int(row["rank"]),
+        "player_id": row["player_id"],
+        "display_name": row["display_name"],
+        "team_name": row["team_name"],
+        "photo": row["photo"],
+        "games_played": int(row["games_played"]),
+        "points_total": f'{float(row["points_earned_total"]):.2f}',
+        "win_rate": format_pct(float(row["win_rate"])),
+        "stance_rate": format_pct(float(row["stance_rate"])),
+        "href": f'/players/{quote(row["player_id"])}',
+    }
+
+
+def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    data = load_validated_data()
+    scope = resolve_catalog_scope(ctx, data)
+    competition_catalog = scope["competition_rows"]
+    selected_competition = scope["selected_competition"]
+    selected_entry = scope["selected_entry"]
+    selected_region = scope["selected_region"]
+    selected_series_slug = scope["selected_series_slug"]
+    region_rows = scope["region_rows"]
+    filtered_rows = scope["filtered_rows"]
+    series_rows = scope["series_rows"]
+    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    selected_season = get_selected_season(ctx, season_names)
+    scoped_competition_rows = filtered_rows or region_rows
+    scoped_competition_names = {
+        row["competition_name"] for row in scoped_competition_rows
+    }
+    stats_data = (
+        build_filtered_data(data, scoped_competition_names)
+        if not selected_competition and scoped_competition_names
+        else data
+    )
+    player_rows = build_player_rows(stats_data, selected_competition, selected_season)
+    team_rows = build_team_rows(stats_data, selected_competition, selected_season)
+    visible_player_rows = [row for row in player_rows if row["games_played"] > 0]
+    visible_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
+    displayed_player_rows = visible_player_rows or player_rows
+    displayed_team_rows = visible_team_rows or team_rows
+    scope_label = " / ".join(
+        item
+        for item in [
+            selected_region or DEFAULT_REGION_NAME,
+            selected_entry["series_name"] if selected_entry else None,
+            selected_competition,
+            selected_season,
+        ]
+        if item
+    ) or f"{DEFAULT_REGION_NAME}赛区汇总"
+    active_team_count = len(visible_team_rows) if selected_competition else max(
+        (row["team_count"] for row in scoped_competition_rows),
+        default=0,
+    )
+    active_player_count = (
+        len(visible_player_rows)
+        if selected_competition
+        else max((row["player_count"] for row in scoped_competition_rows), default=0)
+    )
+    active_match_count = sum(
+        1
+        for match in stats_data["matches"]
+        if (
+            match_in_scope(match, selected_competition, selected_season)
+            if selected_competition
+            else (
+                get_match_competition_name(match) in scoped_competition_names
+                and (
+                    not selected_season
+                    or (match.get("season") or "").strip() == selected_season
+                )
+            )
+        )
+    )
+    featured_competition = min(
+        scoped_competition_rows or competition_catalog,
+        key=competition_latest_day_sort_key,
+        default=None,
+    )
+    selected_series_row = next(
+        (row for row in series_rows if row["series_slug"] == selected_series_slug),
+        None,
+    )
+    featured_label = selected_competition or (
+        selected_series_row["series_name"]
+        if selected_series_row
+        else (featured_competition["competition_name"] if featured_competition else "等待录入赛事")
+    )
+    scheduled_match_day = get_nearest_match_day_label(
+        [
+            match["played_on"]
+            for match in stats_data["matches"]
+            if (
+                match_in_scope(match, selected_competition, selected_season)
+                if selected_competition
+                else get_match_competition_name(match) in scoped_competition_names
+            )
+        ],
+        china_today_label(),
+    )
+    latest_played_on = scheduled_match_day
+    featured_seasons = selected_season or (
+        " / ".join((selected_series_row or featured_competition or {}).get("seasons", [])[:2])
+        if (selected_series_row or featured_competition)
+        and (selected_series_row or featured_competition).get("seasons")
+        else "赛季待录入"
+    )
+    dashboard_scope_label = selected_competition or featured_label
+    latest_match_day_href = build_scoped_path(
+        "/competitions",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    scope_summary_line = (
+        f"{selected_region or DEFAULT_REGION_NAME}赛区"
+        + (
+            f" · {selected_series_row['series_name']}"
+            if selected_series_row
+            else ""
+        )
+        + (f" · {selected_competition}" if selected_competition else "")
+        + (f" · {selected_season}" if selected_season else "")
+    )
+    summary_description = (
+        f"当前正在查看 {scope_summary_line} 的实时统计。"
+        "先锁定赛区和系列赛，再决定是否下钻到单个赛事赛季。"
+    )
+
+    top_team = _serialize_dashboard_team_row(displayed_team_rows[0]) if displayed_team_rows else None
+    top_player = _serialize_dashboard_player_row(displayed_player_rows[0]) if displayed_player_rows else None
+
+    competition_source_rows = filtered_rows or region_rows or competition_catalog
+    region_options = [
+        {
+            "label": region_name,
+            "href": build_scoped_path("/dashboard", None, None, region_name, selected_series_slug),
+            "active": selected_region == region_name,
+        }
+        for region_name in scope["region_names"]
+    ]
+    series_options = [
+        {
+            "label": "全部系列赛",
+            "href": build_scoped_path("/dashboard", None, None, selected_region, None),
+            "active": selected_series_slug is None,
+        }
+    ] + [
+        {
+            "label": row["series_name"],
+            "href": build_scoped_path("/dashboard", None, None, selected_region, row["series_slug"]),
+            "active": selected_series_slug == row["series_slug"],
+        }
+        for row in series_rows
+    ]
+    competition_options = [
+        {
+            "label": "全部赛事",
+            "href": build_scoped_path("/dashboard", None, None, selected_region, selected_series_slug),
+            "active": selected_competition is None,
+        }
+    ] + [
+        {
+            "label": row["competition_name"],
+            "href": build_scoped_path(
+                "/dashboard",
+                row["competition_name"],
+                None,
+                selected_region,
+                selected_series_slug,
+            ),
+            "active": selected_competition == row["competition_name"],
+        }
+        for row in competition_source_rows
+    ]
+    season_options = [
+        {
+            "label": season_name,
+            "href": build_scoped_path(
+                "/dashboard",
+                selected_competition,
+                season_name,
+                selected_region,
+                selected_series_slug,
+            ),
+            "selected": selected_season == season_name,
+        }
+        for season_name in season_names
+    ]
+
+    dashboard_series_rows = [
+        row
+        for row in series_rows
+        if not selected_series_slug or row["series_slug"] == selected_series_slug
+    ]
+    series_cards: list[dict[str, Any]] = []
+    for row in dashboard_series_rows:
+        regional_competitions = [
+            item
+            for item in region_rows
+            if item["series_slug"] == row["series_slug"]
+        ]
+        primary_competition = regional_competitions[0] if regional_competitions else None
+        competition_path = (
+            build_scoped_path(
+                "/competitions",
+                primary_competition["competition_name"],
+                None,
+                selected_region,
+                row["series_slug"],
+            )
+            if primary_competition
+            else build_scoped_path("/competitions", None, None, selected_region, row["series_slug"])
+        )
+        series_cards.append(
+            {
+                "series_slug": row["series_slug"],
+                "series_name": row["series_name"],
+                "region_name": selected_region or DEFAULT_REGION_NAME,
+                "seasons": list(row["seasons"]),
+                "latest_played_on": row["latest_played_on"] or "待更新",
+                "team_count": int(row["team_count"]),
+                "player_count": int(row["player_count"]),
+                "match_count": int(row["match_count"]),
+                "summary": row["summary"],
+                "topic_href": build_series_topic_path(row["series_slug"]),
+                "competition_href": competition_path,
+            }
+        )
+
+    relevant_days: list[str] = []
+    for played_on in list_match_days(data):
+        has_match = any(
+            (
+                str(match.get("played_on") or "").strip() == played_on
+                and (
+                    get_match_competition_name(match) in scoped_competition_names
+                    if not selected_competition
+                    else match_in_scope(match, selected_competition, selected_season)
+                )
+            )
+            for match in data["matches"]
+        )
+        if has_match:
+            relevant_days.append(played_on)
+    relevant_days = sort_match_days_by_relevance(relevant_days, china_today_label())
+    latest_played_on = relevant_days[0] if relevant_days else scheduled_match_day
+    if relevant_days:
+        latest_match_day_href = build_match_day_path(
+            relevant_days[0],
+            build_scoped_path(
+                "/dashboard",
+                selected_competition,
+                selected_season,
+                selected_region,
+                selected_series_slug,
+            ),
+        )
+
+    match_days: list[dict[str, Any]] = []
+    for played_on in relevant_days[:6]:
+        day_matches = [
+            match
+            for match in data["matches"]
+            if (
+                str(match.get("played_on") or "").strip() == played_on
+                and (
+                    get_match_competition_name(match) in scoped_competition_names
+                    if not selected_competition
+                    else match_in_scope(match, selected_competition, selected_season)
+                )
+            )
+        ]
+        if not day_matches:
+            continue
+        day_competitions = sorted({get_match_competition_name(match) for match in day_matches})
+        match_days.append(
+            {
+                "played_on": played_on,
+                "match_count": len(day_matches),
+                "competition_names": day_competitions,
+                "href": build_match_day_path(
+                    played_on,
+                    build_scoped_path(
+                        "/dashboard",
+                        selected_competition,
+                        selected_season,
+                        selected_region,
+                        selected_series_slug,
+                    ),
+                ),
+            }
+        )
+
+    legacy_href = build_scoped_path(
+        "/dashboard/legacy",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    return {
+        "generated_at": ctx.now_label,
+        "legacy_href": legacy_href,
+        "scope": {
+            "label": scope_label,
+            "dashboard_label": dashboard_scope_label,
+            "summary_line": scope_summary_line,
+            "description": summary_description,
+            "selected_region": selected_region,
+            "selected_series_slug": selected_series_slug,
+            "selected_competition": selected_competition,
+            "selected_season": selected_season,
+            "filters": {
+                "regions": region_options,
+                "series": series_options,
+                "competitions": competition_options,
+                "seasons": season_options,
+            },
+        },
+        "hero": {
+            "featured_label": featured_label,
+            "featured_seasons": featured_seasons,
+            "latest_played_on": latest_played_on or "待录入",
+            "latest_match_day_href": latest_match_day_href,
+            "competitions_href": "/competitions",
+            "top_team": top_team,
+            "top_player": top_player,
+        },
+        "metrics": [
+            {
+                "label": "收录战队",
+                "value": str(active_team_count),
+                "copy": f"{scope_label} 口径下有成绩的战队数量。",
+            },
+            {
+                "label": "出场队员",
+                "value": str(active_player_count),
+                "copy": "当前视角里已经出场并生成统计的选手数量。",
+            },
+            {
+                "label": "比赛场次",
+                "value": str(active_match_count),
+                "copy": "包含已录入比分、阵营和个人表现的有效对局。",
+            },
+            {
+                "label": "最近比赛日",
+                "value": latest_played_on or "待录入",
+                "copy": f"{featured_seasons} · 继续往下可以查看当天总览。",
+            },
+        ],
+        "series_cards": series_cards,
+        "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
+        "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
+        "match_days": match_days,
+    }
+
+
+def handle_dashboard_api(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "dashboard api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_response_json(
+        start_response,
+        "200 OK",
+        build_dashboard_api_payload(ctx),
+    )
+
+
 def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -5801,7 +6287,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         if selected_series_row
         else (featured_competition["competition_name"] if featured_competition else "等待录入赛事")
     )
-    latest_played_on = get_nearest_match_day_label(
+    scheduled_match_day = get_nearest_match_day_label(
         [
             match["played_on"]
             for match in stats_data["matches"]
@@ -5813,6 +6299,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         ],
         china_today_label(),
     )
+    latest_played_on = scheduled_match_day
     featured_seasons = selected_season or (
         " / ".join((selected_series_row or featured_competition or {}).get("seasons", [])[:2])
         if (selected_series_row or featured_competition)
@@ -5876,7 +6363,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         <div class="dashboard-metric-copy">包含已录入比分、阵营和个人表现的有效对局。</div>
       </article>
       <article class="dashboard-metric-card">
-        <div class="dashboard-metric-label">下一个比赛日</div>
+        <div class="dashboard-metric-label">最近比赛日</div>
         <div class="dashboard-metric-value">{escape(latest_played_on)}</div>
         <div class="dashboard-metric-copy">{escape(featured_seasons)} · 继续往下可以查看当天总览。</div>
       </article>
@@ -5955,6 +6442,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         if has_match:
             relevant_days.append(played_on)
     relevant_days = sort_match_days_by_relevance(relevant_days, china_today_label())
+    latest_played_on = relevant_days[0] if relevant_days else scheduled_match_day
     if relevant_days:
         latest_match_day_path = build_match_day_path(
             relevant_days[0],
@@ -6249,8 +6737,20 @@ def get_series_page(ctx: RequestContext, series_slug: str) -> str:
     return impl(ctx, series_slug)
 
 
+def get_series_legacy_page(ctx: RequestContext, series_slug: str) -> str:
+    from web.features.competitions import get_series_legacy_page as impl
+
+    return impl(ctx, series_slug)
+
+
 def get_match_day_page(ctx: RequestContext, played_on: str) -> str:
     from web.features.competitions import get_match_day_page as impl
+
+    return impl(ctx, played_on)
+
+
+def get_match_day_legacy_page(ctx: RequestContext, played_on: str) -> str:
+    from web.features.competitions import get_match_day_legacy_page as impl
 
     return impl(ctx, played_on)
 
@@ -6261,16 +6761,70 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
     return impl(ctx, start_response, played_on)
 
 
+def handle_match_day_api(ctx: RequestContext, start_response, played_on: str):
+    from web.features.competitions import handle_match_day_api as impl
+
+    return impl(ctx, start_response, played_on)
+
+
 def get_teams_page(ctx: RequestContext) -> str:
     from web.features.competitions import get_teams_page as impl
 
     return impl(ctx)
 
 
+def get_team_frontend_page(ctx: RequestContext, team_id: str) -> str:
+    from web.features.team_page import build_team_frontend_page as impl
+
+    return impl(ctx, team_id)
+
+
+def get_team_legacy_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
+    from web.features.team_page import get_team_legacy_page as impl
+
+    return impl(ctx, team_id, alert)
+
+
+def handle_team_api(ctx: RequestContext, start_response, team_id: str):
+    from web.features.team_page import handle_team_api as impl
+
+    return impl(ctx, start_response, team_id)
+
+
+def get_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
+    from web.features.player_page import build_player_frontend_page as impl
+
+    return impl(ctx, player_id)
+
+
+def get_player_legacy_page(ctx: RequestContext, player_id: str, alert: str = "") -> str:
+    from web.features.player_page import get_player_legacy_page as impl
+
+    return impl(ctx, player_id, alert)
+
+
+def handle_player_api(ctx: RequestContext, start_response, player_id: str):
+    from web.features.player_page import handle_player_api as impl
+
+    return impl(ctx, start_response, player_id)
+
+
 def handle_competitions(ctx: RequestContext, start_response):
     from web.features.competitions import handle_competitions as impl
 
     return impl(ctx, start_response)
+
+
+def handle_competitions_api(ctx: RequestContext, start_response):
+    from web.features.competitions import handle_competitions_api as impl
+
+    return impl(ctx, start_response)
+
+
+def handle_series_api(ctx: RequestContext, start_response, series_slug: str):
+    from web.features.competitions import handle_series_api as impl
+
+    return impl(ctx, start_response, series_slug)
 
 
 def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[str, Any]) -> dict[str, Any]:
@@ -6419,217 +6973,21 @@ def _legacy_get_match_day_page_impl(ctx: RequestContext, played_on: str) -> str:
 
 
 def get_schedule_page(ctx: RequestContext) -> str:
-    data = load_validated_data()
-    scope = resolve_catalog_scope(ctx, data)
-    competition_names = scope["competition_names"]
-    selected_competition = scope["selected_competition"]
-    if not selected_competition:
-        return get_competitions_page(ctx)
+    from web.features.competitions import get_schedule_page as impl
 
-    selected_entry = scope["selected_entry"]
-    selected_region = selected_entry["region_name"] if selected_entry else scope["selected_region"]
-    selected_series_slug = (
-        selected_entry["series_slug"] if selected_entry else scope["selected_series_slug"]
-    )
-    season_names = list_seasons(data, selected_competition)
-    selected_season = get_selected_season(ctx, season_names)
-    next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-        "/competitions",
-        selected_competition,
-        selected_season,
-        selected_region,
-        selected_series_slug,
-    )
-    competition_switcher = build_competition_switcher(
-        "/schedule",
-        [row["competition_name"] for row in (scope["filtered_rows"] or scope["region_rows"] or scope["competition_rows"])],
-        selected_competition,
-        tone="light",
-        all_label="返回赛事总览",
-        region_name=selected_region,
-        series_slug=selected_series_slug,
-    )
-    season_switcher = build_season_switcher(
-        "/schedule",
-        selected_competition,
-        season_names,
-        selected_season,
-        tone="light",
-        region_name=selected_region,
-        series_slug=selected_series_slug,
-    )
-    season_switcher_html = (
-        f'<div class="hero-switchers mt-3">{season_switcher}</div>' if season_switcher else ""
-    )
+    return impl(ctx)
 
-    match_rows = [
-        match
-        for match in sorted(
-            data["matches"],
-            key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
-            reverse=True,
-        )
-        if match_in_scope(match, selected_competition, selected_season)
-    ]
-    if not match_rows:
-        return layout(
-            "赛事场次页",
-            '<div class="alert alert-secondary">当前系列赛和赛季下还没有比赛记录。</div>',
-            ctx,
-        )
 
-    team_lookup = {team["team_id"]: team for team in data["teams"]}
-    day_groups: dict[str, list[dict[str, Any]]] = {}
-    for match in match_rows:
-        day_groups.setdefault(match["played_on"], []).append(match)
+def get_schedule_legacy_page(ctx: RequestContext) -> str:
+    from web.features.competitions import get_schedule_legacy_page as impl
 
-    create_match_button = ""
-    if can_manage_matches(ctx.current_user, data, selected_competition):
-        create_match_button = (
-            f'<a class="btn btn-dark" href="/matches/new?'
-            f'{urlencode({"competition": selected_competition, "season": selected_season or "", "next": build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug)})}">比赛管理</a>'
-        )
+    return impl(ctx)
 
-    day_sections = []
-    for played_on, matches in day_groups.items():
-        rows = []
-        for match in matches:
-            match_detail_path = (
-                f"/matches/{match['match_id']}?next="
-                f"{quote(build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug))}"
-            )
-            team_names = "、".join(
-                sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"]})
-            )
-            rows.append(
-                f"""
-                <tr>
-                  <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(match_detail_path)}">{escape(match['match_id'])}</a></td>
-                  <td>{escape(match['season'])}</td>
-                  <td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td>
-                  <td>第 {match['round']} 轮</td>
-                  <td>{escape(str(match.get('group_label') or team_names or '未设置'))}</td>
-                  <td>{escape(match['table_label'])}</td>
-                  <td>{escape(match['format'])}</td>
-                  <td><a class="btn btn-sm btn-outline-dark" href="{escape(match_detail_path)}">查看详情</a></td>
-                </tr>
-                """
-            )
-        day_sections.append(
-            f"""
-            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-                <div>
-                  <h2 class="section-title mb-2"><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(build_match_day_path(played_on, build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug)))}">{escape(played_on)}</a></h2>
-                  <p class="section-copy mb-0">当天共有 {len(matches)} 场比赛。点击日期可切换到该比赛日总览，点击单场编号可进入详情页。</p>
-                </div>
-              </div>
-              <div class="table-responsive">
-                <table class="table align-middle">
-                  <thead>
-                    <tr>
-                      <th>编号</th>
-                      <th>赛季</th>
-                      <th>阶段</th>
-                      <th>轮次</th>
-                      <th>参赛分组</th>
-                      <th>房间</th>
-                      <th>板型</th>
-                      <th>操作</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {''.join(rows)}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-            """
-        )
 
-    total_team_count = len(
-        {
-            entry["team_id"]
-            for match in match_rows
-            for entry in match["players"]
-        }
-    )
-    total_player_count = len(
-        {
-            entry["player_id"]
-            for match in match_rows
-            for entry in match["players"]
-        }
-    )
-    body = f"""
-    <section class="hero p-4 p-md-5 shadow-lg mb-4">
-      <div class="hero-layout">
-        <div>
-          <div class="eyebrow mb-3">赛事场次页</div>
-          <h1 class="hero-title mb-3">{escape(selected_competition)} · 全部场次</h1>
-          <p class="hero-copy mb-0">这里集中展示该系列赛当前赛季的所有场次。你可以按日期查看，也可以直接点击某一场进入详情页。</p>
-          <div class="hero-switchers mt-4">{competition_switcher}</div>
-          {season_switcher_html}
-          <div class="d-flex flex-wrap gap-2 mt-4">
-            <a class="btn btn-outline-dark" href="{escape(next_path)}">返回赛事页</a>
-            {create_match_button}
-          </div>
-          <div class="hero-kpis">
-            <div class="hero-pill">
-              <span>比赛日</span>
-              <strong>{len(day_groups)}</strong>
-              <small>当前赛季涉及日期</small>
-            </div>
-            <div class="hero-pill">
-              <span>比赛场次</span>
-              <strong>{len(match_rows)}</strong>
-              <small>当前赛季全部场次</small>
-            </div>
-            <div class="hero-pill">
-              <span>参赛分组</span>
-              <strong>{total_team_count}</strong>
-              <small>当前赛季涉及战队</small>
-            </div>
-            <div class="hero-pill">
-              <span>参赛队员</span>
-              <strong>{total_player_count}</strong>
-              <small>当前赛季上场</small>
-            </div>
-          </div>
-        </div>
-        <div class="hero-stage-card">
-          <div class="official-mark">Schedule Board</div>
-          <div class="hero-stage-label">All Matches</div>
-          <div class="hero-stage-title">{escape(selected_season or selected_competition)}</div>
-          <div class="hero-stage-note">这个页面只保留场次视角，不混入战队入口，适合连续查看该比赛全部赛程。</div>
-          <div class="hero-stage-grid">
-            <div class="hero-stage-metric">
-              <span>首个比赛日</span>
-              <strong>{escape(min(day_groups.keys()))}</strong>
-              <small>当前赛季起始</small>
-            </div>
-            <div class="hero-stage-metric">
-              <span>最后比赛日</span>
-              <strong>{escape(max(day_groups.keys()))}</strong>
-              <small>当前赛季最新</small>
-            </div>
-            <div class="hero-stage-metric">
-              <span>比赛日</span>
-              <strong>{len(day_groups)}</strong>
-              <small>按日期拆分展示</small>
-            </div>
-            <div class="hero-stage-metric">
-              <span>总场次</span>
-              <strong>{len(match_rows)}</strong>
-              <small>当前赛季记录</small>
-            </div>
-          </div>
-        </div>
-      </div>
-    </section>
-    {''.join(day_sections)}
-    """
-    return layout(f"{selected_competition} 场次页", body, ctx)
+def handle_schedule_api(ctx: RequestContext, start_response):
+    from web.features.competitions import handle_schedule_api as impl
+
+    return impl(ctx, start_response)
 
 
 def get_match_page(ctx: RequestContext, match_id: str) -> str:
@@ -8623,6 +8981,29 @@ def handle_guilds(ctx: RequestContext, start_response):
     return impl(ctx, start_response)
 
 
+def handle_guilds_api(ctx: RequestContext, start_response):
+    from web.features.guilds import handle_guilds_api as impl
+
+    return impl(ctx, start_response)
+
+
+def get_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
+    from web.features.guilds import build_guild_frontend_page as impl
+
+    return impl(ctx, guild_id)
+
+
+def get_guild_legacy_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
+    from web.features.guilds import get_guild_legacy_page as impl
+
+    return impl(ctx, guild_id, alert)
+
+
+def handle_guild_api(ctx: RequestContext, start_response, guild_id: str):
+    from web.features.guilds import handle_guild_api as impl
+
+    return impl(ctx, start_response, guild_id)
+
 
 def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
     from web.features.guilds import handle_guild_page as impl
@@ -8726,30 +9107,21 @@ def generate_ai_player_season_summary(
 
 def handle_team_page(ctx: RequestContext, start_response, team_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_team_page(ctx, team_id))
+        return start_response_html(start_response, "200 OK", get_team_frontend_page(ctx, team_id))
 
     action = form_value(ctx.form, "action").strip()
     competition_name = form_value(ctx.form, "competition_name").strip()
     season_name = form_value(ctx.form, "season_name").strip()
-    page_query = {
-        "competition": [competition_name] if competition_name else [],
-        "season": [season_name] if season_name else [],
-    }
-    page_ctx = RequestContext(
-        method="GET",
-        path=f"/teams/{team_id}",
-        query={key: value for key, value in page_query.items() if value},
-        form={},
-        files={},
-        current_user=ctx.current_user,
-        now_label=ctx.now_label,
+    redirect_path = build_scoped_path(
+        f"/teams/{team_id}",
+        competition_name or None,
+        season_name or None,
     )
 
     if not competition_name or not season_name:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert="请先切换到具体赛事和赛季，再生成 AI 战队赛季总结。"),
+            append_alert_query(redirect_path, "请先切换到具体赛事和赛季，再生成 AI 战队赛季总结。"),
         )
 
     existing_summary = load_ai_team_season_summary(
@@ -8763,10 +9135,9 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
             return admin_guard
         summary_content = form_value(ctx.form, "summary_content").strip()
         if not summary_content:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_team_page(page_ctx, team_id, alert="总结正文不能为空。"),
+                append_alert_query(redirect_path, "总结正文不能为空。"),
             )
         save_ai_team_season_summary(
             team_id,
@@ -8775,24 +9146,21 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
             summary_content,
             "管理员手动编辑",
         )
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert="AI 战队赛季总结已保存。"),
+            append_alert_query(redirect_path, "AI 战队赛季总结已保存。"),
         )
 
     if action != "generate_ai_team_season_summary":
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert="未识别的操作。"),
+            append_alert_query(redirect_path, "未识别的操作。"),
         )
 
     if existing_summary and not is_admin_user(ctx.current_user):
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert="当前总结已生成，只有管理员可以重生成。"),
+            append_alert_query(redirect_path, "当前总结已生成，只有管理员可以重生成。"),
         )
 
     data = load_validated_data()
@@ -8813,10 +9181,9 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
         and str(match.get("season") or "").strip() == season_name
     ]
     if not season_matches:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert="当前战队在这个赛季下还没有可用于总结的比赛数据。"),
+            append_alert_query(redirect_path, "当前战队在这个赛季下还没有可用于总结的比赛数据。"),
         )
 
     season_team_rows = [
@@ -8833,10 +9200,9 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
     )
     team_row = next((row for row in season_team_rows if row["team_id"] == team_id), None)
     if not team_row or not team_row.get("matches_represented"):
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert="当前战队在这个赛季下还没有可用于总结的战绩数据。"),
+            append_alert_query(redirect_path, "当前战队在这个赛季下还没有可用于总结的战绩数据。"),
         )
 
     season_player_rows = [
@@ -8884,16 +9250,14 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
             model,
         )
     except ValueError as exc:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_team_page(page_ctx, team_id, alert=str(exc)),
+            append_alert_query(redirect_path, str(exc)),
         )
 
-    return start_response_html(
+    return redirect(
         start_response,
-        "200 OK",
-        get_team_page(page_ctx, team_id, alert="AI 战队赛季总结已生成。"),
+        append_alert_query(redirect_path, "AI 战队赛季总结已生成。"),
     )
 
 
@@ -9436,30 +9800,21 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
 
 def handle_player_page(ctx: RequestContext, start_response, player_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_player_page(ctx, player_id))
+        return start_response_html(start_response, "200 OK", get_player_frontend_page(ctx, player_id))
 
     action = form_value(ctx.form, "action").strip()
     competition_name = form_value(ctx.form, "competition_name").strip()
     season_name = form_value(ctx.form, "season_name").strip()
-    page_query = {
-        "competition": [competition_name] if competition_name else [],
-        "season": [season_name] if season_name else [],
-    }
-    page_ctx = RequestContext(
-        method="GET",
-        path=f"/players/{player_id}",
-        query={key: value for key, value in page_query.items() if value},
-        form={},
-        files={},
-        current_user=ctx.current_user,
-        now_label=ctx.now_label,
+    redirect_path = build_scoped_path(
+        f"/players/{player_id}",
+        competition_name or None,
+        season_name or None,
     )
 
     if not competition_name or not season_name:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert="请先切换到具体赛事和赛季，再生成 AI 选手赛季总结。"),
+            append_alert_query(redirect_path, "请先切换到具体赛事和赛季，再生成 AI 选手赛季总结。"),
         )
 
     existing_summary = load_ai_player_season_summary(
@@ -9473,10 +9828,9 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
             return admin_guard
         summary_content = form_value(ctx.form, "summary_content").strip()
         if not summary_content:
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_player_page(page_ctx, player_id, alert="总结正文不能为空。"),
+                append_alert_query(redirect_path, "总结正文不能为空。"),
             )
         save_ai_player_season_summary(
             player_id,
@@ -9485,25 +9839,22 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
             summary_content,
             "管理员手动编辑",
         )
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert="AI 选手赛季总结已保存。"),
+            append_alert_query(redirect_path, "AI 选手赛季总结已保存。"),
         )
 
     if action != "generate_ai_player_season_summary":
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert="未识别的操作。"),
+            append_alert_query(redirect_path, "未识别的操作。"),
         )
 
     if existing_summary:
         if not is_admin_user(ctx.current_user):
-            return start_response_html(
+            return redirect(
                 start_response,
-                "200 OK",
-                get_player_page(page_ctx, player_id, alert="当前总结已生成，只有管理员可以重生成。"),
+                append_alert_query(redirect_path, "当前总结已生成，只有管理员可以重生成。"),
             )
 
     data = load_validated_data()
@@ -9515,29 +9866,26 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
         and str(match.get("season") or "").strip() == season_name
     ]
     if not player_matches:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert="当前选手在这个赛季下还没有可用于总结的比赛数据。"),
+            append_alert_query(redirect_path, "当前选手在这个赛季下还没有可用于总结的比赛数据。"),
         )
 
     season_player_rows = build_player_rows(data, competition_name, season_name)
     player_row = next((row for row in season_player_rows if row["player_id"] == player_id), None)
     if not player_row or not player_row.get("games_played"):
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert="当前选手在这个赛季下还没有可用于总结的战绩数据。"),
+            append_alert_query(redirect_path, "当前选手在这个赛季下还没有可用于总结的战绩数据。"),
         )
 
     player_details = build_player_details(data, season_player_rows, competition_name, season_name)
     detail = player_details.get(player_id)
     player = next((item for item in data["players"] if item["player_id"] == player_id), None)
     if not detail or not player:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert="没有找到对应的选手资料。"),
+            append_alert_query(redirect_path, "没有找到对应的选手资料。"),
         )
 
     season_team_rows = [
@@ -9570,16 +9918,14 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
             model,
         )
     except ValueError as exc:
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_player_page(page_ctx, player_id, alert=str(exc)),
+            append_alert_query(redirect_path, str(exc)),
         )
 
-    return start_response_html(
+    return redirect(
         start_response,
-        "200 OK",
-        get_player_page(page_ctx, player_id, alert="AI 选手赛季总结已生成。"),
+        append_alert_query(redirect_path, "AI 选手赛季总结已生成。"),
     )
 
 
@@ -11076,6 +11422,24 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
     return impl(ctx, start_response, match_id)
 
 
+def get_match_frontend_page(ctx: RequestContext, match_id: str) -> str:
+    from web.features.match_page import build_match_frontend_page as impl
+
+    return impl(ctx, match_id)
+
+
+def get_match_legacy_page(ctx: RequestContext, match_id: str) -> str:
+    from web.features.match_page import get_match_legacy_page as impl
+
+    return impl(ctx, match_id)
+
+
+def handle_match_api(ctx: RequestContext, start_response, match_id: str):
+    from web.features.match_page import handle_match_api as impl
+
+    return impl(ctx, start_response, match_id)
+
+
 def handle_match_create(ctx: RequestContext, start_response):
     from web.features.matches import handle_match_create as impl
 
@@ -11091,6 +11455,32 @@ def app(environ, start_response):
             return redirect(start_response, "/dashboard")
         if path.startswith("/assets/"):
             return serve_asset(start_response, path)
+        if path == "/api/dashboard":
+            return handle_dashboard_api(ctx, start_response)
+        if path == "/api/competitions":
+            return handle_competitions_api(ctx, start_response)
+        if path == "/api/guilds":
+            return handle_guilds_api(ctx, start_response)
+        if path.startswith("/api/guilds/"):
+            guild_id = path.split("/", 3)[3]
+            return handle_guild_api(ctx, start_response, guild_id)
+        if path.startswith("/api/players/"):
+            player_id = path.split("/", 3)[3]
+            return handle_player_api(ctx, start_response, player_id)
+        if path.startswith("/api/teams/"):
+            team_id = path.split("/", 3)[3]
+            return handle_team_api(ctx, start_response, team_id)
+        if path.startswith("/api/matches/"):
+            match_id = path.split("/", 3)[3]
+            return handle_match_api(ctx, start_response, match_id)
+        if path.startswith("/api/series/"):
+            series_slug = path.split("/", 3)[3]
+            return handle_series_api(ctx, start_response, series_slug)
+        if path.startswith("/api/days/"):
+            played_on = path.split("/", 3)[3]
+            return handle_match_day_api(ctx, start_response, played_on)
+        if path == "/api/schedule":
+            return handle_schedule_api(ctx, start_response)
         if path == "/login":
             return handle_login(ctx, start_response)
         if path == "/register":
@@ -11099,19 +11489,52 @@ def app(environ, start_response):
             return handle_logout(start_response, environ)
 
         if path == "/dashboard":
+            return start_response_html(start_response, "200 OK", build_dashboard_frontend_page(ctx))
+        if path == "/dashboard/legacy":
             return start_response_html(start_response, "200 OK", get_dashboard_page(ctx))
         if path == "/competitions":
             return handle_competitions(ctx, start_response)
+        if path == "/competitions/legacy":
+            return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
+        if path == "/guilds":
+            return handle_guilds(ctx, start_response)
+        if path == "/guilds/legacy":
+            return start_response_html(start_response, "200 OK", get_guilds_page(ctx))
         if path == "/schedule":
             return start_response_html(start_response, "200 OK", get_schedule_page(ctx))
+        if path == "/schedule/legacy":
+            return start_response_html(start_response, "200 OK", get_schedule_legacy_page(ctx))
+        if path.startswith("/series/") and path.endswith("/legacy"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "series" and parts[2] == "legacy":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_series_legacy_page(ctx, parts[1]),
+                )
         if path.startswith("/series/"):
-            series_slug = path.split("/", 2)[2]
-            return start_response_html(start_response, "200 OK", get_series_page(ctx, series_slug))
+            parts = path.strip("/").split("/")
+            if len(parts) == 2 and parts[0] == "series":
+                return start_response_html(start_response, "200 OK", get_series_page(ctx, parts[1]))
+        if path.startswith("/days/") and path.endswith("/legacy"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "days" and parts[2] == "legacy":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_day_legacy_page(ctx, parts[1]),
+                )
         if path.startswith("/days/"):
             played_on = path.split("/", 2)[2]
             return handle_match_day(ctx, start_response, played_on)
-        if path == "/guilds":
-            return handle_guilds(ctx, start_response)
+        if path.startswith("/guilds/") and path.endswith("/legacy"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "guilds" and parts[2] == "legacy":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_guild_legacy_page(ctx, parts[1]),
+                )
         if path.startswith("/guilds/"):
             guild_id = path.split("/", 2)[2]
             return handle_guild_page(ctx, start_response, guild_id)
@@ -11129,6 +11552,14 @@ def app(environ, start_response):
                     layout("请求无效", '<div class="alert alert-danger">队标上传只支持提交操作。</div>', ctx),
                 )
             return handle_team_logo_update(ctx, start_response, team_id)
+        if path.startswith("/teams/") and path.endswith("/legacy"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "teams" and parts[2] == "legacy":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_team_legacy_page(ctx, parts[1]),
+                )
         if path == "/matches/new":
             guard = require_login(ctx, start_response)
             if guard is not None:
@@ -11137,6 +11568,14 @@ def app(environ, start_response):
             if manager_guard is not None:
                 return manager_guard
             return handle_match_create(ctx, start_response)
+        if path.startswith("/matches/") and path.endswith("/legacy"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "matches" and parts[2] == "legacy":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_legacy_page(ctx, parts[1]),
+                )
         if path.startswith("/matches/") and path.endswith("/edit"):
             match_id = path.split("/")[2]
             guard = require_login(ctx, start_response)
@@ -11148,7 +11587,7 @@ def app(environ, start_response):
             return handle_match_edit(ctx, start_response, match_id)
         if path.startswith("/matches/"):
             match_id = path.split("/", 2)[2]
-            return start_response_html(start_response, "200 OK", get_match_page(ctx, match_id))
+            return start_response_html(start_response, "200 OK", get_match_frontend_page(ctx, match_id))
         if path.startswith("/players/") and path.endswith("/edit"):
             player_id = path.split("/")[2]
             guard = require_login(ctx, start_response)
@@ -11161,6 +11600,14 @@ def app(environ, start_response):
                     layout("没有权限", '<div class="alert alert-danger">你没有权限编辑这位队员的资料。</div>', ctx),
                 )
             return handle_player_edit(ctx, start_response, player_id)
+        if path.startswith("/players/") and path.endswith("/legacy"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "players" and parts[2] == "legacy":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_player_legacy_page(ctx, parts[1]),
+                )
         if path.startswith("/players/"):
             player_id = path.split("/", 2)[2]
             return handle_player_page(ctx, start_response, player_id)

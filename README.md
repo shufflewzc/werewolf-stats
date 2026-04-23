@@ -94,6 +94,55 @@ python3 scripts/migrate_json_to_sqlite.py
   兼容入口、共享工具和路由分发
 - `scripts/web/features/`
   按业务模块拆分页面和处理器
+- `assets/dashboard-app.js` / `assets/dashboard-app.css`
+  新版首页前端资源，使用浏览器拉取后端 JSON 接口渲染
+- `assets/series-app.js`
+  新版系列赛专题页前端资源，使用浏览器拉取后端 JSON 接口渲染
+- `assets/day-app.js`
+  新版比赛日页面前端资源，使用浏览器拉取后端 JSON 接口渲染
+- `assets/schedule-app.js`
+  新版赛事场次页前端资源，使用浏览器拉取后端 JSON 接口渲染
+- `assets/guilds-app.js` / `assets/guilds-app.css`
+  新版门派列表页前端资源，使用浏览器拉取后端 JSON 接口渲染
+
+### 当前前后端分离落点
+
+- `GET /dashboard`
+  新版首页前端壳，浏览器通过接口拉取数据再渲染
+- `GET /api/dashboard`
+  首页聚合接口，返回赛区/系列赛/赛事/赛季筛选、榜单、比赛日等 JSON 数据
+- `GET /dashboard/legacy`
+  保留旧版服务端直出首页，便于回退和对照
+- `GET /competitions`
+  新版比赛页面前端壳，浏览器通过接口拉取地区赛事列表和赛季详情
+- `GET /api/competitions`
+  比赛页面聚合接口，返回地区赛事站点、赛季榜单、AI 总结和比赛日等 JSON 数据
+- `GET /competitions/legacy`
+  保留旧版服务端直出比赛页面，便于回退和对照
+- `GET /guilds`
+  新版门派列表页前端壳，浏览器通过接口拉取门派概览和管理入口信息
+- `GET /api/guilds`
+  门派列表聚合接口，返回门派卡片、统计指标和管理跳转入口
+- `GET /guilds/legacy`
+  保留旧版服务端直出门派列表页，便于回退和对照
+- `GET /series/<slug>`
+  新版系列赛专题页前端壳，浏览器通过接口拉取赛季入口和地区赛事页概览
+- `GET /api/series/<slug>`
+  系列赛专题聚合接口，返回赛季切换、覆盖地区和地区赛事入口 JSON 数据
+- `GET /series/<slug>/legacy`
+  保留旧版服务端直出系列赛专题页，便于回退和对照
+- `GET /days/<played_on>`
+  新版比赛日页面前端壳，浏览器通过接口拉取当天战队日榜、AI 日报和比赛结果明细
+- `GET /api/days/<played_on>`
+  比赛日聚合接口，返回当天概览、AI 日报、战队日榜和逐场比赛 JSON 数据
+- `GET /days/<played_on>/legacy`
+  保留旧版服务端直出比赛日页面，便于回退和对照
+- `GET /schedule`
+  新版赛事场次页前端壳，浏览器通过接口拉取当前赛事赛季下的比赛日和场次列表
+- `GET /api/schedule`
+  赛事场次聚合接口，返回赛事切换、赛季切换和按比赛日分组的场次 JSON 数据
+- `GET /schedule/legacy`
+  保留旧版服务端直出赛事场次页，便于回退和对照
 - 当前已拆出的模块
   门派、个人中心、战队操作等
 

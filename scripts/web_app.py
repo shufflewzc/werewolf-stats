@@ -977,9 +977,13 @@ def sort_match_days_by_relevance(days: list[str], today_label: str | None = None
     def sort_key(day: str) -> tuple[int, int, str]:
         parsed_day = parse_match_day(day)
         if parsed_day is None:
-            return (10**9, 1, day)
+            return (3, 10**9, day)
         delta_days = (parsed_day.date() - today_value.date()).days
-        return (abs(delta_days), 0 if delta_days <= 0 else 1, day)
+        if delta_days == 0:
+            return (0, 0, day)
+        if delta_days > 0:
+            return (1, delta_days, day)
+        return (2, abs(delta_days), day)
 
     return sorted(days, key=sort_key)
 
@@ -991,10 +995,20 @@ def get_nearest_match_day_label(days: list[str], today_label: str | None = None)
 
 def competition_latest_day_sort_key(row: dict[str, Any]) -> tuple[int, str, str]:
     latest_played_on = str(row.get("latest_played_on") or "").strip()
-    parsed_day = parse_match_day(latest_played_on)
-    if parsed_day is None:
-        return (0, "", str(row.get("competition_name") or ""))
-    return (1, latest_played_on, str(row.get("competition_name") or ""))
+    ordered_days = sort_match_days_by_relevance([latest_played_on], china_today_label())
+    preferred_day = ordered_days[0] if ordered_days else ""
+    if not preferred_day:
+        return (3, 10**9, str(row.get("competition_name") or ""))
+    today_value = parse_match_day(china_today_label())
+    parsed_day = parse_match_day(preferred_day)
+    if today_value is None or parsed_day is None:
+        return (3, 10**9, str(row.get("competition_name") or ""))
+    delta_days = (parsed_day.date() - today_value.date()).days
+    if delta_days == 0:
+        return (0, 0, str(row.get("competition_name") or ""))
+    if delta_days > 0:
+        return (1, delta_days, str(row.get("competition_name") or ""))
+    return (2, abs(delta_days), str(row.get("competition_name") or ""))
 
 
 def get_scheduled_match_day_label(
@@ -1149,15 +1163,17 @@ def list_series_rows_for_region(
         existing["match_count"] += row["match_count"]
         existing["team_count"] = max(existing["team_count"], row["team_count"])
         existing["player_count"] = max(existing["player_count"], row["player_count"])
-        existing["latest_played_on"] = max(existing["latest_played_on"], row["latest_played_on"])
+        existing["latest_played_on"] = get_nearest_match_day_label(
+            [existing["latest_played_on"], row["latest_played_on"]],
+            china_today_label(),
+        )
         existing["summary"] = existing["summary"] or row["summary"]
         combined_seasons = {*existing["seasons"], *row["seasons"]}
         existing["seasons"] = sorted(combined_seasons, reverse=True)
 
     return sorted(
         series_index.values(),
-        key=lambda item: (item["latest_played_on"], item["series_name"]),
-        reverse=True,
+        key=lambda item: (competition_latest_day_sort_key(item), item["series_name"]),
     )
 
 
@@ -5771,7 +5787,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
             )
         )
     )
-    featured_competition = max(
+    featured_competition = min(
         scoped_competition_rows or competition_catalog,
         key=competition_latest_day_sort_key,
         default=None,
@@ -5860,7 +5876,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         <div class="dashboard-metric-copy">包含已录入比分、阵营和个人表现的有效对局。</div>
       </article>
       <article class="dashboard-metric-card">
-        <div class="dashboard-metric-label">最近比赛日</div>
+        <div class="dashboard-metric-label">下一个比赛日</div>
         <div class="dashboard-metric-value">{escape(latest_played_on)}</div>
         <div class="dashboard-metric-copy">{escape(featured_seasons)} · 继续往下可以查看当天总览。</div>
       </article>
@@ -5900,7 +5916,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
                 <span class="dashboard-feature-tag">专题页 + 地区站点</span>
               </div>
               <h2 class="dashboard-feature-title">{escape(row['series_name'])}</h2>
-              <p class="dashboard-feature-copy">赛季 {escape('、'.join(row['seasons'])) if row['seasons'] else '未设置'} · 最近比赛日 {escape(row['latest_played_on'] or '待更新')}。先看专题，再按地区进入具体赛事。</p>
+              <p class="dashboard-feature-copy">赛季 {escape('、'.join(row['seasons'])) if row['seasons'] else '未设置'} · 下一个比赛日 {escape(row['latest_played_on'] or '待更新')}。先看专题，再按地区进入具体赛事。</p>
               <div class="dashboard-feature-stats">
                 <div class="dashboard-feature-stat">
                   <span>战队</span>

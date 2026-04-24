@@ -5,6 +5,12 @@ import json
 import web_app as legacy
 
 Any = legacy.Any
+DEFAULT_PLAYER_PHOTO = legacy.DEFAULT_PLAYER_PHOTO
+DEFAULT_REGION_NAME = legacy.DEFAULT_REGION_NAME
+account_role_label = legacy.account_role_label
+build_filtered_data = legacy.build_filtered_data
+china_now_label = legacy.china_now_label
+resolve_catalog_scope = legacy.resolve_catalog_scope
 DEFAULT_AI_DAILY_BRIEF_MODEL = legacy.DEFAULT_AI_DAILY_BRIEF_MODEL
 RequestContext = legacy.RequestContext
 build_competition_switcher = legacy.build_competition_switcher
@@ -19,8 +25,10 @@ build_team_rows = legacy.build_team_rows
 can_manage_player = legacy.can_manage_player
 can_manage_player_bindings = legacy.can_manage_player_bindings
 escape = legacy.escape
+format_dimension_metric_value = legacy.format_dimension_metric_value
 format_pct = legacy.format_pct
 form_value = legacy.form_value
+get_player_dimension_history = legacy.get_player_dimension_history
 get_match_competition_name = legacy.get_match_competition_name
 get_selected_competition = legacy.get_selected_competition
 get_selected_season = legacy.get_selected_season
@@ -36,6 +44,7 @@ quote = legacy.quote
 render_ai_daily_brief_html = legacy.render_ai_daily_brief_html
 safe_rate = legacy.safe_rate
 start_response_json = legacy.start_response_json
+summarize_dimension_rows = legacy.summarize_dimension_rows
 urlencode = legacy.urlencode
 
 
@@ -606,6 +615,221 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
     }
 
 
+def build_players_frontend_page(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        account_html = f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    else:
+        account_html = """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+    bootstrap = json.dumps(
+        {
+            "apiEndpoint": "/api/players",
+            "alert": form_value(ctx.query, "alert").strip(),
+        },
+        ensure_ascii=False,
+    )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#122238">
+    <title>选手</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/competitions-app.css">
+  </head>
+  <body class="competitions-app-shell players-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">选手中心 · API Driven</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link is-active" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
+      </nav>
+      {account_html}
+    </header>
+    <main id="players-app" class="competitions-app-root players-app-root" aria-live="polite">
+      <section class="competitions-loading-shell">
+        <div class="competitions-loading-kicker">Loading Players</div>
+        <h1>正在加载选手中心</h1>
+        <p>前端会通过独立 API 拉取选手数据并渲染页面。</p>
+      </section>
+    </main>
+    <script>window.__WEREWOLF_PLAYERS_BOOTSTRAP__ = {bootstrap};</script>
+    <script src="/assets/players-app.js" defer></script>
+  </body>
+</html>
+"""
+
+
+def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    data = load_validated_data()
+    scope = resolve_catalog_scope(ctx, data)
+    selected_competition = scope["selected_competition"]
+    selected_entry = scope["selected_entry"]
+    selected_region = scope["selected_region"]
+    selected_series_slug = scope["selected_series_slug"]
+    region_rows = scope["region_rows"]
+    filtered_rows = scope["filtered_rows"]
+    series_rows = scope["series_rows"]
+    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    selected_season = get_selected_season(ctx, season_names)
+    scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
+    scoped_competition_names = {row["competition_name"] for row in scoped_competition_rows}
+    stats_data = (
+        build_filtered_data(data, scoped_competition_names)
+        if not selected_competition and scoped_competition_names
+        else data
+    )
+    player_rows = build_player_rows(stats_data, selected_competition, selected_season)
+    visible_rows = [row for row in player_rows if row.get("games_played", 0) > 0]
+    displayed_rows = visible_rows or player_rows
+    displayed_rows.sort(
+        key=lambda row: (
+            int(row.get("rank") or 9999),
+            -float(row.get("points_earned_total") or 0.0),
+            row.get("display_name") or "",
+        )
+    )
+    scope_label = " / ".join(
+        item
+        for item in [
+            selected_region or DEFAULT_REGION_NAME,
+            selected_entry["series_name"] if selected_entry else None,
+            selected_competition,
+            selected_season,
+        ]
+        if item
+    ) or f"{DEFAULT_REGION_NAME}赛区汇总"
+    region_options = [
+        {
+            "label": region_name,
+            "href": build_scoped_path("/players", None, None, region_name, selected_series_slug),
+            "active": selected_region == region_name,
+        }
+        for region_name in scope["region_names"]
+    ]
+    series_options = [
+        {
+            "label": "全部系列赛",
+            "href": build_scoped_path("/players", None, None, selected_region, None),
+            "active": selected_series_slug is None,
+        }
+    ] + [
+        {
+            "label": row["series_name"],
+            "href": build_scoped_path("/players", None, None, selected_region, row["series_slug"]),
+            "active": selected_series_slug == row["series_slug"],
+        }
+        for row in series_rows
+    ]
+    competition_options = [
+        {
+            "label": "全部赛事",
+            "href": build_scoped_path("/players", None, None, selected_region, selected_series_slug),
+            "active": selected_competition is None,
+        }
+    ] + [
+        {
+            "label": row["competition_name"],
+            "href": build_scoped_path("/players", row["competition_name"], None, selected_region, selected_series_slug),
+            "active": selected_competition == row["competition_name"],
+        }
+        for row in scoped_competition_rows
+    ]
+    season_options = [
+        {
+            "label": season_name,
+            "href": build_scoped_path("/players", selected_competition, season_name, selected_region, selected_series_slug),
+            "selected": selected_season == season_name,
+        }
+        for season_name in season_names
+    ]
+    players = [
+        {
+            "rank": int(row.get("rank") or index + 1),
+            "player_id": row["player_id"],
+            "display_name": row["display_name"],
+            "team_name": row.get("team_name") or row.get("current_team_name") or "未绑定战队",
+            "photo": row.get("photo") or DEFAULT_PLAYER_PHOTO,
+            "games_played": int(row.get("games_played") or 0),
+            "wins": int(row.get("wins") or 0),
+            "losses": int(row.get("losses") or 0),
+            "record": row.get("record") or f"{int(row.get('wins') or 0)}-{int(row.get('losses') or 0)}",
+            "points_total": f"{float(row.get('points_earned_total') or 0.0):.2f}",
+            "average_points": f"{float(row.get('average_points') or 0.0):.2f}",
+            "win_rate": format_pct(float(row.get("win_rate") or 0.0)),
+            "stance_rate": format_pct(float(row.get("stance_rate") or 0.0)),
+            "href": build_scoped_path(
+                "/players/" + row["player_id"],
+                selected_competition,
+                selected_season,
+                selected_region,
+                selected_series_slug,
+            ),
+        }
+        for index, row in enumerate(displayed_rows)
+    ]
+    top_player = players[0] if players else None
+    return {
+        "generated_at": china_now_label(),
+        "scope": {
+            "label": scope_label,
+            "description": f"当前正在查看 {scope_label} 的选手积分、胜率和出场数据。",
+            "filters": {
+                "regions": region_options,
+                "series": series_options,
+                "competitions": competition_options,
+                "seasons": season_options,
+            },
+        },
+        "metrics": [
+            {"label": "收录选手", "value": str(len(players)), "copy": "当前范围内可展示的选手数量。"},
+            {"label": "有效选手", "value": str(len([player for player in players if player["games_played"] > 0])), "copy": "至少有一局有效比赛记录的选手。"},
+            {"label": "总出场", "value": str(sum(player["games_played"] for player in players)), "copy": "所有选手的出场局数合计。"},
+            {"label": "榜首选手", "value": top_player["display_name"] if top_player else "待录入", "copy": "按当前积分排行口径计算。"},
+        ],
+        "players": players,
+    }
+
+
+def handle_players_api(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "players api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_response_json(start_response, "200 OK", build_players_api_payload(ctx))
+
+
 def build_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
     data = load_validated_data()
     player = next((item for item in data["players"] if item["player_id"] == player_id), None)
@@ -617,31 +841,355 @@ def build_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
     bootstrap = json.dumps(
         {
             "apiEndpoint": f"/api/players/{player_id}",
+            "alert": form_value(ctx.query, "alert").strip(),
             "legacyHref": _build_player_legacy_href(player_id, requested_competition, requested_season),
         },
         ensure_ascii=False,
     )
-    body = f"""
-    <div id="player-app" aria-live="polite">
-      <section class="panel shadow-sm p-3 p-lg-4">
-        <div class="small text-secondary">正在加载队员详情，前端会通过独立接口渲染当前筛选范围内容。</div>
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#122238">
+    <title>{escape(str(player.get('display_name') or player_id))} 页面</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/competitions-app.css">
+  </head>
+  <body class="competitions-app-shell player-detail-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">选手档案 · API Driven</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link is-active" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
+      </nav>
+      {_build_player_account_html(ctx)}
+    </header>
+    <main id="player-app" class="competitions-layout player-detail-layout" aria-live="polite">
+      <section class="competitions-panel competitions-loading-shell">
+        <div class="competitions-section-kicker">Loading Player</div>
+        <h1 class="competitions-title">正在加载选手详情</h1>
+        <p class="competitions-copy">新前端会通过独立 API 拉取选手档案、角色画像和最近比赛。</p>
       </section>
-    </div>
+    </main>
     <script>window.__WEREWOLF_PLAYER_BOOTSTRAP__ = {bootstrap};</script>
     <script src="/assets/player-app.js" defer></script>
-    """
-    return layout(
-        f"{escape(str(player.get('display_name') or player_id))} 页面",
-        body,
-        ctx,
-        alert=form_value(ctx.query, "alert").strip(),
+  </body>
+</html>
+"""
+
+
+def _build_player_account_html(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        return f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    return """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+
+
+def _player_asset_href(path: str | None) -> str:
+    clean_path = str(path or "").strip() or DEFAULT_PLAYER_PHOTO
+    if clean_path.startswith(("http://", "https://", "/")):
+        return clean_path
+    return f"/{clean_path}"
+
+
+def _pct_width(value: str) -> float:
+    try:
+        return max(0.0, min(100.0, float(str(value).rstrip("%"))))
+    except ValueError:
+        return 0.0
+
+
+def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
+    data = load_validated_data()
+    users = load_users()
+    player_matches = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+            reverse=True,
+        )
+        if any(entry["player_id"] == player_id for entry in match["players"])
+    ]
+    player_competition_names: list[str] = []
+    for match in player_matches:
+        competition_name = get_match_competition_name(match)
+        if competition_name not in player_competition_names:
+            player_competition_names.append(competition_name)
+    selected_competition = get_selected_competition(ctx, player_competition_names)
+    season_names = (
+        list_seasons(
+            {"matches": [match for match in player_matches if get_match_competition_name(match) == selected_competition]},
+            selected_competition,
+        )
+        if selected_competition
+        else []
     )
+    selected_season = get_selected_season(ctx, season_names)
+    legacy_href = _build_player_legacy_href(player_id, selected_competition, selected_season)
+    player_rows = build_player_rows(data, selected_competition, selected_season)
+    row_lookup = {row["player_id"]: row for row in player_rows}
+    details = build_player_details(data, player_rows, selected_competition, selected_season)
+    detail = details.get(player_id)
+    player_lookup = {player["player_id"]: player for player in data["players"]}
+    player = player_lookup.get(player_id)
+    if not detail or not player:
+        return {
+            "not_found": True,
+            "error": "没有找到对应的队员。",
+            "title": "未找到队员",
+            "alert": form_value(ctx.query, "alert").strip(),
+            "legacy_href": legacy_href,
+        }
+
+    row = row_lookup.get(player_id, {})
+    owner_user = get_user_by_player_id(users, player_id)
+    team_id = str(row.get("team_id") or player.get("team_id") or "").strip()
+    team_href = build_scoped_path(f"/teams/{team_id}", selected_competition, selected_season) if team_id else "/teams"
+    manage_href = ""
+    if ctx.current_user and ctx.current_user.get("player_id") == player_id:
+        manage_href = "/profile"
+    elif can_manage_player(ctx, player_id):
+        manage_href = f"/players/{quote(player_id)}/edit?{urlencode({'next': build_scoped_path('/players/' + player_id, selected_competition, selected_season)})}"
+    binding_href = ""
+    if ctx.current_user and can_manage_player_bindings(data, ctx.current_user, owner_user, player):
+        binding_query = {"player_id": player_id}
+        if owner_user:
+            binding_query["username"] = owner_user["username"]
+        binding_href = f"/bindings?{urlencode(binding_query)}"
+
+    role_total = sum(int(item.get("games") or 0) for item in detail["roles"])
+    roles = [
+        {
+            "role": item["role"],
+            "games": int(item["games"]),
+            "share": format_pct(safe_rate(item["games"], role_total)),
+            "width": round(safe_rate(item["games"], role_total) * 100, 1),
+        }
+        for item in detail["roles"]
+    ]
+    history = []
+    for item in detail["history"]:
+        history.append(
+            {
+                **item,
+                "href": f"/matches/{quote(str(item['match_id']))}?{urlencode({'competition': item['competition_name'], 'season': item['season']})}",
+            }
+        )
+
+    dimension = _serialize_player_dimension_payload(
+        ctx,
+        data,
+        player_id,
+        selected_competition,
+        selected_season,
+    )
+
+    return {
+        "title": f"{detail['display_name']} 页面",
+        "alert": form_value(ctx.query, "alert").strip(),
+        "generated_at": china_now_label(),
+        "legacy_href": legacy_href,
+        "scope": {
+            "competition": selected_competition or "全部赛事",
+            "season": selected_season or "全部赛季",
+            "competition_options": player_competition_names,
+            "season_options": season_names,
+        },
+        "player": {
+            "player_id": player_id,
+            "name": detail["display_name"],
+            "photo": _player_asset_href(detail.get("photo")),
+            "team_name": detail["team_name"],
+            "team_href": team_href,
+            "rank": detail["rank"],
+            "aliases": detail["aliases"],
+            "joined_on": detail["joined_on"],
+            "notes": detail["notes"],
+            "owner": owner_user.get("display_name") or owner_user.get("username") if owner_user else "未绑定账号",
+        },
+        "actions": {
+            "players_href": "/players",
+            "team_href": team_href,
+            "legacy_href": legacy_href,
+            "manage_href": manage_href,
+            "binding_href": binding_href,
+        },
+        "metrics": [
+            {"label": "排名", "value": f"#{detail['rank']}", "copy": "当前积分榜名次"},
+            {"label": "战绩", "value": detail["record"], "copy": "当前口径胜负"},
+            {"label": "总积分", "value": detail["points_total"], "copy": "当前赛季累计"},
+            {"label": "场均积分", "value": detail["average_points"], "copy": "每局稳定产出"},
+            {"label": "出赛局数", "value": str(detail["games_played"]), "copy": "有效比赛记录"},
+            {"label": "站边率", "value": detail["stance_rate"], "copy": "已填写站边统计"},
+        ],
+        "insights": {
+            "overall_win_rate": detail["overall_win_rate"],
+            "overall_width": _pct_width(detail["overall_win_rate"]),
+            "villagers_win_rate": detail["villagers_win_rate"],
+            "villagers_width": _pct_width(detail["villagers_win_rate"]),
+            "werewolves_win_rate": detail["werewolves_win_rate"],
+            "werewolves_width": _pct_width(detail["werewolves_win_rate"]),
+        },
+        "roles": roles,
+        "recent_matches": history[:6],
+        "season_stats": detail["season_stats"],
+        "dimension": dimension,
+        "competition_stats": detail["competition_stats"],
+        "history": history,
+    }
+
+
+def _serialize_player_dimension_payload(
+    ctx: RequestContext,
+    data: dict[str, Any],
+    player_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+) -> dict[str, Any]:
+    if not competition_name:
+        return {"available": False, "reason": "请先选择赛事。"}
+    all_rows = get_player_dimension_history(data, player_id, competition_name, None)
+    if not all_rows:
+        return {
+            "available": False,
+            "reason": "当前还没有导入对应选手的赛季维度补充数据。",
+        }
+    available_seasons = []
+    for row in all_rows:
+        item = str(row.get("season_name") or "").strip()
+        if item and item not in available_seasons:
+            available_seasons.append(item)
+    requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
+    selected_dimension_season = (
+        requested_dimension_season
+        if requested_dimension_season in available_seasons
+        else (season_name if season_name in available_seasons else (available_seasons[0] if available_seasons else ""))
+    )
+    history = [
+        row
+        for row in all_rows
+        if str(row.get("season_name") or "").strip() == selected_dimension_season
+    ]
+    if not selected_dimension_season or not history:
+        return {"available": False, "reason": "当前赛季暂无维度数据。"}
+    season_summaries = {
+        item: summarize_dimension_rows(
+            [row for row in all_rows if str(row.get("season_name") or "").strip() == item]
+        )
+        for item in available_seasons
+    }
+    summary = season_summaries[selected_dimension_season]
+    team_lookup = {team["team_id"]: team for team in data["teams"]}
+    latest = history[0]
+    current_team_name = (
+        team_lookup.get(latest.get("team_id"), {}).get("name")
+        or str(latest.get("team_name") or "").strip()
+        or "未知战队"
+    )
+    avg_points_by_season = {
+        item: safe_rate(
+            season_summaries[item].get("daily_points", 0.0),
+            season_summaries[item].get("games_played", 0.0),
+        )
+        for item in available_seasons
+    }
+    max_avg_points = max(avg_points_by_season.values(), default=0.0) or 1.0
+    avg_points = avg_points_by_season[selected_dimension_season]
+    radar = [
+        {
+            "label": "总胜率",
+            "ratio": safe_rate(summary.get("wins", 0.0), summary.get("games_played", 0.0)),
+            "display": format_pct(safe_rate(summary.get("wins", 0.0), summary.get("games_played", 0.0))),
+        },
+        {
+            "label": "好人胜率",
+            "ratio": safe_rate(summary.get("villager_wins", 0.0), summary.get("villager_games", 0.0)),
+            "display": format_pct(safe_rate(summary.get("villager_wins", 0.0), summary.get("villager_games", 0.0))),
+        },
+        {
+            "label": "狼人胜率",
+            "ratio": safe_rate(summary.get("werewolf_wins", 0.0), summary.get("werewolf_games", 0.0)),
+            "display": format_pct(safe_rate(summary.get("werewolf_wins", 0.0), summary.get("werewolf_games", 0.0))),
+        },
+        {
+            "label": "场均积分",
+            "ratio": min(avg_points / max_avg_points, 1.0),
+            "display": format_dimension_metric_value(avg_points),
+        },
+        {
+            "label": "投狼率",
+            "ratio": safe_rate(summary.get("vote_wolf_count", 0.0), summary.get("vote_count", 0.0)),
+            "display": format_pct(safe_rate(summary.get("vote_wolf_count", 0.0), summary.get("vote_count", 0.0))),
+        },
+        {
+            "label": "MVP率",
+            "ratio": safe_rate(summary.get("mvp_count", 0.0), summary.get("games_played", 0.0)),
+            "display": format_pct(safe_rate(summary.get("mvp_count", 0.0), summary.get("games_played", 0.0))),
+        },
+    ]
+    return {
+        "available": True,
+        "selected_season": selected_dimension_season,
+        "available_seasons": available_seasons,
+        "current_team_name": current_team_name,
+        "summary_cards": [
+            {"label": "当前战队", "value": current_team_name},
+            {"label": "赛季总维度积分", "value": format_dimension_metric_value(summary.get("daily_points", 0))},
+            {"label": "局数 / 胜场", "value": f"{format_dimension_metric_value(summary.get('games_played', 0))} / {format_dimension_metric_value(summary.get('wins', 0))}"},
+            {"label": "MVP / SVP / 背锅", "value": f"{format_dimension_metric_value(summary.get('mvp_count', 0))} / {format_dimension_metric_value(summary.get('svp_count', 0))} / {format_dimension_metric_value(summary.get('scapegoat_count', 0))}"},
+        ],
+        "radar": radar,
+        "history": [
+            {
+                "played_on": str(item.get("played_on") or ""),
+                "seat": format_dimension_metric_value(item.get("seat", 0)),
+                "team_name": team_lookup.get(item.get("team_id"), {}).get("name", current_team_name),
+                "daily_points": format_dimension_metric_value(item.get("daily_points", 0)),
+                "games_played": format_dimension_metric_value(item.get("games_played", 0)),
+                "wins": format_dimension_metric_value(item.get("wins", 0)),
+                "vote_count": format_dimension_metric_value(item.get("vote_count", 0)),
+                "vote_wolf_count": format_dimension_metric_value(item.get("vote_wolf_count", 0)),
+                "mvp_count": format_dimension_metric_value(item.get("mvp_count", 0)),
+                "svp_count": format_dimension_metric_value(item.get("svp_count", 0)),
+                "scapegoat_count": format_dimension_metric_value(item.get("scapegoat_count", 0)),
+            }
+            for item in history
+        ],
+    }
 
 
 def build_player_api_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
-    payload = _build_player_page_payload(ctx, player_id)
-    payload["alert"] = form_value(ctx.query, "alert").strip()
-    return payload
+    return _serialize_player_detail_payload(ctx, player_id)
 
 
 def get_player_legacy_page(ctx: RequestContext, player_id: str, alert: str = "") -> str:

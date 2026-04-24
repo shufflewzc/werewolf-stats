@@ -271,24 +271,30 @@ def build_guilds_frontend_page(ctx: RequestContext) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#e2f0e8">
+    <meta name="theme-color" content="#122238">
     <title>门派</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/guilds-app.css">
   </head>
   <body class="guilds-app-shell">
     <div class="shell-backdrop"></div>
     <header class="shell-header">
       <div class="shell-brand">
-        <a class="shell-brand-link" href="/guilds">门派</a>
-        <span class="shell-brand-copy">Guild Frontend · API Driven</span>
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">门派系统 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
-        <a class="shell-nav-link" href="/dashboard">首页</a>
-        <a class="shell-nav-link" href="/competitions">比赛页面</a>
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
         <a class="shell-nav-link is-active" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
       </nav>
       {account_html}
     </header>
@@ -365,6 +371,27 @@ def _build_guild_legacy_href(guild_id: str, manage_mode: bool) -> str:
     return f"{base_path}?view=manage" if manage_mode else base_path
 
 
+def _build_guild_account_html(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        return f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    return """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+
+
 def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
     data = load_validated_data()
     guild = get_guild_by_id(data, guild_id)
@@ -375,25 +402,56 @@ def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
     bootstrap = json.dumps(
         {
             "apiEndpoint": f"/api/guilds/{guild_id}",
+            "alert": form_value(ctx.query, "alert").strip(),
             "legacyHref": _build_guild_legacy_href(guild_id, manage_mode),
         },
         ensure_ascii=False,
     )
-    body = f"""
-    <div id="guild-app" aria-live="polite">
-      <section class="panel shadow-sm p-3 p-lg-4">
-        <div class="small text-secondary">正在加载门派详情，前端会通过独立接口渲染当前页面内容。</div>
+    account_html = _build_guild_account_html(ctx)
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#122238">
+    <title>{escape(str(guild.get('name') or guild_id))} 门派页</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/guilds-app.css">
+  </head>
+  <body class="guilds-app-shell guild-detail-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">门派详情 · API Driven</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
+        <a class="shell-nav-link is-active" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
+      </nav>
+      {account_html}
+    </header>
+    <main id="guild-app" class="guilds-app-root guild-detail-app-root" aria-live="polite">
+      <section class="guilds-loading-shell">
+        <div class="guilds-loading-kicker">Loading Guild</div>
+        <h1>正在加载门派详情</h1>
+        <p>前端会通过独立 API 拉取门派赛季战队、荣誉和管理信息。</p>
       </section>
-    </div>
+    </main>
     <script>window.__WEREWOLF_GUILD_BOOTSTRAP__ = {bootstrap};</script>
     <script src="/assets/guild-app.js" defer></script>
-    """
-    return layout(
-        f"{escape(str(guild.get('name') or guild_id))} 门派页",
-        body,
-        ctx,
-        alert=form_value(ctx.query, "alert").strip(),
-    )
+  </body>
+</html>
+"""
 
 
 def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, str]:
@@ -660,23 +718,186 @@ def get_guild_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
     return layout(title, body, ctx, alert=alert)
 
 
-def build_guild_api_payload(ctx: RequestContext, guild_id: str) -> dict[str, Any]:
+
+def _serialize_guild_team_row(row: dict[str, Any], region_name: str | None = None, series_slug: str | None = None) -> dict[str, Any]:
+    return {
+        "team_id": row["team_id"],
+        "team_name": row["team_name"],
+        "competition_name": row["competition_name"],
+        "season_name": row["season_name"],
+        "status": row["status"],
+        "status_label": row["status_label"],
+        "matches": int(row["matches"]),
+        "player_count": int(row["player_count"]),
+        "points_total": f"{float(row['points_total']):.2f}",
+        "href": build_scoped_path(
+            "/teams/" + row["team_id"],
+            row["competition_name"],
+            row["season_name"],
+            region_name,
+            series_slug,
+        ),
+    }
+
+
+def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, Any]:
+    data = load_validated_data()
+    guild = get_guild_by_id(data, guild_id)
     manage_mode = form_value(ctx.query, "view").strip() == "manage"
-    title, body = _build_guild_page_parts(ctx, guild_id)
-    if title == "未找到门派":
+    alert = form_value(ctx.query, "alert").strip()
+    if not guild:
         return {
             "not_found": True,
-            "title": title,
-            "body_html": body,
+            "title": "未找到门派",
+            "alert": alert,
             "legacy_href": _build_guild_legacy_href(guild_id, manage_mode),
-            "alert": form_value(ctx.query, "alert").strip(),
+            "error": "没有找到对应的门派。",
         }
+
+    can_manage_membership = can_manage_guild(ctx.current_user, guild)
+    can_manage_honors = can_manage_guild_honors(ctx.current_user)
+    if manage_mode and not (can_manage_membership or can_manage_honors):
+        return {
+            "forbidden": True,
+            "title": "没有权限",
+            "alert": alert,
+            "legacy_href": _build_guild_legacy_href(guild_id, manage_mode),
+            "error": "你没有权限管理这个门派。",
+        }
+
+    guild_teams = [
+        team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild_id
+    ]
+    guild_teams.sort(
+        key=lambda team: (
+            get_team_season_status_rank(get_team_season_status(data, team)),
+            team.get("competition_name", ""),
+            team.get("season_name", ""),
+            team["name"],
+        )
+    )
+    honors = build_guild_honor_rows(data, guild_id)
+    competition_rows: list[dict[str, Any]] = []
+    guild_match_ids: set[str] = set()
+    for team in guild_teams:
+        competition_name, season_name = get_team_scope(team)
+        team_status = get_team_season_status(data, team)
+        scoped_matches = [
+            match
+            for match in data["matches"]
+            if (match.get("season") or "").strip() == season_name
+            and get_match_competition_name(match) == competition_name
+            and any(entry["team_id"] == team["team_id"] for entry in match["players"])
+        ]
+        guild_match_ids.update(match["match_id"] for match in scoped_matches)
+        points_total = sum(
+            float(entry["points_earned"])
+            for match in scoped_matches
+            for entry in match["players"]
+            if entry["team_id"] == team["team_id"]
+        )
+        player_count = len(resolve_team_player_ids(data, team["team_id"], competition_name, season_name))
+        competition_rows.append(
+            {
+                "team_id": team["team_id"],
+                "team_name": team["name"],
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "status": team_status,
+                "status_label": get_team_season_status_label(team_status),
+                "matches": len(scoped_matches),
+                "player_count": player_count,
+                "points_total": round(points_total, 2),
+            }
+        )
+
+    ongoing_rows = [row for row in competition_rows if row["status"] == "ongoing"]
+    historical_rows = [row for row in competition_rows if row["status"] != "ongoing"]
+    grouped_history: dict[str, list[dict[str, Any]]] = {}
+    for row in historical_rows:
+        grouped_history.setdefault(row["competition_name"], []).append(row)
+    history_sections = [
+        {
+            "competition_name": competition_name,
+            "team_count": len(rows),
+            "points_total": f"{sum(float(item['points_total']) for item in rows):.2f}",
+            "rows": [
+                _serialize_guild_team_row(item)
+                for item in sorted(
+                    rows,
+                    key=lambda item: (
+                        get_team_season_status_rank(item["status"]),
+                        item["season_name"],
+                        item["team_name"],
+                    ),
+                )
+            ],
+        }
+        for competition_name, rows in sorted(grouped_history.items(), key=lambda item: item[0])
+    ]
+
+    pending_requests = [
+        item
+        for item in load_membership_requests()
+        if item["request_type"] == "guild_join" and item.get("target_guild_id") == guild_id
+    ]
+    manage_post_path = f"/guilds/{guild_id}?view=manage" if manage_mode else f"/guilds/{guild_id}"
+    pending_payload = []
+    if manage_mode and can_manage_membership:
+        for item in pending_requests:
+            team = get_team_by_id(data, item.get("source_team_id") or "")
+            pending_payload.append(
+                {
+                    "request_id": item["request_id"],
+                    "team_name": team["name"] if team else item.get("source_team_id") or "未知战队",
+                    "scope": f"{item.get('scope_competition_name') or '未设置'} / {item.get('scope_season_name') or '未设置'}",
+                    "username": item["username"],
+                    "created_on": item["created_on"],
+                }
+            )
+
+    title = f"{guild['name']} 门派页"
     return {
         "title": title,
-        "body_html": body,
+        "alert": alert,
+        "generated_at": china_now_label(),
         "legacy_href": _build_guild_legacy_href(guild_id, manage_mode),
-        "alert": form_value(ctx.query, "alert").strip(),
+        "manage_mode": manage_mode,
+        "can_manage_membership": bool(can_manage_membership),
+        "can_manage_honors": bool(can_manage_honors),
+        "manage_href": f"/guilds/{guild_id}?view=manage" if (can_manage_membership or can_manage_honors) else "",
+        "public_href": f"/guilds/{guild_id}",
+        "manage_post_path": manage_post_path,
+        "guild": {
+            "guild_id": guild_id,
+            "name": guild["name"],
+            "short_name": str(guild.get("short_name") or "").strip() or "未设置简称",
+            "notes": str(guild.get("notes") or "").strip() or "门派长期存在，可跨赛季组织多支战队。",
+            "leader_username": str(guild.get("leader_username") or "").strip() or "未设置",
+            "honors_text": format_guild_honors_text(guild.get("honors", [])),
+        },
+        "metrics": [
+            {"label": "进行中赛季战队", "value": str(len(ongoing_rows)), "copy": "当前仍在进行中的赛季身份"},
+            {"label": "累计赛季战队", "value": str(len(guild_teams)), "copy": "该门派历届赛季战队数量"},
+            {"label": "累计比赛", "value": str(len(guild_match_ids)), "copy": "该门派战队参与过的比赛"},
+            {"label": "历届荣誉", "value": str(len(honors)), "copy": "已归档荣誉条目"},
+        ],
+        "ongoing_teams": [_serialize_guild_team_row(row) for row in ongoing_rows],
+        "history_sections": history_sections,
+        "honors": [
+            {"title": item["title"], "team_name": item["team_name"], "scope": item["scope"]}
+            for item in honors
+        ],
+        "pending_requests": pending_payload,
+        "management": {
+            "profile_href": "/profile",
+            "back_href": "/guilds",
+            "source_copy": "赛季战队不再由门派页手动创建。请先由赛事管理员批量创建，或在录入比赛结果时自动生成战队赛季档案；生成后再进入战队页认领、完善资料，并按需加入当前门派。",
+        },
     }
+
+def build_guild_api_payload(ctx: RequestContext, guild_id: str) -> dict[str, Any]:
+    return build_guild_detail_payload(ctx, guild_id)
 
 
 def get_guild_legacy_page(ctx: RequestContext, guild_id: str, alert: str = "") -> str:
@@ -855,7 +1076,7 @@ def handle_guild_api(ctx: RequestContext, start_response, guild_id: str):
             headers=[("Allow", "GET")],
         )
     payload = build_guild_api_payload(ctx, guild_id)
-    status = "404 Not Found" if payload.get("not_found") else "200 OK"
+    status = "404 Not Found" if payload.get("not_found") else ("403 Forbidden" if payload.get("forbidden") else "200 OK")
     return start_response_json(start_response, status, payload)
 
 

@@ -428,24 +428,30 @@ def build_competitions_frontend_page(ctx: RequestContext) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f6ece1">
+    <meta name="theme-color" content="#122238">
     <title>比赛页面</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/competitions-app.css">
   </head>
-  <body class="competitions-app-shell">
+  <body class="competitions-app-shell schedule-app-shell">
     <div class="shell-backdrop"></div>
     <header class="shell-header">
       <div class="shell-brand">
-        <a class="shell-brand-link" href="/competitions">比赛页面</a>
-        <span class="shell-brand-copy">Events Frontend · API Driven</span>
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">比赛中心 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
-        <a class="shell-nav-link" href="/dashboard">首页</a>
-        <a class="shell-nav-link is-active" href="/competitions">比赛页面</a>
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link is-active" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
         <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
       </nav>
       {account_html}
     </header>
@@ -600,24 +606,30 @@ def build_series_frontend_page(ctx: RequestContext, series_slug: str) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#dceef7">
+    <meta name="theme-color" content="#122238">
     <title>{escape(series_name)} 专题页</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/competitions-app.css">
   </head>
-  <body class="competitions-app-shell">
+  <body class="competitions-app-shell match-day-app-shell">
     <div class="shell-backdrop"></div>
     <header class="shell-header">
       <div class="shell-brand">
-        <a class="shell-brand-link" href="{escape(build_series_topic_path(series_slug))}">{escape(series_name)}</a>
-        <span class="shell-brand-copy">Series Frontend · API Driven</span>
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">系列专题 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
-        <a class="shell-nav-link" href="/dashboard">首页</a>
-        <a class="shell-nav-link" href="/competitions">比赛页面</a>
-        <a class="shell-nav-link is-active" href="{escape(build_series_topic_path(series_slug))}">系列专题</a>
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link is-active" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
       </nav>
       {account_html}
     </header>
@@ -1816,20 +1828,7 @@ def _serialize_day_match_competition_section(
                     "points": f'{float(participant["points_earned"]):.2f}',
                 }
             )
-        represented_teams = sorted(
-            {
-                item["team_id"]: item
-                for item in match["players"]
-                if item["team_id"] in team_lookup
-            }.values(),
-            key=lambda item: team_lookup[item["team_id"]]["name"],
-        )
-        meta_parts = [
-            "参赛战队 "
-            + "、".join(team_lookup[item["team_id"]]["name"] for item in represented_teams)
-            if represented_teams
-            else "参赛战队待补全"
-        ]
+        meta_parts = []
         table_label = str(match.get("table_label") or "").strip()
         if table_label:
             meta_parts.append(table_label)
@@ -1842,7 +1841,7 @@ def _serialize_day_match_competition_section(
             {
                 "match_id": match["match_id"],
                 "season_name": season_name,
-                "stage_label": STAGE_OPTIONS.get(match["stage"], match["stage"]),
+                "stage_label": "定位赛" if match["stage"] == "placement" else STAGE_OPTIONS.get(match["stage"], match["stage"]),
                 "round": int(match["round"]),
                 "game_no": int(match["game_no"]),
                 "meta_text": " · ".join(meta_parts),
@@ -1900,28 +1899,34 @@ def build_match_day_frontend_page(ctx: RequestContext, played_on: str) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#dceef7">
+    <meta name="theme-color" content="#122238">
     <title>{escape(played_on)} 比赛日</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/competitions-app.css">
   </head>
   <body class="competitions-app-shell">
     <div class="shell-backdrop"></div>
     <header class="shell-header">
       <div class="shell-brand">
-        <a class="shell-brand-link" href="{escape(build_match_day_path(played_on))}">{escape(played_on)} 比赛日</a>
-        <span class="shell-brand-copy">Match Day Frontend · API Driven</span>
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">比赛日 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
-        <a class="shell-nav-link" href="/dashboard">首页</a>
-        <a class="shell-nav-link" href="/competitions">比赛页面</a>
-        <a class="shell-nav-link is-active" href="{escape(build_match_day_path(played_on))}">比赛日</a>
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link is-active" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
       </nav>
       {account_html}
     </header>
-    <main id="match-day-app" class="competitions-app-root" aria-live="polite">
+    <main id="match-day-app" class="competitions-app-root match-day-app-root" aria-live="polite">
       <section class="competitions-loading-shell">
         <div class="competitions-loading-kicker">Loading Match Day</div>
         <h1>正在加载比赛日页面</h1>
@@ -2624,18 +2629,242 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
     return redirect(start_response, append_alert_query(redirect_path, "AI 比赛日报已生成。"))
 
 
+
+def build_teams_frontend_page(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        account_html = f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    else:
+        account_html = """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+    bootstrap = json.dumps(
+        {
+            "apiEndpoint": "/api/teams",
+            "alert": form_value(ctx.query, "alert").strip(),
+        },
+        ensure_ascii=False,
+    )
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#122238">
+    <title>战队</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/competitions-app.css">
+  </head>
+  <body class="competitions-app-shell teams-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">战队中心 · API Driven</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link is-active" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
+      </nav>
+      {account_html}
+    </header>
+    <main id="teams-app" class="competitions-app-root teams-app-root" aria-live="polite">
+      <section class="competitions-loading-shell">
+        <div class="competitions-loading-kicker">Loading Teams</div>
+        <h1>正在加载战队中心</h1>
+        <p>前端会通过独立 API 拉取战队数据并渲染页面。</p>
+      </section>
+    </main>
+    <script>window.__WEREWOLF_TEAMS_BOOTSTRAP__ = {bootstrap};</script>
+    <script src="/assets/teams-app.js" defer></script>
+  </body>
+</html>
+"""
+
+
 def get_teams_page(ctx: RequestContext) -> str:
-    return legacy._legacy_get_teams_page_impl(ctx)
+    return build_teams_frontend_page(ctx)
+
+
+def _serialize_teams_filter_links(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return items
+
+
+def build_teams_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    data = load_validated_data()
+    scope = resolve_catalog_scope(ctx, data)
+    selected_competition = scope["selected_competition"]
+    selected_entry = scope["selected_entry"]
+    selected_region = scope["selected_region"]
+    selected_series_slug = scope["selected_series_slug"]
+    region_rows = scope["region_rows"]
+    filtered_rows = scope["filtered_rows"]
+    series_rows = scope["series_rows"]
+    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    selected_season = get_selected_season(ctx, season_names)
+    scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
+    scoped_competition_names = {row["competition_name"] for row in scoped_competition_rows}
+    stats_data = (
+        build_filtered_data(data, scoped_competition_names)
+        if not selected_competition and scoped_competition_names
+        else data
+    )
+    team_rows = build_team_rows(stats_data, selected_competition, selected_season)
+    visible_rows = [row for row in team_rows if row.get("matches_represented", 0) > 0]
+    displayed_rows = visible_rows or team_rows
+    displayed_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", row.get("rank", 9999)),
+            -float(row.get("points_earned_total") or 0.0),
+            row.get("name") or "",
+        )
+    )
+    scope_label = " / ".join(
+        item
+        for item in [
+            selected_region or DEFAULT_REGION_NAME,
+            selected_entry["series_name"] if selected_entry else None,
+            selected_competition,
+            selected_season,
+        ]
+        if item
+    ) or f"{DEFAULT_REGION_NAME}赛区汇总"
+    region_options = [
+        {
+            "label": region_name,
+            "href": build_scoped_path("/teams", None, None, region_name, selected_series_slug),
+            "active": selected_region == region_name,
+        }
+        for region_name in scope["region_names"]
+    ]
+    series_options = [
+        {
+            "label": "全部系列赛",
+            "href": build_scoped_path("/teams", None, None, selected_region, None),
+            "active": selected_series_slug is None,
+        }
+    ] + [
+        {
+            "label": row["series_name"],
+            "href": build_scoped_path("/teams", None, None, selected_region, row["series_slug"]),
+            "active": selected_series_slug == row["series_slug"],
+        }
+        for row in series_rows
+    ]
+    competition_options = [
+        {
+            "label": "全部赛事",
+            "href": build_scoped_path("/teams", None, None, selected_region, selected_series_slug),
+            "active": selected_competition is None,
+        }
+    ] + [
+        {
+            "label": row["competition_name"],
+            "href": build_scoped_path("/teams", row["competition_name"], None, selected_region, selected_series_slug),
+            "active": selected_competition == row["competition_name"],
+        }
+        for row in scoped_competition_rows
+    ]
+    season_options = [
+        {
+            "label": season_name,
+            "href": build_scoped_path("/teams", selected_competition, season_name, selected_region, selected_series_slug),
+            "selected": selected_season == season_name,
+        }
+        for season_name in season_names
+    ]
+    teams = [
+        {
+            "rank": int(row.get("points_rank") or row.get("rank") or index + 1),
+            "team_id": row["team_id"],
+            "name": row["name"],
+            "short_name": row.get("short_name") or row["name"],
+            "logo": row.get("logo") or legacy.DEFAULT_TEAM_LOGO,
+            "competition_name": row.get("competition_name") or "",
+            "season_name": row.get("season_name") or "",
+            "player_count": int(row.get("player_count") or 0),
+            "matches_represented": int(row.get("matches_represented") or 0),
+            "wins": int(row.get("wins") or 0),
+            "losses": int(row.get("losses") or 0),
+            "points_total": f"{float(row.get('points_earned_total') or 0.0):.2f}",
+            "average_points": f"{float(row.get('average_points') or 0.0):.2f}",
+            "win_rate": format_pct(float(row.get("win_rate") or 0.0)),
+            "href": build_scoped_path(
+                "/teams/" + row["team_id"],
+                selected_competition or row.get("competition_name"),
+                selected_season or row.get("season_name"),
+                selected_region,
+                selected_series_slug,
+            ),
+        }
+        for index, row in enumerate(displayed_rows)
+    ]
+    top_team = teams[0] if teams else None
+    return {
+        "generated_at": legacy.china_now_label(),
+        "legacy_href": build_scoped_path("/teams/legacy", selected_competition, selected_season, selected_region, selected_series_slug),
+        "scope": {
+            "label": scope_label,
+            "description": f"当前正在查看 {scope_label} 的战队排行、胜率和出场数据。",
+            "filters": {
+                "regions": region_options,
+                "series": series_options,
+                "competitions": competition_options,
+                "seasons": season_options,
+            },
+        },
+        "metrics": [
+            {"label": "收录战队", "value": str(len(teams)), "copy": "当前范围内可展示的战队数量。"},
+            {"label": "有效战队", "value": str(len([team for team in teams if team["matches_represented"] > 0])), "copy": "至少有一场有效比赛记录的战队。"},
+            {"label": "总出赛", "value": str(sum(team["matches_represented"] for team in teams)), "copy": "所有战队的出赛记录合计。"},
+            {"label": "榜首战队", "value": top_team["short_name"] if top_team else "待录入", "copy": "按当前积分排行口径计算。"},
+        ],
+        "teams": teams,
+    }
+
+
+def handle_teams_api(ctx: RequestContext, start_response):
+    return start_response_json(start_response, "200 OK", build_teams_api_payload(ctx))
 
 
 def _build_schedule_scope(ctx: RequestContext) -> tuple[dict[str, Any] | None, str]:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
     selected_competition = scope["selected_competition"]
+    visible_rows = scope["filtered_rows"] or scope["region_rows"] or scope["competition_rows"]
     if not selected_competition:
-        return None, "请先从赛事页进入具体赛事后，再查看全部场次。"
+        selected_competition = next(
+            (row["competition_name"] for row in visible_rows if row.get("match_count", 0) > 0),
+            visible_rows[0]["competition_name"] if visible_rows else None,
+        )
+    if not selected_competition:
+        return None, "当前赛区还没有可展示的赛事赛程。"
 
-    selected_entry = scope["selected_entry"]
+    selected_entry = next(
+        (row for row in scope["competition_rows"] if row["competition_name"] == selected_competition),
+        scope["selected_entry"],
+    )
     selected_region = selected_entry["region_name"] if selected_entry else scope["selected_region"]
     selected_series_slug = (
         selected_entry["series_slug"] if selected_entry else scope["selected_series_slug"]
@@ -2649,7 +2878,6 @@ def _build_schedule_scope(ctx: RequestContext) -> tuple[dict[str, Any] | None, s
         selected_region,
         selected_series_slug,
     )
-    visible_rows = scope["filtered_rows"] or scope["region_rows"] or scope["competition_rows"]
     match_rows = [
         match
         for match in sorted(
@@ -2758,7 +2986,7 @@ def _serialize_schedule_day_section(
     selected_series_slug: str | None,
 ) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
-    for match in matches:
+    for match in sorted(matches, key=lambda item: (item["round"], item["game_no"], item["match_id"])):
         match_detail_path = (
             f"/matches/{match['match_id']}?next="
             f"{quote(build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug))}"
@@ -2771,8 +2999,9 @@ def _serialize_schedule_day_section(
                 "match_id": match["match_id"],
                 "detail_href": match_detail_path,
                 "season_name": match["season"],
-                "stage_label": STAGE_OPTIONS.get(match["stage"], match["stage"]),
+                "stage_label": "定位赛" if match["stage"] == "placement" else STAGE_OPTIONS.get(match["stage"], match["stage"]),
                 "round_label": f"第 {match['round']} 轮",
+                "game_label": f"第 {match['game_no']} 局",
                 "group_label": str(match.get("group_label") or team_names or "未设置"),
                 "table_label": match["table_label"],
                 "format_label": match["format"],
@@ -2830,32 +3059,38 @@ def build_schedule_frontend_page(ctx: RequestContext) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#dceef7">
-    <title>赛事场次页</title>
+    <meta name="theme-color" content="#122238">
+    <title>赛程日历</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/competitions-app.css">
   </head>
   <body class="competitions-app-shell">
     <div class="shell-backdrop"></div>
     <header class="shell-header">
       <div class="shell-brand">
-        <a class="shell-brand-link" href="/schedule">赛事场次页</a>
-        <span class="shell-brand-copy">Schedule Frontend · API Driven</span>
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">赛程日历 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
-        <a class="shell-nav-link" href="/dashboard">首页</a>
-        <a class="shell-nav-link" href="/competitions">比赛页面</a>
-        <a class="shell-nav-link is-active" href="/schedule">全部场次</a>
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link is-active" href="/schedule">赛程日历</a>
       </nav>
       {account_html}
     </header>
-    <main id="schedule-app" class="competitions-app-root" aria-live="polite">
+    <main id="schedule-app" class="competitions-app-root schedule-app-root" aria-live="polite">
       <section class="competitions-loading-shell">
         <div class="competitions-loading-kicker">Loading Schedule</div>
-        <h1>正在加载赛事场次页</h1>
-        <p>新前端会通过独立 API 拉取赛季下的比赛日和场次列表。</p>
+        <h1>正在加载赛程日历</h1>
+        <p>前端会通过独立 API 拉取赛季下的比赛日和场次列表。</p>
       </section>
     </main>
     <script>window.__WEREWOLF_SCHEDULE_BOOTSTRAP__ = {bootstrap};</script>
@@ -2905,8 +3140,9 @@ def build_schedule_api_payload(
     return {
         "alert": form_value(ctx.query, "alert").strip(),
         "hero": {
-            "title": f"{selected_competition} · 全部场次",
-            "copy": "这里集中展示该系列赛当前赛季的所有场次。你可以按日期查看，也可以直接点击某一场进入详情页。",
+            "title": "赛程日历",
+            "copy": f"{selected_competition} 当前赛季的比赛日、赛段和局数集中展示在这里。",
+            "competition_name": selected_competition,
             "selected_season": selected_season or selected_competition,
         },
         "filters": _serialize_schedule_filters(
@@ -2944,7 +3180,7 @@ def build_schedule_api_payload(
                 selected_region,
                 selected_series_slug,
             )
-            for played_on, matches in day_groups.items()
+            for played_on, matches in sorted(day_groups.items())
         ],
         "legacy_href": _build_schedule_legacy_href(
             selected_competition,

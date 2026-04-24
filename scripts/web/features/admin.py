@@ -24,6 +24,7 @@ is_admin_user = legacy.is_admin_user
 layout = legacy.layout
 load_ai_daily_brief_settings = legacy.load_ai_daily_brief_settings
 load_ai_prompt_templates = legacy.load_ai_prompt_templates
+load_dashboard_activity_settings = legacy.load_dashboard_activity_settings
 load_users = legacy.load_users
 mask_api_key = legacy.mask_api_key
 normalize_permission_keys = legacy.normalize_permission_keys
@@ -33,6 +34,7 @@ require_admin = legacy.require_admin
 revoke_user_sessions = legacy.revoke_user_sessions
 save_ai_daily_brief_settings = legacy.save_ai_daily_brief_settings
 save_ai_prompt_templates = legacy.save_ai_prompt_templates
+save_dashboard_activity_settings = legacy.save_dashboard_activity_settings
 save_users = legacy.save_users
 start_response_html = legacy.start_response_html
 validate_account_form = legacy.validate_account_form
@@ -47,6 +49,7 @@ def get_accounts_page(
 ) -> str:
     ai_settings = load_ai_daily_brief_settings()
     ai_prompt_templates = load_ai_prompt_templates()
+    activity_settings = load_dashboard_activity_settings()
     current_form = form_values or {
         "editing_username": "",
         "username": "",
@@ -71,6 +74,20 @@ def get_accounts_page(
         "team_season_summary_system_prompt": str((form_values or {}).get("team_season_summary_system_prompt") or ai_prompt_templates.get("team_season_summary_system_prompt") or "").strip(),
         "team_season_summary_user_prompt": str((form_values or {}).get("team_season_summary_user_prompt") or ai_prompt_templates.get("team_season_summary_user_prompt") or "").strip(),
     }
+    activity_mode = str((form_values or {}).get("activity_mode") or activity_settings.get("mode") or "auto").strip()
+    activity_custom_text = str((form_values or {}).get("activity_custom_text") or "").strip()
+    if not activity_custom_text:
+        activity_custom_text = "\n".join(
+            " | ".join(
+                [
+                    str(item.get("label") or "手动动态"),
+                    str(item.get("time_label") or "管理员编辑"),
+                    str(item.get("text") or ""),
+                    str(item.get("href") or "/competitions"),
+                ]
+            )
+            for item in activity_settings.get("items", [])
+        )
     users = load_users()
     data = legacy.load_validated_data()
     requested_edit_username = str(current_form.get("editing_username") or "").strip()
@@ -199,6 +216,39 @@ def get_accounts_page(
       <div class="eyebrow mb-3">管理员后台</div>
       <h1 class="display-6 fw-semibold mb-3">账号管理</h1>
       <p class="mb-0 opacity-75">这里只有管理员可以访问，用来新增账号和删除账号。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">首页赛事动态</h2>
+          <p class="section-copy mb-0">默认自动显示最近一个有效比赛日的特殊事件，例如最高分选手、连胜选手、连败选手和阵营走势；管理员也可以手动覆盖。</p>
+        </div>
+        <span class="chip">{'自动生成' if activity_mode != 'custom' else '手动覆盖'}</span>
+      </div>
+      <div class="form-panel p-3 p-lg-4">
+        <form method="post" action="/accounts">
+          <input type="hidden" name="action" value="save_dashboard_activity_settings">
+          <div class="row g-3">
+            <div class="col-12 col-lg-4">
+              <label class="form-label">生成方式</label>
+              <select class="form-select" name="activity_mode">
+                <option value="auto"{' selected' if activity_mode != 'custom' else ''}>自动生成最近比赛日特殊事件</option>
+                <option value="custom"{' selected' if activity_mode == 'custom' else ''}>管理员手动覆盖</option>
+              </select>
+              <div class="small text-secondary mt-2">自动模式不会显示赛果，只提炼特殊事件。</div>
+            </div>
+            <div class="col-12 col-lg-8">
+              <label class="form-label">手动动态</label>
+              <textarea class="form-control" name="activity_custom_text" rows="6" placeholder="标签 | 时间/范围 | 动态正文 | 链接\n例如：最高分选手 | 2026-04-12 | 可杰单日拿到 21 分 | /players/player-player-27">{escape(activity_custom_text)}</textarea>
+              <div class="small text-secondary mt-2">每行一条，格式为“标签 | 时间/范围 | 动态正文 | 链接”。选择自动模式时这里会保留但不展示。</div>
+            </div>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-4">
+            <button type="submit" class="btn btn-dark">保存赛事动态设置</button>
+            <a class="btn btn-outline-dark" href="/dashboard">查看首页</a>
+          </div>
+        </form>
+      </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -506,6 +556,56 @@ def handle_accounts(ctx: RequestContext, start_response):
 
     action = form_value(ctx.form, "action")
     users = load_users()
+
+    if action == "save_dashboard_activity_settings":
+        activity_mode = form_value(ctx.form, "activity_mode", "auto").strip()
+        custom_text = form_value(ctx.form, "activity_custom_text")
+        custom_items: list[dict[str, str]] = []
+        for raw_line in custom_text.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            parts = [part.strip() for part in line.split("|")]
+            if len(parts) < 3:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_accounts_page(
+                        ctx,
+                        alert="手动动态每行至少需要包含：标签 | 时间/范围 | 动态正文。",
+                        form_values={
+                            "activity_mode": activity_mode,
+                            "activity_custom_text": custom_text,
+                        },
+                    ),
+                )
+            custom_items.append(
+                {
+                    "label": parts[0] or "手动动态",
+                    "time_label": parts[1] or "管理员编辑",
+                    "text": parts[2],
+                    "href": parts[3] if len(parts) >= 4 and parts[3] else "/competitions",
+                }
+            )
+        if activity_mode == "custom" and not custom_items:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_accounts_page(
+                    ctx,
+                    alert="选择手动覆盖时，请至少填写一条动态。",
+                    form_values={
+                        "activity_mode": activity_mode,
+                        "activity_custom_text": custom_text,
+                    },
+                ),
+            )
+        save_dashboard_activity_settings(activity_mode, custom_items)
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_accounts_page(ctx, alert="首页赛事动态设置已保存。"),
+        )
 
     if action == "save_ai_daily_brief_settings":
         base_url = form_value(ctx.form, "ai_base_url").strip()

@@ -13,12 +13,7 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import web_app as legacy
-from sqlite_store import (
-    clear_season_dimension_stats,
-    load_season_player_dimension_stats,
-    load_season_team_dimension_stats,
-    save_season_dimension_stats,
-)
+from sqlite_store import clear_season_dimension_stats, save_season_dimension_stats
 
 CAMP_OPTIONS = legacy.CAMP_OPTIONS
 RequestContext = legacy.RequestContext
@@ -47,6 +42,7 @@ list_seasons = legacy.list_seasons
 load_series_catalog = legacy.load_series_catalog
 load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
+invalidate_validated_data_cache = legacy.invalidate_validated_data_cache
 MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 normalize_stance_result = legacy.normalize_stance_result
@@ -1729,39 +1725,9 @@ def import_dimension_stats_from_excel(
         imported_team_rows,
         ("competition_name", "season_name", "played_on", "team_id", "seat"),
     )
-    existing_player_rows = list(load_season_player_dimension_stats())
-    existing_team_rows = list(load_season_team_dimension_stats())
-    imported_player_days = {
-        str(row.get("played_on") or "").strip()
-        for row in next_player_rows
-        if str(row.get("played_on") or "").strip()
-    }
-    imported_team_days = {
-        str(row.get("played_on") or "").strip()
-        for row in next_team_rows
-        if str(row.get("played_on") or "").strip()
-    }
-
-    next_player_rows = [
-        row
-        for row in existing_player_rows
-        if not (
-            str(row.get("competition_name") or "").strip() == competition_name
-            and str(row.get("season_name") or "").strip() == season_name
-            and str(row.get("played_on") or "").strip() in imported_player_days
-        )
-    ] + next_player_rows
-    next_team_rows = [
-        row
-        for row in existing_team_rows
-        if not (
-            str(row.get("competition_name") or "").strip() == competition_name
-            and str(row.get("season_name") or "").strip() == season_name
-            and str(row.get("played_on") or "").strip() in imported_team_days
-        )
-    ] + next_team_rows
     summary = (
         f"维度数据导入完成：选手 {len(imported_player_rows)} 条，战队 {len(imported_team_rows)} 条。"
+        " 已按赛事、赛季、日期和主键逐条新增/更新，未删除本 Excel 之外的旧维度数据。"
     )
     return next_player_rows, next_team_rows, summary
 
@@ -2946,6 +2912,7 @@ def handle_match_create(ctx: RequestContext, start_response):
             )
         try:
             save_season_dimension_stats(next_player_rows, next_team_rows)
+            invalidate_validated_data_cache()
         except Exception as exc:
             return start_response_html(
                 start_response,

@@ -908,3 +908,350 @@ body {
     padding: 12px;
   }
 }
+
+/* final public WOLF theme: guilds */
+:root {
+  --bg: #213a59;
+  --panel: rgba(42, 63, 91, 0.72);
+  --panel-strong: rgba(50, 73, 103, 0.82);
+  --ink: #eef6ff;
+  --muted: #c2d0df;
+  --line: rgba(205, 226, 252, 0.28);
+  --accent: #6aa6ff;
+  --accent-strong: #4388f3;
+  --accent-soft: rgba(106, 166, 255, 0.2);
+  --gold: #f5b84b;
+  --shadow: 0 22px 48px rgba(3, 10, 22, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --heading-font: "Plus Jakarta Sans", "Noto Sans SC", sans-serif;
+  --body-font: "Plus Jakarta Sans", "Noto Sans SC", sans-serif;
+}
+
+html { background: #1b304b; }
+body.guilds-app-shell {
+  min-height: 100vh;
+  padding: 0 28px 28px 190px;
+  color: var(--ink);
+  font-family: var(--body-font);
+  background:
+    radial-gradient(circle at 58% 0%, rgba(130, 175, 233, 0.56), transparent 25%),
+    radial-gradient(circle at 88% 6%, rgba(252, 203, 129, 0.24), transparent 18%),
+    linear-gradient(180deg, rgba(39, 66, 101, 0.96), rgba(27, 48, 75, 0.98) 58%, #172b45 100%);
+  overflow-x: hidden;
+}
+body.guilds-app-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(128, 176, 239, 0.05) 1px, transparent 1px),
+    linear-gradient(rgba(128, 176, 239, 0.045) 1px, transparent 1px),
+    radial-gradient(ellipse at 55% 12%, rgba(255, 239, 221, 0.2), transparent 34%);
+  background-size: 42px 42px, 42px 42px, auto;
+}
+body.guilds-app-shell::after {
+  content: "WOLF";
+  position: fixed;
+  right: 4vw;
+  bottom: 1vh;
+  z-index: 0;
+  pointer-events: none;
+  color: rgba(214, 232, 255, 0.05);
+  font-size: clamp(6rem, 18vw, 18rem);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+.shell-backdrop { display: block; background: radial-gradient(circle at 35% 6%, rgba(255, 231, 207, 0.24), transparent 22%), linear-gradient(180deg, rgba(100, 148, 210, 0.2), transparent 42%); }
+.shell-header {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  width: 166px;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 28px;
+  padding: 34px 18px 22px;
+  border: 1px solid rgba(205, 226, 252, 0.3);
+  border-radius: 0 22px 22px 0;
+  background: linear-gradient(180deg, rgba(31, 52, 82, 0.88), rgba(23, 43, 69, 0.8));
+  box-shadow: 16px 0 42px rgba(3, 10, 22, 0.2);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+.shell-header::before,
+.guilds-panel::before,
+.guilds-loading-shell::before,
+.guilds-error-shell::before,
+.guilds-empty-state::before,
+.guilds-side-metric::before,
+.guilds-card-stat::before,
+.guilds-metric-card::before,
+.guilds-card::before { content: none; }
+.shell-brand { gap: 10px; }
+.shell-brand-link { display: flex; align-items: center; gap: 10px; color: #f7fbff; font-family: var(--heading-font); font-size: 1.18rem; font-weight: 900; letter-spacing: 0.24em; text-transform: uppercase; }
+.shell-brand-mark { width: 32px; height: 32px; display: inline-block; flex: 0 0 auto; background: #f7fbff; clip-path: polygon(50% 0, 63% 22%, 88% 12%, 78% 42%, 94% 58%, 68% 62%, 58% 100%, 50% 72%, 42% 100%, 32% 62%, 6% 58%, 22% 42%, 12% 12%, 37% 22%); box-shadow: 0 0 22px rgba(77, 147, 255, 0.45); }
+.shell-brand-copy { color: #b5c6d9; font-size: 0.78rem; letter-spacing: 0.02em; line-height: 1.45; text-transform: none; }
+.shell-nav { display: grid; gap: 11px; justify-content: stretch; }
+.shell-nav-link { justify-content: flex-start; gap: 10px; min-height: 42px; padding: 0 14px; border-color: transparent; color: #c0cfdf; background: transparent; font-weight: 800; }
+.shell-nav-link::before { content: ""; width: 18px; height: 18px; flex: 0 0 auto; background: currentColor; opacity: 0.92; -webkit-mask: var(--shell-nav-icon) center / contain no-repeat; mask: var(--shell-nav-icon) center / contain no-repeat; }
+.shell-nav-link:nth-child(1) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M3 10.8 12 3l9 7.8v9.7a.5.5 0 0 1-.5.5h-5.2v-6.2H8.7V21H3.5a.5.5 0 0 1-.5-.5v-9.7Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(2) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 3h10v2h3v3a5 5 0 0 1-5 5h-.2A5 5 0 0 1 13 15.6V18h3v2H8v-2h3v-2.4A5 5 0 0 1 9.2 13H9a5 5 0 0 1-5-5V5h3V3Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(3) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 2 20 5v6.2c0 5-3.2 8.6-8 10.8-4.8-2.2-8-5.8-8-10.8V5l8-3Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(4) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0H5Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(5) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 3 4 7v6c0 4.4 3.5 7.3 8 8 4.5-.7 8-3.6 8-8V7l-8-4Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(6) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v3h6V2h2v3h3v16H4V5h3V2Zm11 9H6v8h12v-8Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:hover,
+.shell-nav-link.is-active { transform: none; color: #f7fbff; border-color: rgba(77, 147, 255, 0.55); background: linear-gradient(90deg, rgba(47, 120, 238, 0.8), rgba(47, 120, 238, 0.18)); box-shadow: 0 0 24px rgba(77, 147, 255, 0.2), inset 0 0 16px rgba(77, 147, 255, 0.1); }
+.shell-account { margin-top: auto; display: grid; justify-content: stretch; gap: 10px; }
+.shell-account-label { color: #98aac0; font-size: 0.78rem; line-height: 1.4; }
+.shell-inline-form, .shell-inline-form .shell-button, .shell-account > .shell-button { width: 100%; }
+.shell-button, .guilds-button { min-height: 42px; border-radius: 10px; font-weight: 900; }
+.shell-button-primary, .guilds-button-primary { color: #f7fbff; background: linear-gradient(180deg, #4d93ff, #2384ff); box-shadow: 0 12px 28px rgba(35, 132, 255, 0.24); }
+.shell-button-secondary, .guilds-button-secondary { color: #dcecff; border-color: rgba(205, 226, 252, 0.3); background: rgba(255, 255, 255, 0.08); }
+.guilds-app-root { position: relative; z-index: 1; max-width: none; padding: 28px 0 0; }
+.guilds-layout { gap: 20px; }
+.guilds-panel,
+.guilds-loading-shell,
+.guilds-error-shell,
+.guilds-empty-state,
+.guilds-side-metric,
+.guilds-card-stat,
+.guilds-metric-card,
+.guilds-card { color: var(--ink); border: 1px solid var(--line); background: linear-gradient(180deg, rgba(46, 68, 98, 0.74), rgba(31, 53, 82, 0.7)); box-shadow: var(--shadow); backdrop-filter: blur(18px); }
+.guilds-hero-main { color: #f8fbff; background: linear-gradient(90deg, rgba(30, 53, 83, 0.86), rgba(40, 67, 100, 0.68)), radial-gradient(circle at 78% 18%, rgba(255, 231, 204, 0.36), transparent 20%); }
+.guilds-title,
+.guilds-featured-title,
+.guilds-section-title,
+.guilds-card-title { color: #f7fbff; font-weight: 900; letter-spacing: -0.04em; }
+.guilds-copy,
+.guilds-card-copy,
+.guilds-card-meta,
+.guilds-note { color: var(--muted); }
+.guilds-section-kicker,
+.guilds-panel-kicker,
+.guilds-card-kicker,
+.guilds-metric-label { color: #a9cbf6; letter-spacing: 0.08em; }
+.guilds-side-metric,
+.guilds-card-stat,
+.guilds-metric-card,
+.guilds-card { border-color: rgba(205, 226, 252, 0.22); background: rgba(35, 58, 88, 0.62); }
+.guilds-button { color: #e9f3ff; border-color: rgba(215, 233, 255, 0.24); background: rgba(255, 255, 255, 0.1); }
+.guilds-metric-value,
+.guilds-side-metric strong,
+.guilds-card-stat strong,
+.guilds-featured-short,
+.guilds-card-short { color: #f7fbff; }
+.guilds-card-stat span { color: #9bb1c9; }
+.guilds-alert { color: #fff2cb; border-color: rgba(245, 184, 75, 0.34); background: rgba(107, 73, 21, 0.34); }
+.guilds-button:hover,
+.guilds-card:hover,
+.guilds-side-metric:hover,
+.guilds-card-stat:hover,
+.guilds-metric-card:hover { transform: translateY(-2px); border-color: rgba(77, 147, 255, 0.42); box-shadow: 0 18px 36px rgba(2, 10, 23, 0.24), 0 0 0 1px rgba(77, 147, 255, 0.08); }
+@media (max-width: 1080px) {
+  body.guilds-app-shell { padding: 16px 22px 28px; }
+  .shell-header { position: sticky; top: 16px; inset: auto; width: auto; min-height: 76px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; padding: 16px 18px; border-radius: 22px; margin-bottom: 18px; }
+  .shell-nav { display: flex; overflow-x: auto; justify-content: flex-start; }
+  .shell-account { margin-top: 0; display: flex; }
+  .shell-inline-form, .shell-inline-form .shell-button, .shell-account > .shell-button { width: auto; }
+}
+@media (max-width: 720px) {
+  body.guilds-app-shell { padding: 10px 14px 18px; }
+  .shell-header { top: 10px; grid-template-columns: 1fr; gap: 12px; margin-bottom: 14px; }
+  .shell-brand-link { font-size: 1rem; }
+  .shell-account-label, .shell-brand-copy { display: none; }
+  .guilds-app-root { padding-top: 0; }
+}
+
+/* final guilds readability pass */
+body.guilds-app-shell {
+  --guild-readable-text: #eef6ff;
+  --guild-readable-title: #f8fbff;
+  --guild-readable-muted: #b9cce1;
+  --guild-readable-line: rgba(126, 181, 255, 0.3);
+}
+body.guilds-app-shell .shell-nav-link,
+body.guilds-app-shell .guilds-chip,
+body.guilds-app-shell .guilds-button,
+body.guilds-app-shell .shell-button-secondary {
+  color: var(--guild-readable-text) !important;
+  border-color: var(--guild-readable-line) !important;
+}
+body.guilds-app-shell .shell-nav-link:hover,
+body.guilds-app-shell .shell-nav-link.is-active,
+body.guilds-app-shell .guilds-button-primary,
+body.guilds-app-shell .shell-button-primary {
+  color: #ffffff !important;
+}
+body.guilds-app-shell h1,
+body.guilds-app-shell h2,
+body.guilds-app-shell h3,
+body.guilds-app-shell strong,
+body.guilds-app-shell .guilds-title,
+body.guilds-app-shell .guilds-section-title,
+body.guilds-app-shell .guilds-card-title,
+body.guilds-app-shell .guilds-metric-value {
+  color: var(--guild-readable-title) !important;
+}
+body.guilds-app-shell p,
+body.guilds-app-shell small,
+body.guilds-app-shell .guilds-copy,
+body.guilds-app-shell .guilds-section-copy,
+body.guilds-app-shell .guilds-card-copy,
+body.guilds-app-shell .guilds-meta,
+body.guilds-app-shell .guilds-meta-text {
+  color: var(--guild-readable-muted) !important;
+}
+body.guilds-app-shell a:not(.guilds-button):not(.shell-nav-link):not(.shell-brand-link) {
+  color: #f8fbff !important;
+}
+body.guilds-app-shell a:not(.guilds-button):not(.shell-nav-link):not(.shell-brand-link):hover {
+  color: #8fd3ff !important;
+}
+
+/* guild detail frontend page */
+.guild-detail-layout { gap: 20px; }
+.guild-detail-hero { grid-template-columns: 1fr; }
+.guild-detail-app-root .guilds-hero-main { padding: 34px 42px 30px; }
+.guild-detail-meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.guild-detail-meta-row span { padding: 8px 11px; border: 1px solid rgba(126, 181, 255, 0.24); border-radius: 999px; color: #d7e9ff; background: rgba(255,255,255,0.08); font-size: 0.84rem; font-weight: 900; }
+.guild-detail-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.guild-detail-section { padding: 24px; }
+.guild-detail-team-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.guild-detail-team-card,
+.guild-detail-history-card,
+.guild-detail-honor-card { border: 1px solid rgba(126, 181, 255, 0.28); border-radius: 20px; background: linear-gradient(180deg, rgba(35, 58, 88, 0.72), rgba(22, 41, 66, 0.62)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
+.guild-detail-team-card { display: grid; gap: 14px; padding: 18px; color: #e9f3ff; text-decoration: none; transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease; }
+.guild-detail-team-card:hover { transform: translateY(-2px); border-color: rgba(126, 181, 255, 0.52); background: rgba(106, 166, 255, 0.14); }
+.guild-detail-team-stats { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.guild-detail-team-stats div { padding: 11px; border: 1px solid rgba(126, 181, 255, 0.18); border-radius: 14px; background: rgba(255,255,255,0.07); }
+.guild-detail-team-stats span { display: block; color: #b9cce1; font-size: 0.78rem; font-weight: 900; }
+.guild-detail-team-stats strong { display: block; margin-top: 5px; color: #f8fbff; font-size: 1.05rem; }
+.guild-detail-history-stack { display: grid; gap: 12px; }
+.guild-detail-history-card { padding: 0; overflow: hidden; }
+.guild-detail-history-card summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px; cursor: pointer; color: #f8fbff; font-weight: 950; }
+.guild-detail-history-card summary small { color: #b9cce1; font-weight: 800; }
+.guild-detail-table-wrap { overflow-x: auto; border-top: 1px solid rgba(126, 181, 255, 0.18); }
+.guild-detail-table { width: 100%; border-collapse: collapse; color: #d7e9ff; }
+.guild-detail-table th,
+.guild-detail-table td { padding: 12px 11px; border-bottom: 1px solid rgba(126, 181, 255, 0.16); text-align: left; white-space: nowrap; }
+.guild-detail-table th { color: #b9d8ff; text-transform: uppercase; letter-spacing: 0.08em; font-size: 0.78rem; }
+.guild-detail-table td { color: #d7e9ff; }
+.guild-detail-table tr:hover td { background: rgba(106, 166, 255, 0.11); }
+.guild-detail-honor-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; }
+.guild-detail-honor-card { padding: 18px; }
+.guild-detail-form { display: grid; gap: 12px; }
+.guild-detail-form label { color: #f8fbff; font-weight: 900; }
+.guild-detail-form textarea { width: 100%; padding: 14px; border: 1px solid rgba(126, 181, 255, 0.3); border-radius: 16px; color: #eef6ff; background: rgba(9, 22, 38, 0.45); resize: vertical; }
+.guild-detail-action-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.guild-detail-action-row form { margin: 0; }
+.guild-detail-pending-wrap { margin-top: 18px; border: 1px solid rgba(126, 181, 255, 0.22); border-radius: 18px; }
+.guild-detail-app-shell .shell-nav-link[href="/guilds"] { color: #f7fbff; border-color: rgba(77, 147, 255, 0.55); background: linear-gradient(90deg, rgba(47, 120, 238, 0.8), rgba(47, 120, 238, 0.18)); }
+@media (max-width: 1180px) { .guild-detail-metrics-grid, .guild-detail-team-grid, .guild-detail-honor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .guild-detail-app-root .guilds-hero-main, .guild-detail-section { padding: 22px; } .guild-detail-metrics-grid, .guild-detail-team-grid, .guild-detail-honor-grid, .guild-detail-team-stats { grid-template-columns: 1fr; } .guild-detail-history-card summary { align-items: flex-start; flex-direction: column; } }
+
+/* final guild detail readability override */
+body.guild-detail-app-shell .guilds-panel,
+body.guild-detail-app-shell .guilds-metric-card,
+body.guild-detail-app-shell .guild-detail-team-card,
+body.guild-detail-app-shell .guild-detail-history-card,
+body.guild-detail-app-shell .guild-detail-honor-card,
+body.guild-detail-app-shell .guilds-empty-state,
+body.guild-detail-app-shell .guild-detail-table-wrap {
+  color: #eef6ff !important;
+  border-color: rgba(126, 181, 255, 0.34) !important;
+  background-color: rgba(35, 58, 88, 0.68) !important;
+}
+body.guild-detail-app-shell .guilds-title,
+body.guild-detail-app-shell .guilds-section-title,
+body.guild-detail-app-shell .guilds-card-title,
+body.guild-detail-app-shell .guilds-metric-value,
+body.guild-detail-app-shell h1,
+body.guild-detail-app-shell h2,
+body.guild-detail-app-shell h3,
+body.guild-detail-app-shell strong {
+  color: #f8fbff !important;
+}
+body.guild-detail-app-shell .guilds-copy,
+body.guild-detail-app-shell .guilds-card-copy,
+body.guild-detail-app-shell .guilds-metric-copy,
+body.guild-detail-app-shell .guild-detail-meta-row span,
+body.guild-detail-app-shell .guild-detail-team-stats span,
+body.guild-detail-app-shell p,
+body.guild-detail-app-shell small {
+  color: #b9cce1 !important;
+}
+body.guild-detail-app-shell .guilds-section-kicker,
+body.guild-detail-app-shell .guilds-panel-kicker,
+body.guild-detail-app-shell .guilds-card-kicker,
+body.guild-detail-app-shell .guilds-metric-label,
+body.guild-detail-app-shell .guild-detail-table th {
+  color: #b9d8ff !important;
+}
+body.guild-detail-app-shell .guild-detail-table,
+body.guild-detail-app-shell .guild-detail-table td {
+  color: #d7e9ff !important;
+}
+body.guild-detail-app-shell .guild-detail-table th,
+body.guild-detail-app-shell .guild-detail-table td {
+  border-bottom-color: rgba(126, 181, 255, 0.18) !important;
+}
+body.guild-detail-app-shell .guild-detail-team-stats div,
+body.guild-detail-app-shell .guild-detail-meta-row span {
+  border-color: rgba(126, 181, 255, 0.28) !important;
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+body.guild-detail-app-shell .guilds-button,
+body.guild-detail-app-shell .shell-button-secondary {
+  color: #eef6ff !important;
+  border-color: rgba(126, 181, 255, 0.34) !important;
+}
+body.guild-detail-app-shell .guilds-button-primary,
+body.guild-detail-app-shell .shell-button-primary {
+  color: #ffffff !important;
+  border-color: rgba(126, 181, 255, 0.72) !important;
+  background: linear-gradient(180deg, #6aa6ff 0%, #2f78ee 100%) !important;
+}
+body.guild-detail-app-shell a:not(.guilds-button):not(.shell-nav-link):not(.shell-brand-link) {
+  color: #f8fbff !important;
+}
+body.guild-detail-app-shell a:not(.guilds-button):not(.shell-nav-link):not(.shell-brand-link):hover {
+  color: #8fd3ff !important;
+}
+body.guild-detail-app-shell .guild-detail-form textarea {
+  color: #eef6ff !important;
+  border-color: rgba(126, 181, 255, 0.34) !important;
+  background: rgba(9, 22, 38, 0.48) !important;
+}
+
+/* public page heading clipping guard */
+body.guilds-app-shell .guilds-section-kicker,
+body.guilds-app-shell .guilds-panel-kicker,
+body.guilds-app-shell .guilds-card-kicker,
+body.guilds-app-shell .guilds-loading-kicker {
+  display: block !important;
+  line-height: 1.45 !important;
+  margin-top: 0 !important;
+  overflow: visible !important;
+  padding-top: 2px !important;
+  transform: none !important;
+}
+body.guilds-app-shell .guilds-title,
+body.guilds-app-shell .guilds-section-title,
+body.guilds-app-shell .guilds-card-title {
+  line-height: 1.18 !important;
+  overflow: visible !important;
+  padding-top: 2px !important;
+}
+body.guilds-app-shell .guilds-panel,
+body.guilds-app-shell .guilds-card,
+body.guilds-app-shell .guilds-metric,
+body.guilds-app-shell .guilds-empty-state,
+body.guilds-app-shell .guilds-loading-shell,
+body.guilds-app-shell .guilds-error-shell {
+  overflow: visible !important;
+}

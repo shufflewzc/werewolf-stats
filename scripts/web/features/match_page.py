@@ -5,6 +5,7 @@ import json
 import web_app as legacy
 
 Any = legacy.Any
+account_role_label = legacy.account_role_label
 MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
 RequestContext = legacy.RequestContext
 RESULT_OPTIONS = legacy.RESULT_OPTIONS
@@ -27,6 +28,7 @@ normalize_stance_result = legacy.normalize_stance_result
 quote = legacy.quote
 start_response_json = legacy.start_response_json
 to_chinese_camp = legacy.to_chinese_camp
+urlencode = legacy.urlencode
 uses_structured_score_model = legacy.uses_structured_score_model
 
 
@@ -321,38 +323,205 @@ def build_match_frontend_page(ctx: RequestContext, match_id: str) -> str:
     bootstrap = json.dumps(
         {
             "apiEndpoint": f"/api/matches/{match_id}",
+            "alert": form_value(ctx.query, "alert").strip(),
             "legacyHref": _build_match_legacy_href(ctx, match),
         },
         ensure_ascii=False,
     )
-    body = f"""
-    <div id="match-app" aria-live="polite">
-      <section class="panel shadow-sm p-3 p-lg-4">
-        <div class="small text-secondary">正在加载比赛详情，前端会通过独立接口渲染当前页面内容。</div>
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#122238">
+    <title>{escape(str(match.get('match_id') or match_id))} 详情</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/assets/competitions-app.css">
+  </head>
+  <body class="competitions-app-shell match-detail-app-shell">
+    <div class="shell-backdrop"></div>
+    <header class="shell-header">
+      <div class="shell-brand">
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">比赛详情 · API Driven</span>
+      </div>
+      <nav class="shell-nav" aria-label="主导航">
+        <a class="shell-nav-link" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link is-active" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
+        <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
+      </nav>
+      {_build_match_account_html(ctx)}
+    </header>
+    <main id="match-app" class="competitions-layout match-detail-layout" aria-live="polite">
+      <section class="competitions-panel competitions-loading-shell">
+        <div class="competitions-section-kicker">Loading Match</div>
+        <h1 class="competitions-title">正在加载比赛详情</h1>
+        <p class="competitions-copy">新前端会通过独立 API 拉取比赛概览、奖项、战队比分和上场成员。</p>
       </section>
-    </div>
+    </main>
     <script>window.__WEREWOLF_MATCH_BOOTSTRAP__ = {bootstrap};</script>
     <script src="/assets/match-app.js" defer></script>
-    """
-    return layout(
-        f"{escape(str(match.get('match_id') or match_id))} 详情",
-        body,
-        ctx,
-        alert=form_value(ctx.query, "alert").strip(),
-    )
+  </body>
+</html>
+"""
+
+
+def _build_match_account_html(ctx: RequestContext) -> str:
+    if ctx.current_user:
+        display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
+        role_label = account_role_label(ctx.current_user)
+        return f"""
+        <div class="shell-account">
+          <span class="shell-account-label">{escape(display_name)} · {escape(role_label)}</span>
+          <a class="shell-button shell-button-secondary" href="/profile">控制台</a>
+          <form method="post" action="/logout" class="shell-inline-form">
+            <button type="submit" class="shell-button shell-button-secondary">退出</button>
+          </form>
+        </div>
+        """
+    return """
+        <div class="shell-account">
+          <a class="shell-button shell-button-secondary" href="/login">登录</a>
+          <a class="shell-button shell-button-primary" href="/register">注册</a>
+        </div>
+        """
+
+
+def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[str, Any]:
+    data = load_validated_data()
+    match = get_match_by_id(data["matches"], match_id)
+    legacy_href = _build_match_legacy_href(ctx, match or {"match_id": match_id})
+    if not match:
+        return {
+            "not_found": True,
+            "error": "没有找到对应的比赛。",
+            "title": "未找到比赛",
+            "alert": form_value(ctx.query, "alert").strip(),
+            "legacy_href": legacy_href,
+        }
+
+    team_lookup = {team["team_id"]: team for team in data["teams"]}
+    player_lookup = {player["player_id"]: player for player in data["players"]}
+    competition_name = get_match_competition_name(match)
+    season_name = str(match.get("season") or "").strip()
+    selected_region = form_value(ctx.query, "region").strip() or None
+    selected_series_slug = form_value(ctx.query, "series").strip() or None
+    next_path = form_value(ctx.query, "next").strip() or build_match_next_path(match)
+    score_model = normalize_match_score_model(match.get("score_model"))
+    score_model_label = get_match_score_model_label(score_model)
+    show_score_breakdown = uses_structured_score_model(score_model)
+    participants = []
+    team_scores: dict[str, float] = {}
+    participant_by_id = {}
+    for participant in sorted(match.get("players", []), key=lambda item: int(item.get("seat") or 0)):
+        player_id = str(participant.get("player_id") or "").strip()
+        team_id = str(participant.get("team_id") or "").strip()
+        player = player_lookup.get(player_id, {})
+        team = team_lookup.get(team_id, {})
+        team_scores[team_id] = team_scores.get(team_id, 0.0) + float(participant.get("points_earned") or 0)
+        participant_by_id[player_id] = participant
+        breakdown = normalize_score_breakdown(participant) if show_score_breakdown else {}
+        participants.append(
+            {
+                "seat": participant.get("seat") or 0,
+                "player_id": player_id,
+                "player_name": player.get("display_name") or player_id,
+                "player_href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug),
+                "team_id": team_id,
+                "team_name": team.get("name") or team_id,
+                "team_href": build_scoped_path(f"/teams/{team_id}", competition_name, season_name, selected_region, selected_series_slug),
+                "role": participant.get("role") or "",
+                "camp": to_chinese_camp(participant.get("camp") or ""),
+                "result": RESULT_OPTIONS.get(participant.get("result"), participant.get("result") or ""),
+                "stance": STANCE_OPTIONS.get(normalize_stance_result(participant), normalize_stance_result(participant)),
+                "points": round(float(participant.get("points_earned") or 0), 2),
+                "notes": participant.get("notes") or "",
+                "breakdown": {label: round(float(breakdown.get(field, 0.0)), 2) for field, label in MATCH_SCORE_COMPONENT_FIELDS} if show_score_breakdown else {},
+            }
+        )
+
+    def award_payload(label: str, player_id: str, empty_label: str) -> dict[str, Any]:
+        player_id = str(player_id or "").strip()
+        participant = participant_by_id.get(player_id, {})
+        player = player_lookup.get(player_id, {})
+        team = team_lookup.get(str(participant.get("team_id") or ""), {})
+        return {
+            "label": label,
+            "empty_label": empty_label,
+            "player_id": player_id,
+            "player_name": player.get("display_name") or (player_id if player_id else ""),
+            "href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug) if player_id else "",
+            "meta": " · ".join(str(part) for part in [participant.get("seat") and f"{participant.get('seat')}号", participant.get("role"), team.get("name")] if part),
+        }
+
+    winning_camp = str(match.get("winning_camp") or "").strip()
+    awards = [
+        award_payload("MVP", str(match.get("mvp_player_id") or ""), "暂未设置 MVP"),
+        award_payload("SVP", str(match.get("svp_player_id") or ""), "暂未设置 SVP"),
+        {"label": "背锅", "empty_label": "好人胜利局不设背锅。", "player_id": "", "player_name": "", "href": "", "meta": ""}
+        if winning_camp == "villagers"
+        else award_payload("背锅", str(match.get("scapegoat_player_id") or ""), "暂未设置背锅选手"),
+    ]
+    scores = [
+        {
+            "team_id": team_id,
+            "team_name": team_lookup.get(team_id, {}).get("name") or team_id,
+            "href": build_scoped_path(f"/teams/{team_id}", competition_name, season_name, selected_region, selected_series_slug),
+            "points": round(score, 2),
+        }
+        for team_id, score in sorted(team_scores.items(), key=lambda item: (-item[1], team_lookup.get(item[0], {}).get("name", item[0])))
+    ]
+    edit_href = ""
+    if can_manage_matches(ctx.current_user, data, competition_name):
+        edit_href = f"/matches/{quote(match_id)}/edit?next={quote(build_scoped_path('/matches/' + match_id, competition_name, season_name))}"
+
+    return {
+        "title": f"{match_id} 详情",
+        "alert": form_value(ctx.query, "alert").strip(),
+        "legacy_href": legacy_href,
+        "match": {
+            "match_id": match_id,
+            "competition": competition_name,
+            "season": season_name,
+            "stage": STAGE_OPTIONS.get(match.get("stage"), match.get("stage") or ""),
+            "round": match.get("round") or 0,
+            "game_no": match.get("game_no") or 0,
+            "played_on": match.get("played_on") or "",
+            "day_href": build_match_day_path(match.get("played_on") or "", build_scoped_path('/matches/' + match_id, competition_name, season_name)),
+            "table_label": match.get("table_label") or "",
+            "format": match.get("format") or "",
+            "duration_minutes": match.get("duration_minutes") or 0,
+            "winning_camp": to_chinese_camp(match.get("winning_camp") or ""),
+            "group_label": match.get("group_label") or "未设置",
+            "score_model": score_model_label,
+            "notes": match.get("notes") or "暂无备注。",
+            "show_score_breakdown": show_score_breakdown,
+        },
+        "actions": {"next_href": next_path, "edit_href": edit_href, "legacy_href": legacy_href},
+        "metrics": [
+            {"label": "房间", "value": match.get("table_label") or "-", "copy": match.get("format") or "未记录板型"},
+            {"label": "时长", "value": f"{match.get('duration_minutes') or 0} 分钟", "copy": "完整比赛耗时"},
+            {"label": "胜利阵营", "value": to_chinese_camp(match.get("winning_camp") or ""), "copy": "本局最终结果"},
+            {"label": "参赛分组", "value": match.get("group_label") or "未设置", "copy": "本场所属分组"},
+        ],
+        "awards": awards,
+        "team_scores": scores,
+        "participants": participants,
+        "score_fields": [label for _, label in MATCH_SCORE_COMPONENT_FIELDS] if show_score_breakdown else [],
+    }
 
 
 def build_match_api_payload(ctx: RequestContext, match_id: str) -> dict[str, Any]:
-    title, body = _build_match_page_parts(ctx, match_id)
-    data = load_validated_data()
-    match = get_match_by_id(data["matches"], match_id)
-    return {
-        "not_found": match is None,
-        "title": title,
-        "body_html": body,
-        "legacy_href": _build_match_legacy_href(ctx, match or {"match_id": match_id}),
-        "alert": form_value(ctx.query, "alert").strip(),
-    }
+    return _serialize_match_detail_payload(ctx, match_id)
 
 
 def get_match_legacy_page(ctx: RequestContext, match_id: str) -> str:

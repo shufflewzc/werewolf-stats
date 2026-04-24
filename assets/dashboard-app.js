@@ -22,6 +22,15 @@
     return `<div class="dashboard-alert">${escapeHtml(message)}</div>`;
   }
 
+  function firstItems(items, count) {
+    return Array.isArray(items) ? items.slice(0, count) : [];
+  }
+
+  function getMetricValue(metrics, label, fallback) {
+    const item = Array.isArray(metrics) ? metrics.find((metric) => metric.label === label) : null;
+    return item ? item.value : fallback;
+  }
+
   function renderChipLinks(items) {
     if (!Array.isArray(items) || items.length === 0) {
       return '<div class="dashboard-select-note">当前没有可切换的选项。</div>';
@@ -60,34 +69,70 @@
     `;
   }
 
-  function renderSummaryItem(label, record, value, kind) {
-    if (!record) {
-      return `
-        <div class="dashboard-brief-item">
-          <span class="dashboard-rank-badge">${escapeHtml(label)}</span>
-          <div>
-            <div class="dashboard-brief-name">等待录入</div>
-            <div class="dashboard-ranking-meta">当前口径下暂无有效战绩。</div>
-          </div>
-          <div class="dashboard-brief-value">--<small>${escapeHtml(kind)}</small></div>
-        </div>
-      `;
-    }
-    const meta =
-      kind === "team"
-        ? `胜率 ${escapeHtml(record.win_rate)} · 对局 ${escapeHtml(record.matches_represented)} 场`
-        : `胜率 ${escapeHtml(record.win_rate)} · 出场 ${escapeHtml(record.games_played)} 次`;
+  function renderHeroStats(payload) {
+    const hero = payload.hero || {};
+    const metrics = payload.metrics || [];
     return `
-      <a class="dashboard-brief-item" href="${escapeHtml(record.href)}">
-        <span class="dashboard-rank-badge">${escapeHtml(label)}</span>
-        <div>
-          <div class="dashboard-brief-name">${escapeHtml(
-            record.name || record.display_name
-          )}</div>
-          <div class="dashboard-ranking-meta">${meta}</div>
+      <div class="dashboard-hero-stat-row">
+        <div class="dashboard-hero-stat is-matches">
+          <span class="dashboard-hero-stat-icon"></span>
+          <strong>${escapeHtml(getMetricValue(metrics, "比赛场次", "--"))}</strong>
+          <small>比赛场次<br>MATCHES</small>
         </div>
-        <div class="dashboard-brief-value">${escapeHtml(value)}<small>${escapeHtml(kind)}</small></div>
-      </a>
+        <div class="dashboard-hero-stat is-teams">
+          <span class="dashboard-hero-stat-icon"></span>
+          <strong>${escapeHtml(getMetricValue(metrics, "收录战队", "--"))}</strong>
+          <small>参赛战队<br>TEAMS</small>
+        </div>
+        <div class="dashboard-hero-stat is-players">
+          <span class="dashboard-hero-stat-icon"></span>
+          <strong>${escapeHtml(getMetricValue(metrics, "出场队员", "--"))}</strong>
+          <small>出场选手<br>PLAYERS</small>
+        </div>
+        <div class="dashboard-hero-stat is-status">
+          <span class="dashboard-hero-stat-icon"></span>
+          <strong>进行中</strong>
+          <small>${escapeHtml(hero.latest_played_on || "待录入")}<br>STATUS</small>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderSchedule(payload) {
+    const hero = payload.hero || {};
+    const stageLabels = {
+      regular_season: "常规赛",
+      placement: "定位赛",
+      group_stage: "小组赛",
+      knockout: "淘汰赛",
+      semifinal: "半决赛",
+      final: "决赛",
+    };
+    const scheduleItems = Array.isArray(payload.schedule_matches) ? payload.schedule_matches : [];
+    const rows = (scheduleItems.length ? scheduleItems : [0, 1, 2]).slice(0, 3).map((item, index) => {
+      const match = typeof item === "object" ? item : null;
+      const stage = match ? stageLabels[match.stage] || match.stage || "赛段待定" : "赛段待定";
+      const game = match ? `第${match.round || "-"}轮第${match.game_no || "-"}局` : `第${index + 1}轮第-局`;
+      return `
+        <a class="dashboard-schedule-row" href="${escapeHtml((match && match.href) || hero.latest_match_day_href || "/competitions")}">
+          <span class="dashboard-schedule-dot"></span>
+          <div class="dashboard-schedule-name">${escapeHtml(stage)}</div>
+          <div class="dashboard-schedule-time"><strong>${escapeHtml(game)}</strong><span>${escapeHtml((match && match.table_label) || "")}</span></div>
+        </a>
+      `;
+    });
+    return `
+      <aside class="dashboard-panel dashboard-schedule-card">
+        <div class="dashboard-schedule-head">
+          <div>
+            <div class="dashboard-panel-kicker">今日赛程</div>
+            <strong>${escapeHtml(hero.latest_played_on || "待录入")}</strong>
+          </div>
+          <span>星期五</span>
+        </div>
+        <div class="dashboard-schedule-list">${rows.join("")}</div>
+        <a class="dashboard-section-action" href="${escapeHtml(hero.latest_match_day_href || "/competitions")}">查看完整赛程</a>
+      </aside>
     `;
   }
 
@@ -96,18 +141,26 @@
       return "";
     }
     return `
-      <section class="dashboard-metrics-grid">
-        ${items
-          .map(
-            (item) => `
-              <article class="dashboard-metric-card">
-                <span class="dashboard-metric-label">${escapeHtml(item.label)}</span>
-                <strong class="dashboard-metric-value">${escapeHtml(item.value)}</strong>
-                <small class="dashboard-metric-copy">${escapeHtml(item.copy)}</small>
-              </article>
-            `
-          )
-          .join("")}
+      <section class="dashboard-panel dashboard-overview-panel">
+        <div class="dashboard-section-head">
+          <div>
+            <div class="dashboard-section-kicker">数据概览</div>
+            <h2 class="dashboard-section-title">赛区数据概览</h2>
+          </div>
+        </div>
+        <div class="dashboard-metrics-grid">
+          ${items
+            .map(
+              (item) => `
+                <article class="dashboard-metric-card">
+                  <span class="dashboard-metric-label">${escapeHtml(item.label)}</span>
+                  <strong class="dashboard-metric-value">${escapeHtml(item.value)}</strong>
+                  <small class="dashboard-metric-copy">${escapeHtml(item.copy)}</small>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
       </section>
     `;
   }
@@ -131,36 +184,17 @@
                 <div>
                   <div class="dashboard-card-kicker">${escapeHtml(item.region_name)} · Series Topic</div>
                   <h3 class="dashboard-card-title">${escapeHtml(item.series_name)}</h3>
-                  <p class="dashboard-card-copy">
-                    ${escapeHtml(item.summary || "先看专题，再进入具体地区赛事页。")}
-                  </p>
+                  <p class="dashboard-card-copy">${escapeHtml(item.summary || "先看专题，再进入具体地区赛事页。")}</p>
                 </div>
                 <div class="dashboard-card-stat-grid">
-                  <div class="dashboard-card-stat">
-                    <span>战队</span>
-                    <strong>${escapeHtml(item.team_count)} 支</strong>
-                  </div>
-                  <div class="dashboard-card-stat">
-                    <span>队员</span>
-                    <strong>${escapeHtml(item.player_count)} 名</strong>
-                  </div>
-                  <div class="dashboard-card-stat">
-                    <span>对局</span>
-                    <strong>${escapeHtml(item.match_count)} 场</strong>
-                  </div>
+                  <div class="dashboard-card-stat"><span>战队</span><strong>${escapeHtml(item.team_count)} 支</strong></div>
+                  <div class="dashboard-card-stat"><span>队员</span><strong>${escapeHtml(item.player_count)} 名</strong></div>
+                  <div class="dashboard-card-stat"><span>对局</span><strong>${escapeHtml(item.match_count)} 场</strong></div>
                 </div>
-                <div class="dashboard-card-copy">
-                  赛季 ${escapeHtml((item.seasons || []).join("、") || "未设置")} · 下一个比赛日 ${escapeHtml(
-                    item.latest_played_on
-                  )}
-                </div>
+                <div class="dashboard-card-copy">赛季 ${escapeHtml((item.seasons || []).join("、") || "未设置")} · 下一个比赛日 ${escapeHtml(item.latest_played_on)}</div>
                 <div class="dashboard-card-actions">
-                  <a class="dashboard-card-link dashboard-card-link-primary" href="${escapeHtml(
-                    item.topic_href
-                  )}">查看系列专题</a>
-                  <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(
-                    item.competition_href
-                  )}">进入地区赛事页</a>
+                  <a class="dashboard-card-link dashboard-card-link-primary" href="${escapeHtml(item.topic_href)}">查看系列专题</a>
+                  <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(item.competition_href)}">进入地区赛事页</a>
                 </div>
               </article>
             `
@@ -172,17 +206,15 @@
 
   function renderRankingItems(items, kind) {
     if (!Array.isArray(items) || items.length === 0) {
-      return '<div class="dashboard-select-note">当前没有可展示的榜单。</div>';
+      return '<div class="dashboard-select-note">当前口径下暂无榜单数据。</div>';
     }
     return `
       <div class="dashboard-ranking-list">
         ${items
+          .slice(0, 5)
           .map((item) => {
             const name = kind === "team" ? item.name : item.display_name;
-            const meta =
-              kind === "team"
-                ? `${item.win_rate} 胜率 · ${item.matches_represented} 场`
-                : `${item.team_name} · ${item.games_played} 场`;
+            const meta = kind === "team" ? `${item.win_rate} 胜率 · ${item.matches_represented} 场` : `${item.team_name} · ${item.games_played} 场`;
             const avatar = kind === "team" ? item.logo : item.photo;
             return `
               <a class="dashboard-ranking-item" href="${escapeHtml(item.href)}">
@@ -194,9 +226,7 @@
                     <div class="dashboard-ranking-meta">${escapeHtml(meta)}</div>
                   </div>
                 </div>
-                <div class="dashboard-ranking-value">${escapeHtml(item.points_total)}<small>${escapeHtml(
-                  kind
-                )}</small></div>
+                <div class="dashboard-ranking-value">${escapeHtml(item.points_total)}<small>分</small></div>
               </a>
             `;
           })
@@ -216,22 +246,24 @@
       `;
     }
     return `
-      <div class="dashboard-days-grid">
+      <div class="dashboard-days-list">
         ${items
+          .slice(0, 3)
           .map(
-            (item) => `
-              <a class="dashboard-day-card" href="${escapeHtml(item.href)}">
-                <div class="dashboard-card-kicker">Match Day</div>
-                <div class="dashboard-day-title">${escapeHtml(item.played_on)}</div>
-                <div class="dashboard-day-meta">共 ${escapeHtml(item.match_count)} 场比赛</div>
-                <div class="dashboard-day-count">${escapeHtml(item.match_count)} 场</div>
-                <div class="dashboard-day-tags">
-                  ${(item.competition_names || [])
-                    .map(
-                      (name) => `<span class="dashboard-day-tag">${escapeHtml(name)}</span>`
-                    )
-                    .join("")}
+            (item, index) => `
+              <a class="dashboard-day-card${index === 0 ? " is-current" : ""}" href="${escapeHtml(item.href)}">
+                <div class="dashboard-day-date"><strong>${escapeHtml(item.played_on.slice(5).replace("-", "/"))}</strong><span>${index === 0 ? "今日" : "赛程"}</span></div>
+                <div class="dashboard-day-main">
+                  <div class="dashboard-day-title">${escapeHtml((item.competition_names || [])[0] || "比赛日")}</div>
+                  <div class="dashboard-day-meta">比赛场次：${escapeHtml(item.match_count)} 场</div>
+                  <div class="dashboard-day-tags">
+                    ${(item.competition_names || [])
+                      .slice(0, 6)
+                      .map((name) => `<span class="dashboard-day-tag">${escapeHtml(name)}</span>`)
+                      .join("")}
+                  </div>
                 </div>
+                <span class="dashboard-card-arrow">›</span>
               </a>
             `
           )
@@ -240,146 +272,138 @@
     `;
   }
 
+  function renderActivity(payload) {
+    const items = Array.isArray(payload.activity_feed) ? payload.activity_feed : [];
+    if (items.length === 0) {
+      return `
+        <section class="dashboard-panel dashboard-section dashboard-activity-panel">
+          <div class="dashboard-section-head">
+            <div><div class="dashboard-section-kicker">Event Feed</div><h2 class="dashboard-section-title">赛事动态</h2></div>
+            <a class="dashboard-section-action" href="/competitions">更多</a>
+          </div>
+          <div class="dashboard-select-note">当前范围还没有可生成特殊事件的有效比赛记录。</div>
+        </section>
+      `;
+    }
+    return `
+      <section class="dashboard-panel dashboard-section dashboard-activity-panel">
+        <div class="dashboard-section-head">
+          <div><div class="dashboard-section-kicker">Event Feed</div><h2 class="dashboard-section-title">赛事动态</h2></div>
+          <a class="dashboard-section-action" href="/competitions">更多</a>
+        </div>
+        <div class="dashboard-activity-list">
+          ${items
+            .map(
+              (item) => `
+                <a class="dashboard-activity-item" href="${escapeHtml(item.href || "/competitions")}">
+                  <time>${escapeHtml(item.time_label)}</time>
+                  <span></span>
+                  <p>${escapeHtml(item.text)}</p>
+                  <strong>${escapeHtml(item.label)}</strong>
+                </a>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderHighlights(payload) {
+    const topPlayer = payload.hero && payload.hero.top_player;
+    const topTeam = payload.hero && payload.hero.top_team;
+    return `
+      <section class="dashboard-panel dashboard-section dashboard-highlight-panel">
+        <div class="dashboard-section-head">
+          <div><div class="dashboard-section-kicker">Highlights</div><h2 class="dashboard-section-title">精彩瞬间</h2></div>
+          <a class="dashboard-section-action" href="/competitions">更多</a>
+        </div>
+        <a class="dashboard-feature-video" href="${escapeHtml((payload.hero && payload.hero.latest_match_day_href) || "/competitions")}">
+          <span class="dashboard-video-badge">TOP1</span>
+          <span class="dashboard-play-button"></span>
+          <div><strong>${escapeHtml((topPlayer && topPlayer.display_name) || "极限反杀四人")}</strong><small>${escapeHtml((topTeam && topTeam.name) || "赛事精彩回放")} · ${escapeHtml((payload.hero && payload.hero.latest_played_on) || "待录入")}</small></div>
+        </a>
+        <div class="dashboard-video-strip">
+          ${[0, 1, 2, 3].map(() => '<span><i></i></span>').join("")}
+        </div>
+      </section>
+    `;
+  }
+
+  function renderHeroFilters(scope) {
+    return `
+      <div class="dashboard-filter-grid">
+        <section class="dashboard-filter-card"><div class="dashboard-filter-label">赛区切换</div>${renderChipLinks(scope.filters && scope.filters.regions)}</section>
+        <section class="dashboard-filter-card"><div class="dashboard-filter-label">系列赛切换</div>${renderChipLinks(scope.filters && scope.filters.series)}</section>
+        <section class="dashboard-filter-card"><div class="dashboard-filter-label">赛事切换</div>${renderChipLinks(scope.filters && scope.filters.competitions)}</section>
+        <section class="dashboard-filter-card"><div class="dashboard-filter-label">赛季切换</div>${renderSeasonSelect(scope.filters && scope.filters.seasons)}</section>
+      </div>
+    `;
+  }
+
   function renderDashboard(payload) {
     const scope = payload.scope || {};
     const hero = payload.hero || {};
     root.innerHTML = `
-      <div class="dashboard-layout">
+      <div class="dashboard-layout dashboard-reference-layout">
         ${renderAlert(bootstrap.alert)}
-        <section class="dashboard-hero">
-          <article class="dashboard-panel dashboard-hero-main">
-            <div class="dashboard-section-kicker">Frontend + API</div>
-            <h1 class="dashboard-hero-title">${escapeHtml(
-              scope.dashboard_label || hero.featured_label || "赛事首页"
-            )}</h1>
-            <p class="dashboard-hero-copy">${escapeHtml(scope.description || "")}</p>
-            <div class="dashboard-filter-grid">
-              <section class="dashboard-filter-card">
-                <div class="dashboard-filter-label">赛区切换</div>
-                ${renderChipLinks(scope.filters && scope.filters.regions)}
-              </section>
-              <section class="dashboard-filter-card">
-                <div class="dashboard-filter-label">系列赛切换</div>
-                ${renderChipLinks(scope.filters && scope.filters.series)}
-              </section>
-              <section class="dashboard-filter-card">
-                <div class="dashboard-filter-label">赛事切换</div>
-                ${renderChipLinks(scope.filters && scope.filters.competitions)}
-              </section>
-              <section class="dashboard-filter-card">
-                <div class="dashboard-filter-label">赛季切换</div>
-                ${renderSeasonSelect(scope.filters && scope.filters.seasons)}
-              </section>
-            </div>
+        <section class="dashboard-top-grid">
+          <article class="dashboard-panel dashboard-hero-main dashboard-reference-hero">
+            <div class="dashboard-section-kicker">${escapeHtml(scope.selected_region || "广州赛区")}</div>
+            <h1 class="dashboard-hero-title">${escapeHtml(scope.dashboard_label || hero.featured_label || "赛事首页")}</h1>
+            <p class="dashboard-hero-copy">群雄逐鹿 · 巅峰对决</p>
+            ${renderHeroStats(payload)}
+            ${renderHeroFilters(scope)}
             <div class="dashboard-hero-actions">
-              <a class="dashboard-card-link dashboard-card-link-primary" href="${escapeHtml(
-                hero.latest_match_day_href || hero.competitions_href || "/competitions"
-              )}">打开比赛日时间线</a>
-              <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(
-                hero.competitions_href || "/competitions"
-              )}">打开全部赛事</a>
-              <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(
-                payload.legacy_href || "/dashboard/legacy"
-              )}">查看旧版首页</a>
+              <a class="dashboard-card-link dashboard-card-link-primary" href="${escapeHtml(hero.latest_match_day_href || hero.competitions_href || "/competitions")}">打开比赛日时间线</a>
+              <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(hero.competitions_href || "/competitions")}">打开全部赛事</a>
             </div>
           </article>
-          <aside class="dashboard-hero-side">
-            <section class="dashboard-panel dashboard-spotlight">
-              <div class="dashboard-panel-kicker">Featured Scope</div>
-              <div class="dashboard-spotlight-title">${escapeHtml(
-                hero.featured_label || "等待录入赛事"
-              )}</div>
-              <p class="dashboard-spotlight-copy">
-                当前仪表盘优先展示这个范围下最值得继续查看的内容。先看榜单，再进入系列赛或某个比赛日。
-              </p>
-              <div class="dashboard-spotlight-grid">
-                <div class="dashboard-spotlight-metric">
-                  <span>赛季范围</span>
-                  <strong>${escapeHtml(hero.featured_seasons || "赛季待录入")}</strong>
-                  <small>${escapeHtml(scope.label || "")}</small>
-                </div>
-                <div class="dashboard-spotlight-metric">
-                  <span>最近比赛日</span>
-                  <strong>${escapeHtml(hero.latest_played_on || "待录入")}</strong>
-                  <small>${escapeHtml(payload.generated_at || "")}</small>
-                </div>
-                <div class="dashboard-spotlight-metric">
-                  <span>头名战队</span>
-                  <strong>${escapeHtml(
-                    (hero.top_team && hero.top_team.name) || "等待录入"
-                  )}</strong>
-                  <small>${escapeHtml(
-                    hero.top_team ? `${hero.top_team.points_total} 分` : "暂无战绩"
-                  )}</small>
-                </div>
-                <div class="dashboard-spotlight-metric">
-                  <span>头名选手</span>
-                  <strong>${escapeHtml(
-                    (hero.top_player && hero.top_player.display_name) || "等待录入"
-                  )}</strong>
-                  <small>${escapeHtml(
-                    hero.top_player ? `${hero.top_player.points_total} 分` : "暂无战绩"
-                  )}</small>
-                </div>
-              </div>
-            </section>
-            <section class="dashboard-panel dashboard-brief">
-              <div class="dashboard-panel-kicker">Quick Brief</div>
-              <div class="dashboard-brief-list">
-                ${renderSummaryItem(
-                  "T",
-                  hero.top_team,
-                  hero.top_team ? hero.top_team.points_total : "--",
-                  "team"
-                )}
-                ${renderSummaryItem(
-                  "P",
-                  hero.top_player,
-                  hero.top_player ? hero.top_player.points_total : "--",
-                  "player"
-                )}
-              </div>
-            </section>
-          </aside>
+          ${renderSchedule(payload)}
         </section>
+
         ${renderMetrics(payload.metrics)}
-        <section class="dashboard-main-grid">
-          <section class="dashboard-panel dashboard-section">
+
+        <section class="dashboard-board-grid">
+          <section class="dashboard-panel dashboard-section dashboard-ranking-panel">
             <div class="dashboard-section-head">
-              <div>
-                <div class="dashboard-section-kicker">Series Topics</div>
-                <h2 class="dashboard-section-title">系列赛专题入口</h2>
-                <p class="dashboard-section-copy">首页先摆出值得点进去的专题，再往下进入地区赛事页。</p>
-              </div>
-              <a class="dashboard-section-action" href="/competitions">进入全部赛事</a>
+              <div><div class="dashboard-section-kicker">Team Ranking</div><h2 class="dashboard-section-title">战队排行榜</h2></div>
+              <a class="dashboard-section-action" href="/competitions">更多</a>
             </div>
-            ${renderSeriesCards(payload.series_cards)}
+            ${renderRankingItems(payload.top_teams, "team")}
           </section>
-          <aside class="dashboard-panel dashboard-ranking-panel">
-            <div class="dashboard-ranking-block">
-              <div class="dashboard-panel-kicker">Top Teams</div>
-              <h2 class="dashboard-section-title">即时战队榜</h2>
-              ${renderRankingItems(payload.top_teams, "team")}
+          <section class="dashboard-panel dashboard-section dashboard-ranking-panel">
+            <div class="dashboard-section-head">
+              <div><div class="dashboard-section-kicker">Player Ranking</div><h2 class="dashboard-section-title">选手排行榜</h2></div>
+              <a class="dashboard-section-action" href="/competitions">更多</a>
             </div>
-            <div class="dashboard-ranking-block">
-              <div class="dashboard-panel-kicker">Top Players</div>
-              <h2 class="dashboard-section-title">即时选手榜</h2>
-              ${renderRankingItems(payload.top_players, "player")}
-            </div>
-          </aside>
+            ${renderRankingItems(payload.top_players, "player")}
+          </section>
         </section>
-        <section class="dashboard-panel dashboard-section">
-          <div class="dashboard-section-head">
-            <div>
-              <div class="dashboard-section-kicker">Recent Days</div>
-              <h2 class="dashboard-section-title">最近比赛日</h2>
-              <p class="dashboard-section-copy">从“今天发生了什么”这个入口快速下钻到比赛日时间线。</p>
+
+        <section class="dashboard-lower-grid">
+          <section class="dashboard-panel dashboard-section dashboard-days-panel">
+            <div class="dashboard-section-head">
+              <div><div class="dashboard-section-kicker">Recent Match Days</div><h2 class="dashboard-section-title">最近比赛日</h2></div>
+              <a class="dashboard-section-action" href="${escapeHtml(hero.latest_match_day_href || "/competitions")}">更多</a>
             </div>
-            <a class="dashboard-inline-link" href="${escapeHtml(
-              hero.latest_match_day_href || "/competitions"
-            )}">查看最新时间线</a>
+            ${renderDays(payload.match_days)}
+          </section>
+          ${renderActivity(payload)}
+          ${renderHighlights(payload)}
+        </section>
+
+        <section class="dashboard-panel dashboard-section dashboard-series-panel">
+          <div class="dashboard-section-head">
+            <div><div class="dashboard-section-kicker">Series Topics</div><h2 class="dashboard-section-title">赛事专题</h2></div>
+            <a class="dashboard-section-action" href="/competitions">进入全部赛事</a>
           </div>
-          ${renderDays(payload.match_days)}
+          ${renderSeriesCards(payload.series_cards)}
+        </section>
+
+        <section class="dashboard-glory-banner">
+          <div><strong>为荣耀而战</strong><span>每一场比赛，都是传奇的开始</span></div>
+          <a class="dashboard-card-link dashboard-card-link-secondary" href="/competitions">查看赛事专题</a>
         </section>
       </div>
     `;
@@ -409,11 +433,7 @@
   async function loadDashboard() {
     const endpoint = `${bootstrap.apiEndpoint || "/api/dashboard"}${window.location.search || ""}`;
     try {
-      const response = await fetch(endpoint, {
-        headers: {
-          Accept: "application/json",
-        },
-      });
+      const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}`);
       }

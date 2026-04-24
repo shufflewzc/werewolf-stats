@@ -140,6 +140,7 @@ AI_SEASON_SUMMARY_KEY_PREFIX = "ai_season_summary:"
 AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX = "ai_player_season_summary:"
 AI_TEAM_SEASON_SUMMARY_KEY_PREFIX = "ai_team_season_summary:"
 AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
+DASHBOARD_ACTIVITY_SETTINGS_KEY = "dashboard_activity_settings"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
@@ -398,6 +399,54 @@ def save_ai_prompt_templates(
         or DEFAULT_TEAM_SEASON_SUMMARY_USER_PROMPT,
     }
     save_meta_value(AI_PROMPT_TEMPLATES_KEY, json.dumps(payload, ensure_ascii=False))
+
+
+def load_dashboard_activity_settings() -> dict[str, Any]:
+    raw_value = load_meta_value(DASHBOARD_ACTIVITY_SETTINGS_KEY) or ""
+    if not raw_value.strip():
+        return {"mode": "auto", "items": []}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {"mode": "auto", "items": []}
+    mode = str(parsed.get("mode") or "auto").strip()
+    if mode not in {"auto", "custom"}:
+        mode = "auto"
+    items = []
+    for item in parsed.get("items") or []:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        items.append(
+            {
+                "label": str(item.get("label") or "手动动态").strip() or "手动动态",
+                "time_label": str(item.get("time_label") or "管理员编辑").strip() or "管理员编辑",
+                "text": text,
+                "href": str(item.get("href") or "/competitions").strip() or "/competitions",
+                "kind": "custom",
+            }
+        )
+    return {"mode": mode, "items": items[:8]}
+
+
+def save_dashboard_activity_settings(mode: str, items: list[dict[str, str]]) -> None:
+    normalized_mode = "custom" if str(mode or "").strip() == "custom" else "auto"
+    payload = {
+        "mode": normalized_mode,
+        "items": [
+            {
+                "label": str(item.get("label") or "手动动态").strip() or "手动动态",
+                "time_label": str(item.get("time_label") or "管理员编辑").strip() or "管理员编辑",
+                "text": str(item.get("text") or "").strip(),
+                "href": str(item.get("href") or "/competitions").strip() or "/competitions",
+            }
+            for item in items
+            if str(item.get("text") or "").strip()
+        ][:8],
+    }
+    save_meta_value(DASHBOARD_ACTIVITY_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
 
 
 def render_ai_prompt_template(
@@ -5755,24 +5804,30 @@ def build_dashboard_frontend_page(ctx: RequestContext) -> str:
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#dceef7">
-    <title>首页</title>
+    <meta name="theme-color" content="#122238">
+    <title>WOLF 赛事首页</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="/assets/dashboard-app.css">
   </head>
   <body class="dashboard-app-shell">
     <div class="shell-backdrop"></div>
     <header class="shell-header">
       <div class="shell-brand">
-        <a class="shell-brand-link" href="/dashboard">一颗小草赛事数据中心</a>
-        <span class="shell-brand-copy">League Site · Frontend App</span>
+        <a class="shell-brand-link" href="/dashboard" aria-label="返回赛事首页">
+          <span class="shell-brand-mark" aria-hidden="true"></span>
+          <span>WOLF</span>
+        </a>
+        <span class="shell-brand-copy">一颗小草赛事数据中心</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
-        <a class="shell-nav-link is-active" href="/dashboard">首页</a>
-        <a class="shell-nav-link" href="/competitions">比赛页面</a>
+        <a class="shell-nav-link is-active" href="/dashboard">仪表盘</a>
+        <a class="shell-nav-link" href="/competitions">比赛中心</a>
+        <a class="shell-nav-link" href="/teams">战队</a>
+        <a class="shell-nav-link" href="/players">选手</a>
         <a class="shell-nav-link" href="/guilds">门派</a>
+        <a class="shell-nav-link" href="/schedule">赛程日历</a>
       </nav>
       {account_html}
     </header>
@@ -5818,6 +5873,220 @@ def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
         "stance_rate": format_pct(float(row["stance_rate"])),
         "href": f'/players/{quote(row["player_id"])}',
     }
+
+
+def _build_dashboard_activity_feed(
+    data: dict[str, Any],
+    selected_competition: str | None,
+    selected_season: str | None,
+    scoped_competition_names: set[str],
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    activity_settings = load_dashboard_activity_settings()
+    if activity_settings.get("mode") == "custom" and activity_settings.get("items"):
+        return [
+            {**item, "kind": "custom"}
+            for item in activity_settings.get("items", [])
+        ][:limit]
+
+    player_names = {
+        str(player.get("player_id") or ""): str(player.get("display_name") or "")
+        for player in data.get("players", [])
+    }
+    team_names = {
+        str(team.get("team_id") or ""): str(team.get("name") or team.get("short_name") or "")
+        for team in data.get("teams", [])
+    }
+    scoped_matches = [
+        match
+        for match in data.get("matches", [])
+        if match.get("players")
+        and (
+            match_in_scope(match, selected_competition, selected_season)
+            if selected_competition
+            else get_match_competition_name(match) in scoped_competition_names
+            and (
+                not selected_season
+                or str(match.get("season") or "").strip() == selected_season
+            )
+        )
+    ]
+    if not scoped_matches:
+        return []
+
+    latest_played_on = max(str(match.get("played_on") or "") for match in scoped_matches)
+    latest_matches = [
+        match
+        for match in scoped_matches
+        if str(match.get("played_on") or "") == latest_played_on
+    ]
+    latest_matches.sort(
+        key=lambda match: (
+            int(match.get("round") or 0),
+            int(match.get("game_no") or 0),
+            str(match.get("match_id") or ""),
+        )
+    )
+    latest_competitions = sorted({get_match_competition_name(match) for match in latest_matches})
+    latest_label = latest_played_on or "最近比赛日"
+    href = build_match_day_path(latest_played_on) if latest_played_on else "/competitions"
+    entries: list[dict[str, Any]] = []
+
+    player_day_totals: dict[str, dict[str, Any]] = {}
+    for match in latest_matches:
+        for participant in match.get("players", []):
+            player_id = str(participant.get("player_id") or "").strip()
+            if not player_id:
+                continue
+            record = player_day_totals.setdefault(
+                player_id,
+                {
+                    "points": 0.0,
+                    "games": 0,
+                    "team_ids": [],
+                },
+            )
+            record["points"] += float(participant.get("points_earned") or 0.0)
+            record["games"] += 1
+            team_id = str(participant.get("team_id") or "").strip()
+            if team_id and team_id not in record["team_ids"]:
+                record["team_ids"].append(team_id)
+
+    if player_day_totals:
+        top_player_id, top_record = max(
+            player_day_totals.items(),
+            key=lambda item: (
+                float(item[1]["points"]),
+                int(item[1]["games"]),
+                player_names.get(item[0], item[0]),
+            ),
+        )
+        top_team_names = [team_names.get(team_id, team_id) for team_id in top_record["team_ids"]]
+        team_suffix = f"（{'、'.join(top_team_names[:2])}）" if top_team_names else ""
+        entries.append(
+            {
+                "kind": "highest_score",
+                "label": "最高分选手",
+                "time_label": latest_label,
+                "text": f"{player_names.get(top_player_id, top_player_id)}{team_suffix} 在最近比赛日合计拿到 {float(top_record['points']):.2f} 分，出场 {int(top_record['games'])} 局。",
+                "href": f'/players/{quote(top_player_id)}',
+            }
+        )
+
+    player_sequences: dict[str, list[dict[str, Any]]] = {}
+    for match in scoped_matches:
+        for participant in match.get("players", []):
+            player_id = str(participant.get("player_id") or "").strip()
+            if not player_id:
+                continue
+            player_sequences.setdefault(player_id, []).append(
+                {
+                    "played_on": str(match.get("played_on") or ""),
+                    "round": int(match.get("round") or 0),
+                    "game_no": int(match.get("game_no") or 0),
+                    "match_id": str(match.get("match_id") or ""),
+                    "result": str(participant.get("result") or ""),
+                }
+            )
+    streak_events: list[dict[str, Any]] = []
+    for player_id, sequence in player_sequences.items():
+        sequence.sort(
+            key=lambda item: (
+                item["played_on"],
+                item["round"],
+                item["game_no"],
+                item["match_id"],
+            )
+        )
+        current_result = ""
+        current_count = 0
+        last_item: dict[str, Any] | None = None
+        for item in sequence:
+            result = item["result"]
+            if result and result == current_result:
+                current_count += 1
+            else:
+                current_result = result
+                current_count = 1
+            last_item = item
+        if not last_item or last_item["played_on"] != latest_played_on:
+            continue
+        if current_result not in {"win", "loss"} or current_count < 3:
+            continue
+        streak_events.append(
+            {
+                "player_id": player_id,
+                "result": current_result,
+                "count": current_count,
+                "name": player_names.get(player_id, player_id),
+            }
+        )
+
+    winning_streaks = sorted(
+        [item for item in streak_events if item["result"] == "win"],
+        key=lambda item: (-int(item["count"]), item["name"]),
+    )
+    losing_streaks = sorted(
+        [item for item in streak_events if item["result"] == "loss"],
+        key=lambda item: (-int(item["count"]), item["name"]),
+    )
+    if winning_streaks:
+        names = "、".join(
+            f"{item['name']}（{int(item['count'])}连胜）"
+            for item in winning_streaks[:3]
+        )
+        entries.append(
+            {
+                "kind": "win_streak",
+                "label": "连胜选手",
+                "time_label": latest_label,
+                "text": f"{names} 在最近比赛日延续连胜状态。",
+                "href": f"/players/{quote(str(winning_streaks[0]['player_id']))}",
+            }
+        )
+    if losing_streaks:
+        names = "、".join(
+            f"{item['name']}（{int(item['count'])}连败）"
+            for item in losing_streaks[:3]
+        )
+        entries.append(
+            {
+                "kind": "loss_streak",
+                "label": "连败提醒",
+                "time_label": latest_label,
+                "text": f"{names} 需要尽快调整状态。",
+                "href": f"/players/{quote(str(losing_streaks[0]['player_id']))}",
+            }
+        )
+
+    mvp_ids = []
+    for match in latest_matches:
+        mvp_player_id = str(match.get("mvp_player_id") or "").strip()
+        if mvp_player_id and mvp_player_id not in mvp_ids:
+            mvp_ids.append(mvp_player_id)
+    if mvp_ids:
+        names = "、".join(player_names.get(player_id, player_id) for player_id in mvp_ids[:4])
+        entries.append(
+            {
+                "kind": "mvp_collection",
+                "label": "MVP 选手",
+                "time_label": latest_label,
+                "text": f"{names} 在最近比赛日拿到单局 MVP。",
+                "href": f"/players/{quote(mvp_ids[0])}",
+            }
+        )
+
+    if latest_competitions:
+        entries.append(
+            {
+                "kind": "match_day_summary",
+                "label": "比赛日概览",
+                "time_label": latest_label,
+                "text": f"最近比赛日覆盖 {'、'.join(latest_competitions[:2])}，共 {len(latest_matches)} 局有效比赛。",
+                "href": href,
+            }
+        )
+    return entries[:limit]
 
 
 def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
@@ -6069,6 +6338,7 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         )
 
     match_days: list[dict[str, Any]] = []
+    schedule_matches: list[dict[str, Any]] = []
     for played_on in relevant_days[:6]:
         day_matches = [
             match
@@ -6084,6 +6354,33 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         ]
         if not day_matches:
             continue
+        if not schedule_matches:
+            for match in sorted(
+                day_matches,
+                key=lambda item: (
+                    int(item.get("round") or 0),
+                    int(item.get("game_no") or 0),
+                    str(item.get("match_id") or ""),
+                ),
+            )[:3]:
+                team_ids: list[str] = []
+                for participant in match.get("players", []):
+                    team_id = str(participant.get("team_id") or "").strip()
+                    if team_id and team_id not in team_ids:
+                        team_ids.append(team_id)
+                schedule_matches.append(
+                    {
+                        "match_id": str(match.get("match_id") or ""),
+                        "competition_name": get_match_competition_name(match),
+                        "played_on": str(match.get("played_on") or ""),
+                        "stage": str(match.get("stage") or ""),
+                        "round": int(match.get("round") or 0),
+                        "game_no": int(match.get("game_no") or 0),
+                        "table_label": str(match.get("table_label") or ""),
+                        "team_ids": team_ids[:2],
+                        "href": f'/matches/{quote(str(match.get("match_id") or ""))}',
+                    }
+                )
         day_competitions = sorted({get_match_competition_name(match) for match in day_matches})
         match_days.append(
             {
@@ -6109,6 +6406,12 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         selected_season,
         selected_region,
         selected_series_slug,
+    )
+    activity_feed = _build_dashboard_activity_feed(
+        data,
+        selected_competition,
+        selected_season,
+        scoped_competition_names,
     )
     return {
         "generated_at": ctx.now_label,
@@ -6164,6 +6467,8 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
         "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
         "match_days": match_days,
+        "schedule_matches": schedule_matches,
+        "activity_feed": activity_feed,
     }
 
 
@@ -6789,6 +7094,24 @@ def handle_team_api(ctx: RequestContext, start_response, team_id: str):
     from web.features.team_page import handle_team_api as impl
 
     return impl(ctx, start_response, team_id)
+
+
+def handle_teams_api(ctx: RequestContext, start_response):
+    from web.features.competitions import handle_teams_api as impl
+
+    return impl(ctx, start_response)
+
+
+def get_players_frontend_page(ctx: RequestContext) -> str:
+    from web.features.player_page import build_players_frontend_page as impl
+
+    return impl(ctx)
+
+
+def handle_players_api(ctx: RequestContext, start_response):
+    from web.features.player_page import handle_players_api as impl
+
+    return impl(ctx, start_response)
 
 
 def get_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
@@ -11464,9 +11787,13 @@ def app(environ, start_response):
         if path.startswith("/api/guilds/"):
             guild_id = path.split("/", 3)[3]
             return handle_guild_api(ctx, start_response, guild_id)
+        if path == "/api/players":
+            return handle_players_api(ctx, start_response)
         if path.startswith("/api/players/"):
             player_id = path.split("/", 3)[3]
             return handle_player_api(ctx, start_response, player_id)
+        if path == "/api/teams":
+            return handle_teams_api(ctx, start_response)
         if path.startswith("/api/teams/"):
             team_id = path.split("/", 3)[3]
             return handle_team_api(ctx, start_response, team_id)
@@ -11538,6 +11865,8 @@ def app(environ, start_response):
         if path.startswith("/guilds/"):
             guild_id = path.split("/", 2)[2]
             return handle_guild_page(ctx, start_response, guild_id)
+        if path == "/teams/legacy":
+            return start_response_html(start_response, "200 OK", legacy._legacy_get_teams_page_impl(ctx))
         if path == "/teams":
             return start_response_html(start_response, "200 OK", get_teams_page(ctx))
         if path.startswith("/teams/") and path.endswith("/logo"):
@@ -11588,6 +11917,8 @@ def app(environ, start_response):
         if path.startswith("/matches/"):
             match_id = path.split("/", 2)[2]
             return start_response_html(start_response, "200 OK", get_match_frontend_page(ctx, match_id))
+        if path == "/players":
+            return start_response_html(start_response, "200 OK", get_players_frontend_page(ctx))
         if path.startswith("/players/") and path.endswith("/edit"):
             player_id = path.split("/")[2]
             guard = require_login(ctx, start_response)

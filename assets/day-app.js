@@ -27,11 +27,11 @@
       return "";
     }
     return `
-      <section class="competitions-metrics-grid">
+      <section class="competitions-metrics-grid match-day-metrics-grid">
         ${items
           .map(
             (item) => `
-              <article class="competitions-metric">
+              <article class="competitions-metric match-day-metric-card">
                 <div class="competitions-stat-label">${escapeHtml(item.label)}</div>
                 <strong>${escapeHtml(item.value)}</strong>
                 <div class="competitions-meta-text">${escapeHtml(item.copy)}</div>
@@ -120,7 +120,7 @@
       return "";
     }
     return `
-      <section class="competitions-panel competitions-section">
+      <section class="competitions-panel competitions-section match-day-leaderboard-section">
         <div class="competitions-section-head">
           <div>
             <div class="competitions-section-kicker">Day Leaderboard</div>
@@ -128,8 +128,8 @@
             <p class="competitions-copy">只统计当天已完成补录的比赛，默认按总积分从高到低排序。</p>
           </div>
         </div>
-        <div class="competitions-table-panel">
-          <table class="competitions-table">
+        <div class="competitions-table-panel match-day-leaderboard-panel">
+          <table class="competitions-table match-day-leaderboard-table">
             <thead>
               <tr><th>排名</th><th>战队</th><th>场次</th><th>胜率</th><th>总积分</th></tr>
             </thead>
@@ -154,72 +154,67 @@
     `;
   }
 
+  function renderParticipantChips(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return '<div class="match-day-empty-line">暂无队员明细</div>';
+    }
+    return `
+      <div class="match-day-participants">
+        ${items
+          .map(
+            (player) => `
+              <a class="match-day-player-chip" href="${escapeHtml(player.player_href)}">
+                <span class="match-day-seat">${escapeHtml(player.seat)}</span>
+                <span class="match-day-player-main">
+                  <strong>${escapeHtml(player.player_name)}</strong>
+                  <small>${escapeHtml(player.team_name)} · ${escapeHtml(player.role)}</small>
+                </span>
+                <span class="match-day-points">${escapeHtml(player.points)}</span>
+              </a>
+            `
+          )
+          .join("")}
+      </div>
+    `;
+  }
+
   function renderCompetitionSections(items) {
     return (items || [])
       .map(
         (section) => `
-          <section class="competitions-panel competitions-section">
-            <div class="competitions-section-head">
+          <section class="competitions-panel competitions-section match-day-section">
+            <div class="competitions-section-head match-day-section-head">
               <div>
                 <div class="competitions-section-kicker">${escapeHtml(section.series_name)} · ${escapeHtml(
           section.region_name
         )}</div>
                 <h2 class="competitions-section-title">${escapeHtml(section.competition_name)}</h2>
-                <p class="competitions-copy">${escapeHtml(section.copy)}</p>
+                <p class="competitions-section-copy">${escapeHtml(section.copy)}</p>
               </div>
-              <div class="competitions-hero-actions">
+              <div class="competitions-card-actions">
                 <a class="competitions-button competitions-button-secondary" href="${escapeHtml(
                   section.competition_href
                 )}">进入该赛事页</a>
               </div>
             </div>
-            <div class="competitions-card-grid">
+            <div class="match-day-match-grid">
               ${(section.matches || [])
                 .map(
                   (match) => `
-                    <article class="competitions-card">
-                      <div>
-                        <div class="competitions-card-kicker">比赛结果</div>
-                        <h3 class="competitions-card-title">${escapeHtml(match.match_id)}</h3>
-                        <div class="competitions-meta-text">
-                          赛季 ${escapeHtml(match.season_name)} · ${escapeHtml(match.stage_label)} · 第 ${escapeHtml(
+                    <article class="match-day-match-card">
+                      <div class="match-day-match-head">
+                        <div>
+                          <div class="competitions-card-kicker">${escapeHtml(match.match_id)}</div>
+                          <h3 class="competitions-card-title">${escapeHtml(match.stage_label)} · 第 ${escapeHtml(
                     match.round
-                  )} 轮 / 第 ${escapeHtml(match.game_no)} 局
+                  )} 轮 第 ${escapeHtml(match.game_no)} 局</h3>
                         </div>
-                        <div class="competitions-meta-text">${escapeHtml(match.meta_text)}</div>
-                      </div>
-                      <div class="competitions-table-panel">
-                        <table class="competitions-table">
-                          <thead>
-                            <tr><th>座位</th><th>队员</th><th>战队</th><th>角色</th><th>结果</th><th>个人积分</th></tr>
-                          </thead>
-                          <tbody>
-                            ${(match.participants || [])
-                              .map(
-                                (player) => `
-                                  <tr>
-                                    <td>${escapeHtml(player.seat)}</td>
-                                    <td><a href="${escapeHtml(player.player_href)}">${escapeHtml(
-                                  player.player_name
-                                )}</a></td>
-                                    <td><a href="${escapeHtml(player.team_href)}">${escapeHtml(
-                                  player.team_name
-                                )}</a></td>
-                                    <td>${escapeHtml(player.role)}</td>
-                                    <td>${escapeHtml(player.result)}</td>
-                                    <td>${escapeHtml(player.points)}</td>
-                                  </tr>
-                                `
-                              )
-                              .join("")}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div class="competitions-card-actions">
                         <a class="competitions-button competitions-button-secondary" href="${escapeHtml(
                           match.detail_href
-                        )}">查看详情</a>
+                        )}">详情</a>
                       </div>
+                      <div class="match-day-match-meta">${escapeHtml(match.meta_text)}</div>
+                      ${renderParticipantChips(match.participants || [])}
                     </article>
                   `
                 )
@@ -235,9 +230,9 @@
     const hero = payload.hero || {};
     const side = payload.hero_side || {};
     root.innerHTML = `
-      <div class="competitions-layout">
+      <div class="competitions-layout match-day-layout">
         ${renderAlert(payload.alert || bootstrap.alert)}
-        <section class="competitions-hero">
+        <section class="competitions-hero match-day-hero">
           <article class="competitions-panel competitions-hero-main">
             <div class="competitions-section-kicker">Match Day Frontend</div>
             <h1 class="competitions-title">${escapeHtml(hero.title || "比赛日")}</h1>

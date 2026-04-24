@@ -1193,3 +1193,1475 @@ body {
     padding: 12px;
   }
 }
+
+/* final public WOLF theme: match dashboard */
+:root {
+  --bg: #213a59;
+  --panel: rgba(42, 63, 91, 0.72);
+  --panel-strong: rgba(50, 73, 103, 0.82);
+  --ink: #eef6ff;
+  --muted: #c2d0df;
+  --line: rgba(205, 226, 252, 0.28);
+  --accent: #6aa6ff;
+  --accent-strong: #4388f3;
+  --accent-soft: rgba(106, 166, 255, 0.2);
+  --gold: #f5b84b;
+  --shadow: 0 22px 48px rgba(3, 10, 22, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  --heading-font: "Plus Jakarta Sans", "Noto Sans SC", sans-serif;
+  --body-font: "Plus Jakarta Sans", "Noto Sans SC", sans-serif;
+}
+
+html { background: #1b304b; }
+
+body.competitions-app-shell {
+  min-height: 100vh;
+  padding: 0 28px 28px 190px;
+  color: var(--ink);
+  font-family: var(--body-font);
+  background:
+    radial-gradient(circle at 58% 0%, rgba(130, 175, 233, 0.56), transparent 25%),
+    radial-gradient(circle at 88% 6%, rgba(252, 203, 129, 0.24), transparent 18%),
+    linear-gradient(180deg, rgba(39, 66, 101, 0.96), rgba(27, 48, 75, 0.98) 58%, #172b45 100%);
+  overflow-x: hidden;
+}
+
+body.competitions-app-shell::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(128, 176, 239, 0.05) 1px, transparent 1px),
+    linear-gradient(rgba(128, 176, 239, 0.045) 1px, transparent 1px),
+    radial-gradient(ellipse at 55% 12%, rgba(255, 239, 221, 0.2), transparent 34%);
+  background-size: 42px 42px, 42px 42px, auto;
+  mask-image: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0.72) 62%, transparent 100%);
+}
+
+body.competitions-app-shell::after {
+  content: "WOLF";
+  position: fixed;
+  right: 4vw;
+  bottom: 1vh;
+  z-index: 0;
+  pointer-events: none;
+  color: rgba(214, 232, 255, 0.05);
+  font-size: clamp(6rem, 18vw, 18rem);
+  font-weight: 900;
+  letter-spacing: 0.08em;
+}
+
+.shell-backdrop {
+  display: block;
+  background:
+    radial-gradient(circle at 35% 6%, rgba(255, 231, 207, 0.24), transparent 22%),
+    linear-gradient(180deg, rgba(100, 148, 210, 0.2), transparent 42%);
+}
+
+.shell-header {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 30;
+  width: 166px;
+  max-width: none;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 28px;
+  padding: 34px 18px 22px;
+  border: 1px solid rgba(205, 226, 252, 0.3);
+  border-radius: 0 22px 22px 0;
+  background: linear-gradient(180deg, rgba(31, 52, 82, 0.88), rgba(23, 43, 69, 0.8));
+  box-shadow: 16px 0 42px rgba(3, 10, 22, 0.2);
+  backdrop-filter: blur(18px);
+  overflow: hidden;
+}
+
+.shell-header::before,
+.competitions-panel::before,
+.competitions-loading-shell::before,
+.competitions-error-shell::before,
+.competitions-empty-state::before,
+.competitions-filter-card::before,
+.competitions-card::before,
+.competitions-metric::before,
+.competitions-side-metric::before,
+.competitions-group-card::before,
+.competitions-day-card::before,
+.competitions-table-panel::before,
+.competitions-ai-summary::before,
+.competitions-season-card::before,
+.competitions-form-panel::before { content: none; }
+
+.shell-brand { gap: 10px; }
+
+.shell-brand-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #f7fbff;
+  font-family: var(--heading-font);
+  font-size: 1.18rem;
+  font-weight: 900;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.shell-brand-mark {
+  width: 32px;
+  height: 32px;
+  display: inline-block;
+  flex: 0 0 auto;
+  background: #f7fbff;
+  clip-path: polygon(50% 0, 63% 22%, 88% 12%, 78% 42%, 94% 58%, 68% 62%, 58% 100%, 50% 72%, 42% 100%, 32% 62%, 6% 58%, 22% 42%, 12% 12%, 37% 22%);
+  box-shadow: 0 0 22px rgba(77, 147, 255, 0.45);
+}
+
+.shell-brand-copy {
+  color: #b5c6d9;
+  font-size: 0.78rem;
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+  text-transform: none;
+}
+
+.shell-nav {
+  display: grid;
+  gap: 11px;
+  justify-content: stretch;
+}
+
+.shell-nav-link {
+  justify-content: flex-start;
+  gap: 10px;
+  min-height: 42px;
+  padding: 0 14px;
+  border-color: transparent;
+  color: #c0cfdf;
+  background: transparent;
+  font-weight: 800;
+}
+
+.shell-nav-link::before {
+  content: "";
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  background: currentColor;
+  opacity: 0.92;
+  -webkit-mask: var(--shell-nav-icon) center / contain no-repeat;
+  mask: var(--shell-nav-icon) center / contain no-repeat;
+}
+
+.shell-nav-link:nth-child(1) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M3 10.8 12 3l9 7.8v9.7a.5.5 0 0 1-.5.5h-5.2v-6.2H8.7V21H3.5a.5.5 0 0 1-.5-.5v-9.7Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(2) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 3h10v2h3v3a5 5 0 0 1-5 5h-.2A5 5 0 0 1 13 15.6V18h3v2H8v-2h3v-2.4A5 5 0 0 1 9.2 13H9a5 5 0 0 1-5-5V5h3V3Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(3) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 2 20 5v6.2c0 5-3.2 8.6-8 10.8-4.8-2.2-8-5.8-8-10.8V5l8-3Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(4) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm-7 9a7 7 0 0 1 14 0H5Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(5) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M12 3 4 7v6c0 4.4 3.5 7.3 8 8 4.5-.7 8-3.6 8-8V7l-8-4Z'/%3E%3C/svg%3E"); }
+.shell-nav-link:nth-child(6) { --shell-nav-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='black' d='M7 2h2v3h6V2h2v3h3v16H4V5h3V2Zm11 9H6v8h12v-8Z'/%3E%3C/svg%3E"); }
+
+.shell-nav-link:hover,
+.shell-nav-link.is-active {
+  transform: none;
+  color: #f7fbff;
+  border-color: rgba(77, 147, 255, 0.55);
+  background: linear-gradient(90deg, rgba(47, 120, 238, 0.8), rgba(47, 120, 238, 0.18));
+  box-shadow: 0 0 24px rgba(77, 147, 255, 0.2), inset 0 0 16px rgba(77, 147, 255, 0.1);
+}
+
+.shell-account { margin-top: auto; display: grid; justify-content: stretch; gap: 10px; }
+.shell-account-label { color: #98aac0; font-size: 0.78rem; line-height: 1.4; }
+.shell-inline-form, .shell-inline-form .shell-button, .shell-account > .shell-button { width: 100%; }
+.shell-button { min-height: 42px; border-radius: 10px; font-weight: 900; }
+.shell-button-primary, .competitions-button-primary { color: #f7fbff; background: linear-gradient(180deg, #4d93ff, #2384ff); box-shadow: 0 12px 28px rgba(35, 132, 255, 0.24); }
+.shell-button-secondary, .competitions-button-secondary { color: #dcecff; border-color: rgba(205, 226, 252, 0.3); background: rgba(255, 255, 255, 0.08); }
+
+.competitions-app-root { position: relative; z-index: 1; max-width: none; padding: 28px 0 0; }
+.competitions-layout { gap: 20px; }
+
+.competitions-panel,
+.competitions-loading-shell,
+.competitions-error-shell,
+.competitions-empty-state,
+.competitions-filter-card,
+.competitions-card,
+.competitions-metric,
+.competitions-side-metric,
+.competitions-group-card,
+.competitions-day-card,
+.competitions-table-panel,
+.competitions-ai-summary,
+.competitions-season-card,
+.competitions-form-panel {
+  color: var(--ink);
+  border: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(46, 68, 98, 0.74), rgba(31, 53, 82, 0.7));
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(18px);
+}
+
+.competitions-hero-main {
+  color: #f8fbff;
+  background:
+    linear-gradient(90deg, rgba(30, 53, 83, 0.86) 0%, rgba(40, 67, 100, 0.68) 48%, rgba(50, 78, 112, 0.24) 100%),
+    radial-gradient(circle at 78% 18%, rgba(255, 231, 204, 0.36), transparent 20%),
+    linear-gradient(180deg, rgba(105, 153, 213, 0.34), rgba(22, 43, 69, 0.78));
+}
+
+.competitions-title,
+.competitions-section-title,
+.competitions-card-title,
+.competitions-editorial h2,
+.competitions-editorial h3 { color: #f7fbff; font-weight: 900; letter-spacing: -0.04em; }
+.competitions-copy,
+.competitions-card-copy,
+.competitions-section-copy,
+.competitions-meta-text,
+.competitions-ranking-meta,
+.competitions-chip-empty,
+.competitions-day-meta,
+.competitions-table td { color: var(--muted); }
+.competitions-section-kicker,
+.competitions-panel-kicker,
+.competitions-card-kicker,
+.competitions-filter-label,
+.competitions-stat-label,
+.competitions-table th { color: #a9cbf6; letter-spacing: 0.08em; }
+
+.competitions-filter-card,
+.competitions-card,
+.competitions-metric,
+.competitions-side-metric,
+.competitions-group-card,
+.competitions-day-card,
+.competitions-table-panel,
+.competitions-ai-summary,
+.competitions-season-card,
+.competitions-form-panel { border-color: rgba(205, 226, 252, 0.22); background: rgba(35, 58, 88, 0.62); }
+
+.competitions-chip,
+.competitions-button,
+.competitions-tab,
+.competitions-select { color: #e9f3ff; border-color: rgba(215, 233, 255, 0.24); background: rgba(255, 255, 255, 0.1); }
+.competitions-chip.is-active,
+.competitions-tab.is-active,
+.competitions-button-primary { color: #f7fbff; border-color: rgba(77, 147, 255, 0.58); background: linear-gradient(180deg, #3e8cff, #1d6ee8); }
+.competitions-card-stat { color: #f7fbff; border-color: rgba(205, 226, 252, 0.24); background: linear-gradient(180deg, rgba(55, 80, 113, 0.78), rgba(37, 62, 94, 0.72)); }
+.competitions-card-stat span { color: #9bb1c9; }
+.competitions-card-stat strong,
+.competitions-metric-value,
+.competitions-side-metric strong { color: #f7fbff; }
+
+.competitions-table { color: #e9f3ff; }
+.competitions-table tbody tr:hover { background: rgba(106, 166, 255, 0.12); }
+.competitions-alert { color: #fff2cb; border-color: rgba(245, 184, 75, 0.34); background: rgba(107, 73, 21, 0.34); }
+
+.competitions-card:hover,
+.competitions-day-card:hover,
+.competitions-group-card:hover,
+.competitions-season-card:hover,
+.competitions-side-metric:hover,
+.competitions-metric:hover,
+.competitions-button:hover,
+.competitions-chip:hover,
+.competitions-tab:hover {
+  transform: translateY(-2px);
+  border-color: rgba(77, 147, 255, 0.42);
+  box-shadow: 0 18px 36px rgba(2, 10, 23, 0.24), 0 0 0 1px rgba(77, 147, 255, 0.08);
+}
+
+@media (max-width: 1120px) {
+  body.competitions-app-shell { padding: 16px 22px 28px; }
+  .shell-header { position: sticky; top: 16px; inset: auto; width: auto; min-height: 76px; display: grid; grid-template-columns: auto 1fr auto; align-items: center; padding: 16px 18px; border-radius: 22px; margin-bottom: 18px; }
+  .shell-nav { display: flex; overflow-x: auto; justify-content: flex-start; }
+  .shell-account { margin-top: 0; display: flex; }
+  .shell-inline-form, .shell-inline-form .shell-button, .shell-account > .shell-button { width: auto; }
+}
+
+@media (max-width: 720px) {
+  body.competitions-app-shell { padding: 10px 14px 18px; }
+  .shell-header { top: 10px; grid-template-columns: 1fr; gap: 12px; margin-bottom: 14px; }
+  .shell-brand-link { font-size: 1rem; }
+  .shell-account-label, .shell-brand-copy { display: none; }
+  .competitions-app-root { padding-top: 0; }
+}
+
+/* fix WOLF theme contrast for competition filters/buttons */
+.competitions-filter-card .competitions-chip,
+.competitions-filter-card .competitions-select,
+.competitions-panel .competitions-chip,
+.competitions-panel .competitions-button-secondary,
+.competitions-panel .competitions-tab,
+.competitions-button-secondary,
+.competitions-tab,
+.competitions-chip {
+  color: #e9f3ff;
+  border-color: rgba(215, 233, 255, 0.28);
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.competitions-filter-card .competitions-chip:not(.is-active):hover,
+.competitions-panel .competitions-button-secondary:hover,
+.competitions-button-secondary:hover,
+.competitions-tab:not(.is-active):hover,
+.competitions-chip:not(.is-active):hover {
+  color: #ffffff;
+  border-color: rgba(106, 166, 255, 0.48);
+  background: rgba(106, 166, 255, 0.18);
+}
+
+.competitions-filter-card .competitions-chip.is-active,
+.competitions-panel .competitions-chip.is-active,
+.competitions-chip.is-active,
+.competitions-tab.is-active,
+.competitions-button-primary {
+  color: #ffffff;
+  border-color: rgba(126, 181, 255, 0.72);
+  background: linear-gradient(180deg, #6aa6ff 0%, #2f78ee 100%);
+}
+
+.competitions-filter-card .competitions-chip[aria-disabled="true"],
+.competitions-filter-card .competitions-chip.is-disabled,
+.competitions-chip[aria-disabled="true"],
+.competitions-chip.is-disabled {
+  color: rgba(233, 243, 255, 0.58);
+  background: rgba(255, 255, 255, 0.07);
+}
+
+/* teams frontend page */
+.teams-layout { gap: 20px; }
+.teams-hero { padding: 34px 42px 28px; }
+.teams-filter-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 22px; }
+.teams-hero-actions { margin-top: 20px; }
+.teams-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.teams-section { padding: 24px; }
+.teams-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.teams-card { display: grid; gap: 18px; min-height: 242px; padding: 20px; }
+.teams-card-head { display: grid; grid-template-columns: auto 58px 1fr; align-items: center; gap: 14px; }
+.teams-rank { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; height: 32px; border-radius: 999px; color: #071424; background: linear-gradient(180deg, #ffd77b, #f5a623); font-weight: 900; }
+.teams-logo { width: 58px; height: 58px; border-radius: 16px; object-fit: cover; border: 1px solid rgba(205, 226, 252, 0.24); background: rgba(255,255,255,0.1); }
+.teams-title { margin: 0 0 6px; }
+.teams-title-block { min-width: 0; }
+.teams-title-block .competitions-card-title,
+.teams-title-block .competitions-meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.teams-score-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.teams-score-row div { padding: 12px; border: 1px solid rgba(205, 226, 252, 0.2); border-radius: 14px; background: rgba(255,255,255,0.07); }
+.teams-score-row span,
+.teams-meta-row { color: #b8c9db; font-size: 0.82rem; font-weight: 800; }
+.teams-score-row strong { display: block; margin-top: 6px; color: #f7fbff; font-size: 1.15rem; }
+.teams-meta-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.teams-meta-row span { padding: 6px 9px; border-radius: 999px; background: rgba(106, 166, 255, 0.12); }
+@media (max-width: 1280px) { .teams-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .teams-filter-grid, .teams-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .teams-hero { padding: 24px; } .teams-grid, .teams-filter-grid, .teams-metrics-grid, .teams-score-row { grid-template-columns: 1fr; } .teams-card-head { grid-template-columns: auto 48px 1fr; } .teams-logo { width: 48px; height: 48px; } }
+
+/* players frontend page */
+.players-layout { gap: 20px; }
+.players-hero { padding: 34px 42px 28px; }
+.players-filter-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-top: 22px; }
+.players-hero-actions { margin-top: 20px; }
+.players-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.players-section { padding: 24px; }
+.players-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.players-card { display: grid; gap: 18px; min-height: 250px; padding: 20px; }
+.players-card-head { display: grid; grid-template-columns: auto 62px 1fr; align-items: center; gap: 14px; }
+.players-rank { display: inline-flex; align-items: center; justify-content: center; min-width: 42px; height: 32px; border-radius: 999px; color: #071424; background: linear-gradient(180deg, #8fd3ff, #3f8cff); font-weight: 900; }
+.players-avatar { width: 62px; height: 62px; border-radius: 20px; object-fit: cover; border: 1px solid rgba(205, 226, 252, 0.26); background: linear-gradient(180deg, rgba(255,255,255,0.16), rgba(255,255,255,0.06)); box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08); }
+.players-title { margin: 0 0 6px; }
+.players-title-block { min-width: 0; }
+.players-title-block .competitions-card-title,
+.players-title-block .competitions-meta-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.players-score-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.players-score-row div { padding: 12px; border: 1px solid rgba(205, 226, 252, 0.2); border-radius: 14px; background: rgba(255,255,255,0.07); }
+.players-score-row span,
+.players-meta-row { color: #b8c9db; font-size: 0.82rem; font-weight: 800; }
+.players-score-row strong { display: block; margin-top: 6px; color: #f7fbff; font-size: 1.15rem; }
+.players-meta-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.players-meta-row span { padding: 6px 9px; border-radius: 999px; background: rgba(106, 166, 255, 0.12); }
+.players-app-shell .shell-nav-link[href="/players"] { color: #f7fbff; border-color: rgba(126, 181, 255, 0.54); background: rgba(106, 166, 255, 0.18); }
+@media (max-width: 1280px) { .players-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .players-filter-grid, .players-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .players-hero { padding: 24px; } .players-grid, .players-filter-grid, .players-metrics-grid, .players-score-row { grid-template-columns: 1fr; } .players-card-head { grid-template-columns: auto 50px 1fr; } .players-avatar { width: 50px; height: 50px; border-radius: 16px; } }
+
+/* schedule calendar frontend page */
+.schedule-layout { gap: 20px; }
+.schedule-hero { padding: 34px 42px 28px; overflow: hidden; }
+.schedule-filter-grid { grid-template-columns: minmax(0, 1.15fr) minmax(260px, 0.85fr); margin-top: 22px; }
+.schedule-hero-actions { margin-top: 20px; }
+.schedule-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.schedule-section { padding: 24px; }
+.schedule-hero-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+.schedule-hero-meta span { padding: 8px 11px; border: 1px solid rgba(205, 226, 252, 0.2); border-radius: 999px; color: #d7e9ff; background: rgba(255,255,255,0.08); font-size: 0.84rem; font-weight: 900; }
+.schedule-calendar-strip { display: flex; gap: 10px; margin-top: 18px; padding: 12px; overflow-x: auto; border: 1px solid rgba(205, 226, 252, 0.16); border-radius: 18px; background: rgba(255,255,255,0.06); }
+.schedule-date-pill { flex: 0 0 auto; min-width: 96px; padding: 11px 12px; border: 1px solid rgba(205, 226, 252, 0.2); border-radius: 16px; color: #e9f3ff; background: rgba(255,255,255,0.08); text-decoration: none; transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease; }
+.schedule-date-pill span { display: block; color: #9bb1c9; font-size: 0.78rem; font-weight: 900; }
+.schedule-date-pill strong { display: block; margin-top: 4px; color: #f7fbff; font-size: 1rem; }
+.schedule-date-pill:hover,
+.schedule-date-pill.is-next { transform: translateY(-2px); border-color: rgba(126, 181, 255, 0.58); background: rgba(106, 166, 255, 0.18); }
+.schedule-days-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.schedule-day-card { position: relative; display: grid; gap: 14px; padding: 18px; border: 1px solid rgba(205, 226, 252, 0.2); border-radius: 22px; background: linear-gradient(180deg, rgba(35, 58, 88, 0.72), rgba(22, 41, 66, 0.64)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
+.schedule-day-card.is-next { border-color: rgba(126, 181, 255, 0.42); box-shadow: inset 0 1px 0 rgba(255,255,255,0.1), 0 18px 36px rgba(2,10,23,0.18); }
+.schedule-day-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.schedule-day-date { color: #f7fbff; font-size: 1.18rem; font-weight: 950; text-decoration: none; }
+.schedule-day-date:hover { color: #8fd3ff; }
+.schedule-day-head span { padding: 6px 10px; border-radius: 999px; color: #071424; background: linear-gradient(180deg, #8fd3ff, #3f8cff); font-size: 0.82rem; font-weight: 950; }
+.schedule-day-card p { margin: 0; color: #b8c9db; font-size: 0.9rem; line-height: 1.65; }
+.schedule-match-list { display: grid; gap: 10px; }
+.schedule-match-card { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 13px 14px; border: 1px solid rgba(205, 226, 252, 0.18); border-radius: 16px; color: #e9f3ff; background: rgba(255,255,255,0.07); text-decoration: none; transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease; }
+.schedule-match-card:hover { transform: translateY(-2px); border-color: rgba(106, 166, 255, 0.42); background: rgba(106, 166, 255, 0.13); }
+.schedule-match-main { min-width: 0; }
+.schedule-match-id { display: inline-flex; margin-bottom: 6px; padding: 4px 8px; border-radius: 999px; color: #9bb1c9; background: rgba(255,255,255,0.08); font-size: 0.74rem; font-weight: 900; }
+.schedule-match-main strong { display: block; overflow: hidden; color: #f7fbff; text-overflow: ellipsis; white-space: nowrap; font-size: 1rem; }
+.schedule-match-main small { display: block; overflow: hidden; margin-top: 4px; color: #9bb1c9; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; }
+.schedule-match-meta { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.schedule-match-meta span { max-width: 140px; overflow: hidden; padding: 5px 8px; border-radius: 999px; color: #d7e9ff; background: rgba(106, 166, 255, 0.12); text-overflow: ellipsis; white-space: nowrap; font-size: 0.78rem; font-weight: 900; }
+.schedule-app-shell .shell-nav-link[href="/schedule"] { color: #f7fbff; border-color: rgba(126, 181, 255, 0.54); background: rgba(106, 166, 255, 0.18); }
+@media (max-width: 1280px) { .schedule-days-grid { grid-template-columns: 1fr; } .schedule-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 720px) { .schedule-hero { padding: 24px; } .schedule-filter-grid, .schedule-metrics-grid { grid-template-columns: 1fr; } .schedule-match-card { grid-template-columns: 1fr; } .schedule-match-meta { align-items: flex-start; flex-direction: row; flex-wrap: wrap; } .schedule-day-head { align-items: flex-start; flex-direction: column; } }
+
+/* match day compact frontend page */
+.match-day-layout { gap: 18px; }
+.match-day-hero { grid-template-columns: minmax(0, 1.25fr) minmax(280px, 0.75fr); gap: 18px; }
+.match-day-app-root .competitions-hero-main,
+.match-day-app-root .competitions-hero-side { padding: 28px; }
+.match-day-metrics-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+.match-day-section { padding: 22px; }
+.match-day-section-head { margin-bottom: 16px; }
+.match-day-match-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }
+.match-day-match-card { display: grid; gap: 12px; padding: 16px; border: 1px solid rgba(205, 226, 252, 0.2); border-radius: 20px; background: linear-gradient(180deg, rgba(35, 58, 88, 0.72), rgba(22, 41, 66, 0.62)); box-shadow: inset 0 1px 0 rgba(255,255,255,0.08); }
+.match-day-match-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.match-day-match-head .competitions-card-title { margin: 4px 0 0; font-size: 1.06rem; line-height: 1.35; }
+.match-day-match-head .competitions-button { flex: 0 0 auto; min-height: 34px; padding: 8px 12px; }
+.match-day-match-meta { overflow: hidden; color: #9bb1c9; text-overflow: ellipsis; white-space: nowrap; font-size: 0.84rem; font-weight: 800; }
+.match-day-participants { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.match-day-player-chip { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; align-items: center; gap: 8px; min-width: 0; padding: 8px 9px; border: 1px solid rgba(205, 226, 252, 0.16); border-radius: 14px; color: #e9f3ff; background: rgba(255,255,255,0.07); text-decoration: none; transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease; }
+.match-day-player-chip:hover { transform: translateY(-1px); border-color: rgba(106, 166, 255, 0.4); background: rgba(106, 166, 255, 0.13); }
+.match-day-seat { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border-radius: 999px; color: #071424; background: linear-gradient(180deg, #8fd3ff, #3f8cff); font-size: 0.78rem; font-weight: 950; }
+.match-day-player-main { min-width: 0; }
+.match-day-player-main strong,
+.match-day-player-main small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.match-day-player-main strong { color: #f7fbff; font-size: 0.88rem; }
+.match-day-player-main small { margin-top: 2px; color: #9bb1c9; font-size: 0.72rem; font-weight: 800; }
+.match-day-points { color: #f7fbff; font-size: 0.88rem; font-weight: 950; }
+.match-day-empty-line { color: #9bb1c9; font-size: 0.88rem; }
+.match-day-app-shell .shell-nav-link[href="/competitions"] { color: #f7fbff; border-color: rgba(126, 181, 255, 0.54); background: rgba(106, 166, 255, 0.18); }
+@media (max-width: 1320px) { .match-day-match-grid { grid-template-columns: 1fr; } .match-day-metrics-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+@media (max-width: 1120px) { .match-day-hero { grid-template-columns: 1fr; } }
+@media (max-width: 720px) { .match-day-app-root .competitions-hero-main, .match-day-app-root .competitions-hero-side, .match-day-section { padding: 20px; } .match-day-participants { grid-template-columns: 1fr; } .match-day-match-head { flex-direction: column; } .match-day-match-meta { white-space: normal; } }
+
+/* match day leaderboard color fix */
+.match-day-leaderboard-section { padding: 22px; }
+.match-day-leaderboard-panel { border-color: rgba(205, 226, 252, 0.2); background: rgba(9, 22, 38, 0.34); box-shadow: inset 0 1px 0 rgba(255,255,255,0.06); }
+.match-day-leaderboard-table { color: #e9f3ff; }
+.match-day-leaderboard-table thead { background: rgba(106, 166, 255, 0.12); }
+.match-day-leaderboard-table th { color: #b9d8ff; border-bottom-color: rgba(205, 226, 252, 0.18); }
+.match-day-leaderboard-table td { color: #d7e9ff; border-bottom-color: rgba(205, 226, 252, 0.12); background: transparent; }
+.match-day-leaderboard-table tbody tr:nth-child(odd) td { background: rgba(255, 255, 255, 0.035); }
+.match-day-leaderboard-table tbody tr:hover td { color: #ffffff; background: rgba(106, 166, 255, 0.13); }
+.match-day-leaderboard-table a { color: #f7fbff; font-weight: 900; text-decoration: none; }
+.match-day-leaderboard-table a:hover { color: #8fd3ff; }
+.match-day-leaderboard-table td:first-child { color: #071424; font-weight: 950; }
+.match-day-leaderboard-table tbody tr td:first-child { text-align: center; }
+.match-day-leaderboard-table tbody tr:nth-child(1) td:first-child,
+.match-day-leaderboard-table tbody tr:nth-child(2) td:first-child,
+.match-day-leaderboard-table tbody tr:nth-child(3) td:first-child { background: linear-gradient(180deg, #ffd77b, #f5a623); }
+.match-day-leaderboard-table tbody tr:not(:nth-child(-n + 3)) td:first-child { color: #d7e9ff; background: rgba(106, 166, 255, 0.14); }
+
+/* unified competition board borders */
+.competitions-board-panel .competitions-group-card,
+.competitions-board-panel .competitions-table-panel {
+  border-color: rgba(126, 181, 255, 0.28) !important;
+  background: rgba(35, 58, 88, 0.62);
+}
+.competitions-board-panel .competitions-table th,
+.competitions-board-panel .competitions-table td {
+  border-bottom-color: rgba(126, 181, 255, 0.16) !important;
+}
+.competitions-board-panel .competitions-table th {
+  color: #b9d8ff;
+}
+.competitions-board-panel .competitions-table td {
+  color: #d7e9ff;
+}
+.competitions-board-panel .competitions-table a {
+  color: #f7fbff;
+  font-weight: 900;
+  text-decoration: none;
+}
+.competitions-board-panel .competitions-table a:hover {
+  color: #8fd3ff;
+}
+
+/* final competition board blue border override */
+.competitions-app-shell .competitions-board-tabs {
+  padding: 10px;
+  border: 1px solid rgba(126, 181, 255, 0.24);
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.055);
+}
+.competitions-app-shell .competitions-board-tabs .competitions-tab {
+  border-color: rgba(126, 181, 255, 0.34) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+.competitions-app-shell .competitions-board-tabs .competitions-tab.is-active {
+  border-color: rgba(126, 181, 255, 0.72) !important;
+  background: linear-gradient(180deg, #6aa6ff 0%, #2f78ee 100%) !important;
+}
+.competitions-app-shell .competitions-board-panel[data-board-panel] .competitions-group-card,
+.competitions-app-shell .competitions-board-panel[data-board-panel="team"] .competitions-group-card,
+.competitions-app-shell .competitions-board-panel[data-board-panel] .competitions-table-panel {
+  border-color: rgba(126, 181, 255, 0.34) !important;
+  background: rgba(35, 58, 88, 0.62) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 18px 36px rgba(2, 10, 23, 0.18) !important;
+}
+.competitions-app-shell .competitions-board-panel[data-board-panel] .competitions-section-head {
+  border-bottom-color: rgba(126, 181, 255, 0.18) !important;
+}
+.competitions-app-shell .competitions-board-panel[data-board-panel] .competitions-table th,
+.competitions-app-shell .competitions-board-panel[data-board-panel] .competitions-table td {
+  border-bottom-color: rgba(126, 181, 255, 0.18) !important;
+}
+
+/* final public readability pass */
+body.competitions-app-shell {
+  --readable-text: #eef6ff;
+  --readable-title: #f8fbff;
+  --readable-muted: #b9cce1;
+  --readable-soft: #d7e9ff;
+  --readable-line: rgba(126, 181, 255, 0.32);
+  --readable-line-soft: rgba(126, 181, 255, 0.18);
+  --readable-surface: rgba(35, 58, 88, 0.68);
+}
+body.competitions-app-shell .competitions-panel,
+body.competitions-app-shell .competitions-filter-card,
+body.competitions-app-shell .competitions-card,
+body.competitions-app-shell .competitions-metric,
+body.competitions-app-shell .competitions-side-metric,
+body.competitions-app-shell .competitions-group-card,
+body.competitions-app-shell .competitions-day-card,
+body.competitions-app-shell .competitions-table-panel,
+body.competitions-app-shell .competitions-ai-summary,
+body.competitions-app-shell .competitions-season-card,
+body.competitions-app-shell .competitions-form-panel,
+body.competitions-app-shell .competitions-empty-state,
+body.competitions-app-shell .schedule-day-card,
+body.competitions-app-shell .schedule-match-card,
+body.competitions-app-shell .match-day-match-card {
+  color: var(--readable-text) !important;
+  border-color: var(--readable-line) !important;
+  background-color: var(--readable-surface) !important;
+}
+body.competitions-app-shell .competitions-title,
+body.competitions-app-shell .competitions-section-title,
+body.competitions-app-shell .competitions-card-title,
+body.competitions-app-shell h1,
+body.competitions-app-shell h2,
+body.competitions-app-shell h3,
+body.competitions-app-shell strong {
+  color: var(--readable-title) !important;
+}
+body.competitions-app-shell .competitions-copy,
+body.competitions-app-shell .competitions-card-copy,
+body.competitions-app-shell .competitions-section-copy,
+body.competitions-app-shell .competitions-meta-text,
+body.competitions-app-shell .competitions-ranking-meta,
+body.competitions-app-shell .competitions-chip-empty,
+body.competitions-app-shell .competitions-day-meta,
+body.competitions-app-shell p,
+body.competitions-app-shell small {
+  color: var(--readable-muted) !important;
+}
+body.competitions-app-shell .competitions-section-kicker,
+body.competitions-app-shell .competitions-panel-kicker,
+body.competitions-app-shell .competitions-card-kicker,
+body.competitions-app-shell .competitions-filter-label,
+body.competitions-app-shell .competitions-stat-label,
+body.competitions-app-shell .competitions-table th {
+  color: #b9d8ff !important;
+}
+body.competitions-app-shell .competitions-table {
+  color: var(--readable-text) !important;
+}
+body.competitions-app-shell .competitions-table th,
+body.competitions-app-shell .competitions-table td {
+  color: var(--readable-soft) !important;
+  border-bottom-color: var(--readable-line-soft) !important;
+}
+body.competitions-app-shell .competitions-table th {
+  color: #b9d8ff !important;
+}
+body.competitions-app-shell .competitions-table a,
+body.competitions-app-shell .competitions-card a:not(.competitions-button),
+body.competitions-app-shell .competitions-section a:not(.competitions-button),
+body.competitions-app-shell .schedule-day-date,
+body.competitions-app-shell .match-day-player-chip {
+  color: #f8fbff !important;
+  text-decoration-color: rgba(143, 211, 255, 0.5);
+}
+body.competitions-app-shell .competitions-table a:hover,
+body.competitions-app-shell .competitions-card a:not(.competitions-button):hover,
+body.competitions-app-shell .competitions-section a:not(.competitions-button):hover {
+  color: #8fd3ff !important;
+}
+body.competitions-app-shell .competitions-chip,
+body.competitions-app-shell .competitions-tab,
+body.competitions-app-shell .competitions-button-secondary,
+body.competitions-app-shell .competitions-select,
+body.competitions-app-shell .shell-button-secondary {
+  color: var(--readable-text) !important;
+  border-color: var(--readable-line) !important;
+  background: rgba(255, 255, 255, 0.1) !important;
+}
+body.competitions-app-shell .competitions-chip.is-active,
+body.competitions-app-shell .competitions-tab.is-active,
+body.competitions-app-shell .competitions-button-primary,
+body.competitions-app-shell .shell-button-primary {
+  color: #ffffff !important;
+  border-color: rgba(126, 181, 255, 0.72) !important;
+  background: linear-gradient(180deg, #6aa6ff 0%, #2f78ee 100%) !important;
+}
+body.competitions-app-shell input,
+body.competitions-app-shell select,
+body.competitions-app-shell textarea,
+body.competitions-app-shell .form-control,
+body.competitions-app-shell .form-select,
+body.competitions-app-shell .competitions-textarea {
+  color: var(--readable-text) !important;
+  border-color: var(--readable-line) !important;
+  background: rgba(9, 22, 38, 0.45) !important;
+}
+body.competitions-app-shell input::placeholder,
+body.competitions-app-shell textarea::placeholder {
+  color: rgba(215, 233, 255, 0.62) !important;
+}
+body.competitions-app-shell .competitions-section-head,
+body.competitions-app-shell .competitions-board-tabs,
+body.competitions-app-shell .schedule-calendar-strip {
+  border-color: var(--readable-line-soft) !important;
+}
+
+/* team detail frontend page */
+body.team-detail-app-shell .team-detail-layout {
+  gap: 18px;
+  padding-top: 28px;
+}
+body.team-detail-app-shell .team-detail-hero {
+  align-items: start;
+  display: grid;
+  grid-template-columns: minmax(0, 1.32fr) minmax(300px, 0.68fr);
+  gap: 16px;
+}
+body.team-detail-app-shell .team-detail-hero-left {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+body.team-detail-app-shell .team-detail-hero-left *,
+body.team-detail-app-shell .team-detail-insight-card *,
+body.team-detail-app-shell .team-detail-section *,
+body.team-detail-app-shell .team-detail-metric * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+body.team-detail-app-shell .team-detail-hero-main {
+  display: grid;
+  grid-template-columns: 104px minmax(0, 1fr);
+  gap: 18px;
+  align-items: center;
+  min-height: 0;
+  overflow: visible;
+  padding: 24px !important;
+  position: relative;
+}
+body.team-detail-app-shell .team-detail-hero-main::before {
+  background: radial-gradient(circle at 18% 20%, rgba(143, 211, 255, 0.24), transparent 34%), radial-gradient(circle at 86% 18%, rgba(106, 166, 255, 0.22), transparent 30%);
+  content: "";
+  inset: 0;
+  pointer-events: none;
+  position: absolute;
+}
+body.team-detail-app-shell .team-detail-logo-wrap,
+body.team-detail-app-shell .team-detail-hero-copy {
+  position: relative;
+  z-index: 1;
+}
+body.team-detail-app-shell .team-detail-logo-wrap {
+  align-items: center;
+  background: linear-gradient(145deg, rgba(143, 211, 255, 0.2), rgba(255, 255, 255, 0.08));
+  border: 1px solid rgba(143, 211, 255, 0.38);
+  border-radius: 26px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 20px 44px rgba(2, 10, 23, 0.26);
+  display: flex;
+  height: 104px;
+  justify-content: center;
+  padding: 14px;
+  width: 104px;
+}
+body.team-detail-app-shell .team-detail-logo {
+  border-radius: 18px;
+  display: block;
+  height: 76px;
+  object-fit: contain;
+  width: 76px;
+}
+body.team-detail-app-shell .team-detail-meta-row,
+body.team-detail-app-shell .team-detail-stage-row,
+body.team-detail-app-shell .team-detail-player-tags,
+body.team-detail-app-shell .team-detail-match-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+body.team-detail-app-shell .team-detail-meta-row {
+  margin: 12px 0 16px;
+}
+body.team-detail-app-shell .team-detail-meta-row span,
+body.team-detail-app-shell .team-detail-stage-row span,
+body.team-detail-app-shell .team-detail-player-tags span,
+body.team-detail-app-shell .team-detail-match-meta span {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(126, 181, 255, 0.34);
+  border-radius: 999px;
+  color: #eef6ff;
+  font-size: 0.82rem;
+  font-weight: 800;
+  padding: 7px 11px;
+}
+body.team-detail-app-shell .team-detail-actions {
+  justify-content: flex-start;
+}
+body.team-detail-app-shell .team-detail-insight-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+body.team-detail-app-shell .team-detail-meter-row {
+  display: grid;
+  gap: 8px;
+}
+body.team-detail-app-shell .team-detail-meter-head {
+  align-items: center;
+  color: #f8fbff;
+  display: flex;
+  font-size: 0.9rem;
+  justify-content: space-between;
+}
+body.team-detail-app-shell .team-detail-meter-head span {
+  color: #b9d8ff;
+  font-weight: 800;
+}
+body.team-detail-app-shell .team-detail-meter-track {
+  background: rgba(7, 18, 34, 0.55);
+  border: 1px solid rgba(126, 181, 255, 0.22);
+  border-radius: 999px;
+  height: 12px;
+  overflow: hidden;
+}
+body.team-detail-app-shell .team-detail-meter-fill {
+  background: linear-gradient(90deg, #8fd3ff, #6aa6ff 54%, #3f7cff);
+  border-radius: inherit;
+  box-shadow: 0 0 18px rgba(106, 166, 255, 0.36);
+  height: 100%;
+}
+body.team-detail-app-shell .team-detail-note-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+body.team-detail-app-shell .team-detail-note-item {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(126, 181, 255, 0.24);
+  border-radius: 16px;
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+  padding: 10px;
+}
+body.team-detail-app-shell .team-detail-note-item span {
+  color: #b9d8ff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+body.team-detail-app-shell .team-detail-note-item strong {
+  color: #f8fbff;
+  font-size: 0.92rem;
+  overflow-wrap: anywhere;
+}
+body.team-detail-app-shell .team-detail-metrics-grid {
+  gap: 10px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+body.team-detail-app-shell .team-detail-metric {
+  min-height: 92px;
+  min-width: 0;
+  overflow: visible;
+  padding: 14px 16px !important;
+}
+body.team-detail-app-shell .team-detail-section {
+  display: grid;
+  gap: 18px;
+  overflow: visible;
+  padding: 30px 24px 24px !important;
+  scroll-margin-top: 112px;
+}
+body.team-detail-app-shell .team-detail-section .competitions-section-head {
+  align-items: flex-start;
+  border-bottom: 1px solid rgba(126, 181, 255, 0.18) !important;
+  margin: 0 0 18px;
+  padding: 0 0 16px;
+}
+body.team-detail-app-shell .team-detail-section .competitions-section-kicker {
+  display: block;
+  line-height: 1.45;
+  margin: 0 0 8px;
+}
+body.team-detail-app-shell .team-detail-section .competitions-section-title {
+  line-height: 1.25;
+  margin: 0 0 10px;
+}
+body.team-detail-app-shell .team-detail-roster-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.team-detail-app-shell .team-detail-player-card,
+body.team-detail-app-shell .team-detail-match-card {
+  background: rgba(35, 58, 88, 0.68);
+  border: 1px solid rgba(126, 181, 255, 0.32);
+  border-radius: 22px;
+  color: #eef6ff;
+  display: flex;
+  gap: 14px;
+  min-width: 0;
+  overflow: visible;
+  padding: 14px;
+  text-decoration: none;
+  transition: transform 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+body.team-detail-app-shell .team-detail-player-card:hover,
+body.team-detail-app-shell .team-detail-match-card:hover {
+  background: rgba(44, 75, 114, 0.76);
+  border-color: rgba(143, 211, 255, 0.58);
+  color: #ffffff;
+  transform: translateY(-2px);
+}
+body.team-detail-app-shell .team-detail-player-photo {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(143, 211, 255, 0.34);
+  border-radius: 18px;
+  flex: 0 0 68px;
+  height: 68px;
+  object-fit: cover;
+  width: 68px;
+}
+body.team-detail-app-shell .team-detail-player-main {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+body.team-detail-app-shell .team-detail-player-name {
+  color: #f8fbff;
+  font-size: 1.02rem;
+  font-weight: 900;
+}
+body.team-detail-app-shell .team-detail-player-main p {
+  color: #b9cce1;
+  margin: 0;
+}
+body.team-detail-app-shell .team-detail-match-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+body.team-detail-app-shell .team-detail-match-card {
+  flex-direction: column;
+}
+body.team-detail-app-shell .team-detail-match-top {
+  align-items: center;
+  color: #b9d8ff;
+  display: flex;
+  font-size: 0.84rem;
+  font-weight: 800;
+  justify-content: space-between;
+}
+body.team-detail-app-shell .team-detail-match-top strong {
+  color: #ffffff;
+}
+body.team-detail-app-shell .team-detail-match-title {
+  color: #f8fbff;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+body.team-detail-app-shell .team-detail-match-meta span {
+  font-size: 0.78rem;
+  padding: 6px 9px;
+}
+body.team-detail-app-shell .competitions-alert {
+  background: rgba(143, 211, 255, 0.14);
+  border: 1px solid rgba(143, 211, 255, 0.38);
+  border-radius: 18px;
+  color: #f8fbff;
+  font-weight: 800;
+  padding: 13px 16px;
+}
+body.team-detail-app-shell .competitions-empty-state {
+  color: #d7e9ff !important;
+}
+
+@media (max-width: 1180px) {
+  body.team-detail-app-shell .team-detail-hero,
+  body.team-detail-app-shell .team-detail-metrics-grid,
+  body.team-detail-app-shell .team-detail-roster-grid,
+  body.team-detail-app-shell .team-detail-match-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body.team-detail-app-shell .team-detail-metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  body.team-detail-app-shell .team-detail-layout {
+    padding-top: 132px;
+  }
+  body.team-detail-app-shell .team-detail-hero,
+  body.team-detail-app-shell .team-detail-metrics-grid,
+  body.team-detail-app-shell .team-detail-roster-grid,
+  body.team-detail-app-shell .team-detail-match-grid,
+  body.team-detail-app-shell .team-detail-note-grid {
+    grid-template-columns: 1fr;
+  }
+  body.team-detail-app-shell .team-detail-hero-main {
+    grid-template-columns: 1fr;
+  }
+  body.team-detail-app-shell .team-detail-logo-wrap {
+    height: 112px;
+    width: 112px;
+  }
+  body.team-detail-app-shell .team-detail-logo {
+    height: 78px;
+    width: 78px;
+  }
+}
+
+/* public page heading clipping guard */
+body.competitions-app-shell .competitions-section-kicker,
+body.competitions-app-shell .competitions-panel-kicker,
+body.competitions-app-shell .competitions-card-kicker,
+body.competitions-app-shell .competitions-loading-kicker {
+  display: block !important;
+  line-height: 1.45 !important;
+  margin-top: 0 !important;
+  overflow: visible !important;
+  padding-top: 2px !important;
+  transform: none !important;
+}
+body.competitions-app-shell .competitions-title,
+body.competitions-app-shell .competitions-section-title,
+body.competitions-app-shell .competitions-card-title {
+  line-height: 1.18 !important;
+  overflow: visible !important;
+  padding-top: 2px !important;
+}
+body.competitions-app-shell .competitions-panel,
+body.competitions-app-shell .competitions-card,
+body.competitions-app-shell .competitions-metric,
+body.competitions-app-shell .competitions-side-metric,
+body.competitions-app-shell .competitions-group-card,
+body.competitions-app-shell .competitions-day-card,
+body.competitions-app-shell .competitions-table-panel,
+body.competitions-app-shell .competitions-season-card,
+body.competitions-app-shell .competitions-form-panel,
+body.competitions-app-shell .competitions-empty-state {
+  overflow: visible !important;
+}
+body.team-detail-app-shell .team-detail-insight-card {
+  padding: 30px 24px 24px !important;
+}
+body.team-detail-app-shell .team-detail-insight-card .competitions-section-kicker {
+  margin-bottom: 8px !important;
+}
+
+/* player detail frontend page */
+body.player-detail-app-shell .player-detail-layout {
+  gap: 18px;
+  padding-top: 28px;
+}
+body.player-detail-app-shell .player-detail-hero {
+  align-items: start;
+  display: grid;
+  gap: 16px;
+  grid-template-columns: minmax(0, 1.32fr) minmax(300px, 0.68fr);
+}
+body.player-detail-app-shell .player-detail-hero-left {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+body.player-detail-app-shell .player-detail-hero-left *,
+body.player-detail-app-shell .player-detail-insight-card *,
+body.player-detail-app-shell .player-detail-section *,
+body.player-detail-app-shell .player-detail-metric * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+body.player-detail-app-shell .player-detail-hero-main {
+  align-items: center;
+  display: grid;
+  gap: 22px;
+  grid-template-columns: 116px minmax(0, 1fr);
+  overflow: visible;
+  padding: 30px 32px !important;
+  position: relative;
+}
+body.player-detail-app-shell .player-detail-photo {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(143, 211, 255, 0.36);
+  border-radius: 30px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14), 0 20px 44px rgba(2, 10, 23, 0.22);
+  height: 116px;
+  object-fit: cover;
+  padding: 10px;
+  width: 116px;
+}
+body.player-detail-app-shell .player-detail-meta-row,
+body.player-detail-app-shell .player-detail-match-meta,
+body.player-detail-app-shell .player-detail-season-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+body.player-detail-app-shell .player-detail-meta-row {
+  margin: 14px 0 18px;
+}
+body.player-detail-app-shell .player-detail-meta-row span,
+body.player-detail-app-shell .player-detail-match-meta span,
+body.player-detail-app-shell .player-detail-season-stats span {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(126, 181, 255, 0.34);
+  border-radius: 999px;
+  color: #eef6ff;
+  font-size: 0.82rem;
+  font-weight: 850;
+  padding: 7px 11px;
+}
+body.player-detail-app-shell .player-detail-actions {
+  justify-content: flex-start;
+}
+body.player-detail-app-shell .player-detail-metrics-grid {
+  gap: 10px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+body.player-detail-app-shell .player-detail-metric {
+  min-height: 94px;
+  padding: 14px 16px !important;
+}
+body.player-detail-app-shell .player-detail-insight-card {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 30px 24px 24px !important;
+}
+body.player-detail-app-shell .player-detail-meter-row {
+  display: grid;
+  gap: 8px;
+}
+body.player-detail-app-shell .player-detail-meter-head {
+  align-items: center;
+  color: #f8fbff;
+  display: flex;
+  font-size: 0.9rem;
+  font-weight: 900;
+  justify-content: space-between;
+}
+body.player-detail-app-shell .player-detail-meter-head span {
+  color: #b9d8ff;
+}
+body.player-detail-app-shell .player-detail-meter-track {
+  background: rgba(7, 18, 34, 0.55);
+  border: 1px solid rgba(126, 181, 255, 0.22);
+  border-radius: 999px;
+  height: 12px;
+  overflow: hidden;
+}
+body.player-detail-app-shell .player-detail-meter-fill {
+  background: linear-gradient(90deg, #8fd3ff, #6aa6ff 54%, #3f7cff);
+  border-radius: inherit;
+  height: 100%;
+}
+body.player-detail-app-shell .player-detail-note-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+body.player-detail-app-shell .player-detail-note-item {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(126, 181, 255, 0.24);
+  border-radius: 16px;
+  display: grid;
+  gap: 6px;
+  padding: 12px;
+}
+body.player-detail-app-shell .player-detail-note-item span {
+  color: #b9d8ff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+body.player-detail-app-shell .player-detail-note-item strong {
+  color: #f8fbff;
+}
+body.player-detail-app-shell .player-detail-section {
+  display: grid;
+  gap: 18px;
+  overflow: visible;
+  padding: 30px 24px 24px !important;
+  scroll-margin-top: 112px;
+}
+body.player-detail-app-shell .player-detail-section .competitions-section-head {
+  border-bottom: 1px solid rgba(126, 181, 255, 0.18) !important;
+  margin: 0 0 18px;
+  padding: 0 0 16px;
+}
+body.player-detail-app-shell .player-detail-role-grid,
+body.player-detail-app-shell .player-detail-match-grid,
+body.player-detail-app-shell .player-detail-season-grid {
+  display: grid;
+  gap: 14px;
+}
+body.player-detail-app-shell .player-detail-role-grid,
+body.player-detail-app-shell .player-detail-season-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.player-detail-app-shell .player-detail-match-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.player-detail-app-shell .player-detail-role-card,
+body.player-detail-app-shell .player-detail-match-card,
+body.player-detail-app-shell .player-detail-season-card {
+  background: rgba(35, 58, 88, 0.68);
+  border: 1px solid rgba(126, 181, 255, 0.32);
+  border-radius: 22px;
+  color: #eef6ff;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  overflow: visible;
+  padding: 16px;
+  text-decoration: none;
+}
+body.player-detail-app-shell .player-detail-match-card:hover {
+  background: rgba(44, 75, 114, 0.76);
+  border-color: rgba(143, 211, 255, 0.58);
+  color: #ffffff;
+  transform: translateY(-2px);
+}
+body.player-detail-app-shell .player-detail-role-top,
+body.player-detail-app-shell .player-detail-match-top,
+body.player-detail-app-shell .player-detail-season-head {
+  align-items: center;
+  display: flex;
+  gap: 12px;
+  justify-content: space-between;
+}
+body.player-detail-app-shell .player-detail-role-top strong,
+body.player-detail-app-shell .player-detail-match-title,
+body.player-detail-app-shell .player-detail-season-head strong {
+  color: #f8fbff;
+  font-size: 1rem;
+  font-weight: 900;
+  line-height: 1.35;
+}
+body.player-detail-app-shell .player-detail-role-top span,
+body.player-detail-app-shell .player-detail-match-top,
+body.player-detail-app-shell .player-detail-season-head span,
+body.player-detail-app-shell .player-detail-role-card p,
+body.player-detail-app-shell .player-detail-season-card p {
+  color: #b9d8ff;
+  font-weight: 850;
+  margin: 0;
+}
+body.player-detail-app-shell .competitions-alert {
+  background: rgba(143, 211, 255, 0.14);
+  border: 1px solid rgba(143, 211, 255, 0.38);
+  border-radius: 18px;
+  color: #f8fbff;
+  font-weight: 800;
+  padding: 13px 16px;
+}
+body.player-detail-app-shell .shell-nav-link[href="/players"] {
+  color: #f7fbff;
+  border-color: rgba(126, 181, 255, 0.54);
+  background: rgba(106, 166, 255, 0.18);
+}
+@media (max-width: 1280px) {
+  body.player-detail-app-shell .player-detail-hero,
+  body.player-detail-app-shell .player-detail-role-grid,
+  body.player-detail-app-shell .player-detail-match-grid,
+  body.player-detail-app-shell .player-detail-season-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  body.player-detail-app-shell .player-detail-metrics-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  body.player-detail-app-shell .player-detail-layout {
+    padding-top: 132px;
+  }
+  body.player-detail-app-shell .player-detail-hero,
+  body.player-detail-app-shell .player-detail-metrics-grid,
+  body.player-detail-app-shell .player-detail-role-grid,
+  body.player-detail-app-shell .player-detail-match-grid,
+  body.player-detail-app-shell .player-detail-season-grid,
+  body.player-detail-app-shell .player-detail-note-grid {
+    grid-template-columns: 1fr;
+  }
+  body.player-detail-app-shell .player-detail-hero-main {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* match detail frontend page */
+body.match-detail-app-shell .match-detail-layout {
+  gap: 18px;
+  padding-top: 28px;
+}
+body.match-detail-app-shell .match-detail-hero {
+  display: grid;
+  gap: 16px;
+}
+body.match-detail-app-shell .match-detail-hero-main,
+body.match-detail-app-shell .match-detail-section {
+  overflow: visible;
+  padding: 30px 24px 24px !important;
+}
+body.match-detail-app-shell .match-detail-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 16px 0 20px;
+}
+body.match-detail-app-shell .match-detail-meta-row span {
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(126, 181, 255, 0.34);
+  border-radius: 999px;
+  color: #eef6ff;
+  font-size: 0.82rem;
+  font-weight: 850;
+  padding: 7px 11px;
+}
+body.match-detail-app-shell .match-detail-actions {
+  justify-content: flex-start;
+}
+body.match-detail-app-shell .match-detail-metrics-grid {
+  gap: 12px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+body.match-detail-app-shell .match-detail-metric {
+  min-height: 104px;
+  padding: 16px !important;
+}
+body.match-detail-app-shell .match-detail-section {
+  display: grid;
+  gap: 18px;
+  scroll-margin-top: 112px;
+}
+body.match-detail-app-shell .match-detail-section .competitions-section-head {
+  border-bottom: 1px solid rgba(126, 181, 255, 0.18) !important;
+  margin: 0 0 18px;
+  padding: 0 0 16px;
+}
+body.match-detail-app-shell .match-detail-award-grid,
+body.match-detail-app-shell .match-detail-score-grid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.match-detail-app-shell .match-detail-card {
+  background: rgba(35, 58, 88, 0.68);
+  border: 1px solid rgba(126, 181, 255, 0.32);
+  border-radius: 22px;
+  color: #eef6ff;
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow: visible;
+  padding: 16px;
+  text-decoration: none;
+}
+body.match-detail-app-shell .match-detail-card:hover {
+  background: rgba(44, 75, 114, 0.76);
+  border-color: rgba(143, 211, 255, 0.58);
+  color: #ffffff;
+}
+body.match-detail-app-shell .match-detail-card-title,
+body.match-detail-app-shell .match-detail-score-value {
+  color: #f8fbff;
+  font-size: 1.45rem;
+  font-weight: 900;
+  line-height: 1.25;
+  text-decoration: none;
+}
+body.match-detail-app-shell .match-detail-card p {
+  color: #b9d8ff;
+  font-weight: 850;
+  margin: 0;
+}
+body.match-detail-app-shell .match-detail-table-wrap {
+  border: 1px solid rgba(126, 181, 255, 0.26);
+  border-radius: 22px;
+  overflow-x: auto;
+}
+body.match-detail-app-shell .match-detail-table {
+  border-collapse: collapse;
+  color: #eef6ff;
+  min-width: 980px;
+  width: 100%;
+}
+body.match-detail-app-shell .match-detail-table th,
+body.match-detail-app-shell .match-detail-table td {
+  border-bottom: 1px solid rgba(126, 181, 255, 0.18);
+  padding: 13px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+body.match-detail-app-shell .match-detail-table th {
+  color: #b9d8ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+body.match-detail-app-shell .match-detail-table td,
+body.match-detail-app-shell .match-detail-table a {
+  color: #eef6ff;
+  font-weight: 800;
+}
+body.match-detail-app-shell .match-detail-table a:hover {
+  color: #8fd3ff;
+}
+body.match-detail-app-shell .competitions-alert {
+  background: rgba(143, 211, 255, 0.14);
+  border: 1px solid rgba(143, 211, 255, 0.38);
+  border-radius: 18px;
+  color: #f8fbff;
+  font-weight: 800;
+  padding: 13px 16px;
+}
+body.match-detail-app-shell .shell-nav-link[href="/competitions"] {
+  color: #f7fbff;
+  border-color: rgba(126, 181, 255, 0.54);
+  background: rgba(106, 166, 255, 0.18);
+}
+@media (max-width: 1180px) {
+  body.match-detail-app-shell .match-detail-metrics-grid,
+  body.match-detail-app-shell .match-detail-award-grid,
+  body.match-detail-app-shell .match-detail-score-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  body.match-detail-app-shell .match-detail-layout {
+    padding-top: 132px;
+  }
+  body.match-detail-app-shell .match-detail-metrics-grid,
+  body.match-detail-app-shell .match-detail-award-grid,
+  body.match-detail-app-shell .match-detail-score-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* player detail season dimension */
+body.player-detail-app-shell .player-detail-dimension-chip {
+  align-self: flex-start;
+  background: rgba(106, 166, 255, 0.18);
+  border: 1px solid rgba(126, 181, 255, 0.42);
+  border-radius: 999px;
+  color: #f8fbff;
+  font-size: 0.86rem;
+  font-weight: 900;
+  padding: 8px 12px;
+}
+body.player-detail-app-shell .player-detail-dimension-grid,
+body.player-detail-app-shell .player-detail-radar-grid {
+  display: grid;
+  gap: 12px;
+}
+body.player-detail-app-shell .player-detail-dimension-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+body.player-detail-app-shell .player-detail-radar-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.player-detail-app-shell .player-detail-dimension-card,
+body.player-detail-app-shell .player-detail-radar-card {
+  background: rgba(35, 58, 88, 0.68);
+  border: 1px solid rgba(126, 181, 255, 0.32);
+  border-radius: 20px;
+  display: grid;
+  gap: 9px;
+  min-width: 0;
+  overflow: visible;
+  padding: 15px;
+}
+body.player-detail-app-shell .player-detail-dimension-card span {
+  color: #b9d8ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+body.player-detail-app-shell .player-detail-dimension-card strong {
+  color: #f8fbff;
+  font-size: 1.15rem;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+body.player-detail-app-shell .player-detail-table-wrap {
+  border: 1px solid rgba(126, 181, 255, 0.26);
+  border-radius: 22px;
+  overflow-x: auto;
+}
+body.player-detail-app-shell .player-detail-table {
+  border-collapse: collapse;
+  color: #eef6ff;
+  min-width: 980px;
+  width: 100%;
+}
+body.player-detail-app-shell .player-detail-table th,
+body.player-detail-app-shell .player-detail-table td {
+  border-bottom: 1px solid rgba(126, 181, 255, 0.18);
+  padding: 13px 14px;
+  text-align: left;
+  vertical-align: top;
+}
+body.player-detail-app-shell .player-detail-table th {
+  color: #b9d8ff;
+  font-size: 0.78rem;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+body.player-detail-app-shell .player-detail-table td {
+  color: #eef6ff;
+  font-weight: 800;
+}
+@media (max-width: 1180px) {
+  body.player-detail-app-shell .player-detail-dimension-grid,
+  body.player-detail-app-shell .player-detail-radar-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 760px) {
+  body.player-detail-app-shell .player-detail-dimension-grid,
+  body.player-detail-app-shell .player-detail-radar-grid {
+    grid-template-columns: 1fr;
+  }
+}

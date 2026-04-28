@@ -2599,6 +2599,19 @@ body.player-detail-app-shell .player-detail-dimension-grid {
 body.player-detail-app-shell .player-detail-radar-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
+body.player-detail-app-shell .player-detail-radar-hexagon-wrap {
+  display: grid;
+  justify-items: center;
+  margin: 18px 0 22px;
+  overflow-x: auto;
+  width: 100%;
+}
+body.player-detail-app-shell .player-detail-radar-hexagon {
+  filter: drop-shadow(0 24px 45px rgba(0, 0, 0, 0.28));
+  max-width: 620px;
+  min-width: min(300px, 100%);
+  width: min(100%, 620px);
+}
 body.player-detail-app-shell .player-detail-dimension-card,
 body.player-detail-app-shell .player-detail-radar-card {
   background: rgba(35, 58, 88, 0.68);

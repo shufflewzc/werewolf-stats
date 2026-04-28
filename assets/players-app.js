@@ -93,16 +93,50 @@
     `;
   }
 
+  function renderScopeRequired(payload) {
+    const scope = payload.scope || {};
+    const filters = scope.filters || {};
+    return `
+      <div class="competitions-layout players-layout">
+        ${renderAlert(bootstrap.alert)}
+        <section class="competitions-panel competitions-hero-main players-hero">
+          <div class="competitions-section-kicker">Season Players</div>
+          <h1 class="competitions-title">赛季选手数据</h1>
+          <p class="competitions-copy">${escapeHtml(scope.description || "请先选择具体赛事和赛季，再查看该赛季内的选手数据。")}</p>
+          <div class="competitions-filter-grid players-filter-grid">
+            <section class="competitions-filter-card"><div class="competitions-filter-label">赛区切换</div>${renderChipLinks(filters.regions)}</section>
+            <section class="competitions-filter-card"><div class="competitions-filter-label">系列赛切换</div>${renderChipLinks(filters.series)}</section>
+            <section class="competitions-filter-card"><div class="competitions-filter-label">赛事切换</div>${renderChipLinks(filters.competitions)}</section>
+            <section class="competitions-filter-card"><div class="competitions-filter-label">赛季切换</div>${renderSeasonSelect(filters.seasons)}</section>
+          </div>
+          <div class="competitions-card-actions players-hero-actions">
+            <a class="competitions-button competitions-button-primary" href="/competitions">先去比赛中心选择赛季</a>
+          </div>
+        </section>
+      </div>
+    `;
+  }
+
   function renderDashboard(payload) {
     const scope = payload.scope || {};
     const filters = scope.filters || {};
+    if (payload.requires_scope) {
+      root.innerHTML = renderScopeRequired(payload);
+      const seasonSwitcher = root.querySelector("[data-season-switcher]");
+      if (seasonSwitcher) {
+        seasonSwitcher.addEventListener("change", (event) => {
+          if (event.currentTarget.value) window.location.href = event.currentTarget.value;
+        });
+      }
+      return;
+    }
     root.innerHTML = `
       <div class="competitions-layout players-layout">
         ${renderAlert(bootstrap.alert)}
         <section class="competitions-panel competitions-hero-main players-hero">
-          <div class="competitions-section-kicker">Players Center</div>
-          <h1 class="competitions-title">选手中心</h1>
-          <p class="competitions-copy">${escapeHtml(scope.description || "查看当前赛区和赛事范围下的选手积分、胜率和出场情况。")}</p>
+          <div class="competitions-section-kicker">Season Players</div>
+          <h1 class="competitions-title">赛季选手数据</h1>
+          <p class="competitions-copy">${escapeHtml(scope.description || "查看当前赛事赛季内的选手积分、胜率和出场情况。")}</p>
           <div class="competitions-filter-grid players-filter-grid">
             <section class="competitions-filter-card"><div class="competitions-filter-label">赛区切换</div>${renderChipLinks(filters.regions)}</section>
             <section class="competitions-filter-card"><div class="competitions-filter-label">系列赛切换</div>${renderChipLinks(filters.series)}</section>
@@ -119,8 +153,8 @@
           <div class="competitions-section-head">
             <div>
               <div class="competitions-section-kicker">Player Ranking</div>
-              <h2 class="competitions-section-title">选手列表</h2>
-              <p class="competitions-section-copy">按当前积分排行展示，点击卡片进入选手详情页。</p>
+              <h2 class="competitions-section-title">本赛季选手列表</h2>
+              <p class="competitions-section-copy">只展示当前赛事赛季内的选手，点击卡片查看该赛季数据。</p>
             </div>
             <span class="competitions-chip is-active">${escapeHtml(scope.label || "当前范围")}</span>
           </div>
@@ -140,7 +174,7 @@
     root.innerHTML = `
       <section class="competitions-error-shell">
         <div class="competitions-loading-kicker">Load Failed</div>
-        <h1>选手中心加载失败</h1>
+        <h1>赛季选手数据加载失败</h1>
         <p>${escapeHtml(message)}</p>
       </section>
     `;

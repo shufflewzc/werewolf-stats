@@ -131,6 +131,61 @@
     `;
   }
 
+  function radarPoint(index, ratio, centerX, centerY, radius, total) {
+    const angle = -Math.PI / 2 + index * 2 * Math.PI / total;
+    return [
+      centerX + Math.cos(angle) * radius * ratio,
+      centerY + Math.sin(angle) * radius * ratio,
+    ];
+  }
+
+  function renderRadarHexagon(items) {
+    const radar = Array.isArray(items) ? items.slice(0, 6) : [];
+    if (radar.length !== 6) return "";
+    const centerX = 150;
+    const centerY = 142;
+    const radius = 86;
+    const grid = [0.25, 0.5, 0.75, 1].map((level) => {
+      const points = radar.map((_, index) => {
+        const [x, y] = radarPoint(index, level, centerX, centerY, radius, radar.length);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(" ");
+      return `<polygon points="${points}" fill="none" stroke="rgba(143, 211, 255, ${0.18 + level * 0.18})" stroke-width="1"></polygon>`;
+    }).join("");
+    const axes = radar.map((item, index) => {
+      const [x, y] = radarPoint(index, 1, centerX, centerY, radius, radar.length);
+      const [labelX, labelY] = radarPoint(index, 1.28, centerX, centerY, radius, radar.length);
+      const anchor = labelX < centerX - 8 ? "end" : labelX > centerX + 8 ? "start" : "middle";
+      return `
+        <line x1="${centerX}" y1="${centerY}" x2="${x.toFixed(1)}" y2="${y.toFixed(1)}" stroke="rgba(205, 226, 252, 0.18)" stroke-width="1"></line>
+        <text x="${labelX.toFixed(1)}" y="${labelY.toFixed(1)}" text-anchor="${anchor}" font-size="10.5" font-weight="800" fill="#d7e9ff">${escapeHtml(item.label)}</text>
+        <text x="${labelX.toFixed(1)}" y="${(labelY + 14).toFixed(1)}" text-anchor="${anchor}" font-size="10.5" fill="#8fd3ff">${escapeHtml(item.display)}</text>
+      `;
+    }).join("");
+    const dataPoints = radar.map((item, index) => {
+      const ratio = Math.max(0, Math.min(1, Number(item.ratio || 0)));
+      return radarPoint(index, ratio, centerX, centerY, radius, radar.length);
+    });
+    const polygon = dataPoints.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(" ");
+    const points = dataPoints.map(([x, y], index) => `
+      <circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="4" fill="#8fd3ff" stroke="#061426" stroke-width="1.5">
+        <title>${escapeHtml(radar[index].label)}：${escapeHtml(radar[index].display)}</title>
+      </circle>
+    `).join("");
+    return `
+      <div class="player-detail-radar-hexagon-wrap">
+        <svg class="player-detail-radar-hexagon" viewBox="0 0 300 284" role="img" aria-label="赛季维度六边形图">
+          <rect x="0" y="0" width="300" height="284" rx="28" fill="rgba(5, 13, 28, 0.58)"></rect>
+          ${grid}
+          ${axes}
+          <polygon points="${polygon}" fill="rgba(143, 211, 255, 0.24)" stroke="#8fd3ff" stroke-width="2.6"></polygon>
+          ${points}
+          <circle cx="${centerX}" cy="${centerY}" r="2.8" fill="#8fd3ff"></circle>
+        </svg>
+      </div>
+    `;
+  }
+
   function renderDimension(dimension) {
     const data = dimension || {};
     if (!data.available) {
@@ -160,14 +215,7 @@
             </article>
           `).join("")}
         </div>
-        <div class="player-detail-radar-grid">
-          ${radar.map((item) => `
-            <article class="player-detail-radar-card">
-              <div class="player-detail-meter-head"><strong>${escapeHtml(item.label)}</strong><span>${escapeHtml(item.display)}</span></div>
-              <div class="player-detail-meter-track"><div class="player-detail-meter-fill" style="width:${width(Number(item.ratio || 0) * 100)}%"></div></div>
-            </article>
-          `).join("")}
-        </div>
+        ${renderRadarHexagon(radar)}
         <div class="player-detail-table-wrap">
           <table class="player-detail-table">
             <thead><tr><th>日期</th><th>座位</th><th>战队</th><th>当日积分</th><th>局数</th><th>胜场</th><th>投票</th><th>投狼</th><th>MVP</th><th>SVP</th><th>背锅</th></tr></thead>
@@ -187,6 +235,20 @@
     const actions = payload.actions || {};
     const scope = payload.scope || {};
     const insights = payload.insights || {};
+    if (payload.requires_scope) {
+      if (payload.title) document.title = payload.title;
+      root.innerHTML = `
+        <section class="competitions-panel competitions-empty-state">
+          <div class="competitions-section-kicker">Season Required</div>
+          <h1 class="competitions-title">请先选择赛事赛季</h1>
+          <p class="competitions-copy">${escapeHtml(payload.message || "选手数据属于具体赛事赛季，请先从比赛中心选择赛季后再查看选手。")}</p>
+          <div class="competitions-hero-actions player-detail-actions">
+            <a class="competitions-button competitions-button-primary" href="${escapeHtml((actions && actions.competitions_href) || "/competitions")}">前往比赛中心</a>
+          </div>
+        </section>
+      `;
+      return;
+    }
     if (payload.title) document.title = payload.title;
     root.innerHTML = `
       ${renderAlert(payload.alert || bootstrap.alert)}
@@ -195,9 +257,9 @@
           <article class="competitions-panel player-detail-hero-main">
             <img class="player-detail-photo" src="${escapeHtml(player.photo || "/assets/players/default-player.svg")}" alt="${escapeHtml(player.name || "选手")} 头像">
             <div class="player-detail-hero-copy">
-              <div class="competitions-section-kicker">Player Dossier</div>
-              <h1 class="competitions-title">${escapeHtml(player.name || "选手详情")}</h1>
-              <p class="competitions-copy">${escapeHtml(player.notes || "暂无选手备注")}</p>
+              <div class="competitions-section-kicker">Season Player</div>
+              <h1 class="competitions-title">${escapeHtml(player.name || "赛季选手详情")}</h1>
+              <p class="competitions-copy">${escapeHtml(player.notes || "当前赛事赛季内的选手数据。")}</p>
               <div class="player-detail-meta-row">
                 <span>${escapeHtml(scope.competition || "全部赛事")}</span>
                 <span>${escapeHtml(scope.season || "全部赛季")}</span>
@@ -218,7 +280,7 @@
         ${renderInsight(player, insights)}
       </section>
       <section class="competitions-panel player-detail-section">
-        <div class="competitions-section-head"><div><div class="competitions-section-kicker">Roles</div><h2 class="competitions-section-title">角色画像</h2><p class="competitions-copy">按当前范围统计这名选手最常出现的位置。</p></div></div>
+        <div class="competitions-section-head"><div><div class="competitions-section-kicker">Roles</div><h2 class="competitions-section-title">角色画像</h2><p class="competitions-copy">按当前赛事赛季统计这名选手最常出现的位置。</p></div></div>
         ${renderRoles(payload.roles)}
       </section>
       <section class="competitions-panel player-detail-section">
@@ -226,7 +288,7 @@
         ${renderMatches(payload.recent_matches)}
       </section>
       <section class="competitions-panel player-detail-section">
-        <div class="competitions-section-head"><div><div class="competitions-section-kicker">Season Slices</div><h2 class="competitions-section-title">赛季切片</h2><p class="competitions-copy">按赛事赛季独立展示这名选手的表现。</p></div></div>
+        <div class="competitions-section-head"><div><div class="competitions-section-kicker">Season Slices</div><h2 class="competitions-section-title">赛季切片</h2><p class="competitions-copy">当前选手身份属于赛事赛季，这里只作为同赛季明细核对。</p></div></div>
         ${renderSeasonStats(payload.season_stats)}
       </section>
       ${renderDimension(payload.dimension)}

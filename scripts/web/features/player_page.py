@@ -451,7 +451,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         <article class="player-showcase-card">
           <div class="player-masthead">
             <div class="player-masthead-copy">
-              <div class="eyebrow">Player Dossier</div>
+              <div class="eyebrow">Season Player</div>
               <div class="player-headline">{escape(detail['display_name'])}</div>
               <div class="player-subtitle">{escape(detail['team_name'])} · 当前排名第 {detail['rank']} 名 · 战绩 {escape(detail['record'])}</div>
               <div class="player-masthead-meta">
@@ -662,7 +662,7 @@ def build_players_frontend_page(ctx: RequestContext) -> str:
           <span class="shell-brand-mark" aria-hidden="true"></span>
           <span>WOLF</span>
         </a>
-        <span class="shell-brand-copy">选手中心 · API Driven</span>
+        <span class="shell-brand-copy">赛季选手 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
         <a class="shell-nav-link" href="/dashboard">仪表盘</a>
@@ -677,8 +677,8 @@ def build_players_frontend_page(ctx: RequestContext) -> str:
     <main id="players-app" class="competitions-app-root players-app-root" aria-live="polite">
       <section class="competitions-loading-shell">
         <div class="competitions-loading-kicker">Loading Players</div>
-        <h1>正在加载选手中心</h1>
-        <p>前端会通过独立 API 拉取选手数据并渲染页面。</p>
+        <h1>正在加载赛季选手数据</h1>
+        <p>前端会按已选择的赛事赛季拉取选手数据并渲染页面。</p>
       </section>
     </main>
     <script>window.__WEREWOLF_PLAYERS_BOOTSTRAP__ = {bootstrap};</script>
@@ -701,6 +701,61 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
     season_names = list_seasons(data, selected_competition) if selected_competition else []
     selected_season = get_selected_season(ctx, season_names)
     scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
+    region_options = [
+        {
+            "label": region_name,
+            "href": build_scoped_path("/players", None, None, region_name, selected_series_slug),
+            "active": selected_region == region_name,
+        }
+        for region_name in scope["region_names"]
+    ]
+    series_options = [
+        {
+            "label": "全部系列赛",
+            "href": build_scoped_path("/players", None, None, selected_region, None),
+            "active": selected_series_slug is None,
+        }
+    ] + [
+        {
+            "label": row["series_name"],
+            "href": build_scoped_path("/players", None, None, selected_region, row["series_slug"]),
+            "active": selected_series_slug == row["series_slug"],
+        }
+        for row in series_rows
+    ]
+    competition_options = [
+        {
+            "label": row["competition_name"],
+            "href": build_scoped_path("/players", row["competition_name"], None, selected_region, selected_series_slug),
+            "active": selected_competition == row["competition_name"],
+        }
+        for row in scoped_competition_rows
+    ]
+    season_options = [
+        {
+            "label": season_name,
+            "href": build_scoped_path("/players", selected_competition, season_name, selected_region, selected_series_slug),
+            "selected": selected_season == season_name,
+        }
+        for season_name in season_names
+    ]
+    if not selected_competition or not selected_season:
+        return {
+            "generated_at": china_now_label(),
+            "requires_scope": True,
+            "scope": {
+                "label": "请先选择赛事赛季",
+                "description": "选手不是全站独立列表，必须先选择具体赛事和赛季，再查看该赛季内的选手数据。",
+                "filters": {
+                    "regions": region_options,
+                    "series": series_options,
+                    "competitions": competition_options,
+                    "seasons": season_options,
+                },
+            },
+            "metrics": [],
+            "players": [],
+        }
     scoped_competition_names = {row["competition_name"] for row in scoped_competition_rows}
     stats_data = (
         build_filtered_data(data, scoped_competition_names)
@@ -727,50 +782,6 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
         ]
         if item
     ) or f"{DEFAULT_REGION_NAME}赛区汇总"
-    region_options = [
-        {
-            "label": region_name,
-            "href": build_scoped_path("/players", None, None, region_name, selected_series_slug),
-            "active": selected_region == region_name,
-        }
-        for region_name in scope["region_names"]
-    ]
-    series_options = [
-        {
-            "label": "全部系列赛",
-            "href": build_scoped_path("/players", None, None, selected_region, None),
-            "active": selected_series_slug is None,
-        }
-    ] + [
-        {
-            "label": row["series_name"],
-            "href": build_scoped_path("/players", None, None, selected_region, row["series_slug"]),
-            "active": selected_series_slug == row["series_slug"],
-        }
-        for row in series_rows
-    ]
-    competition_options = [
-        {
-            "label": "全部赛事",
-            "href": build_scoped_path("/players", None, None, selected_region, selected_series_slug),
-            "active": selected_competition is None,
-        }
-    ] + [
-        {
-            "label": row["competition_name"],
-            "href": build_scoped_path("/players", row["competition_name"], None, selected_region, selected_series_slug),
-            "active": selected_competition == row["competition_name"],
-        }
-        for row in scoped_competition_rows
-    ]
-    season_options = [
-        {
-            "label": season_name,
-            "href": build_scoped_path("/players", selected_competition, season_name, selected_region, selected_series_slug),
-            "selected": selected_season == season_name,
-        }
-        for season_name in season_names
-    ]
     players = [
         {
             "rank": int(row.get("rank") or index + 1),
@@ -801,7 +812,7 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "generated_at": china_now_label(),
         "scope": {
             "label": scope_label,
-            "description": f"当前正在查看 {scope_label} 的选手积分、胜率和出场数据。",
+            "description": f"当前正在查看 {scope_label} 这个赛事赛季内的选手积分、胜率和出场数据。",
             "filters": {
                 "regions": region_options,
                 "series": series_options,
@@ -867,7 +878,7 @@ def build_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
           <span class="shell-brand-mark" aria-hidden="true"></span>
           <span>WOLF</span>
         </a>
-        <span class="shell-brand-copy">选手档案 · API Driven</span>
+        <span class="shell-brand-copy">赛季选手 · API Driven</span>
       </div>
       <nav class="shell-nav" aria-label="主导航">
         <a class="shell-nav-link" href="/dashboard">仪表盘</a>
@@ -882,8 +893,8 @@ def build_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
     <main id="player-app" class="competitions-layout player-detail-layout" aria-live="polite">
       <section class="competitions-panel competitions-loading-shell">
         <div class="competitions-section-kicker">Loading Player</div>
-        <h1 class="competitions-title">正在加载选手详情</h1>
-        <p class="competitions-copy">新前端会通过独立 API 拉取选手档案、角色画像和最近比赛。</p>
+        <h1 class="competitions-title">正在加载赛季选手详情</h1>
+        <p class="competitions-copy">新前端会按当前赛事赛季拉取选手数据、角色画像和最近比赛。</p>
       </section>
     </main>
     <script>window.__WEREWOLF_PLAYER_BOOTSTRAP__ = {bootstrap};</script>
@@ -956,6 +967,16 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
     )
     selected_season = get_selected_season(ctx, season_names)
     legacy_href = _build_player_legacy_href(player_id, selected_competition, selected_season)
+    if not selected_competition or not selected_season:
+        return {
+            "requires_scope": True,
+            "title": "请先选择赛季",
+            "message": "选手数据属于具体赛事赛季，请先从比赛中心选择赛季后再查看选手。",
+            "actions": {
+                "competitions_href": "/competitions",
+                "legacy_href": legacy_href,
+            },
+        }
     player_rows = build_player_rows(data, selected_competition, selected_season)
     row_lookup = {row["player_id"]: row for row in player_rows}
     details = build_player_details(data, player_rows, selected_competition, selected_season)
@@ -1020,8 +1041,8 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
         "generated_at": china_now_label(),
         "legacy_href": legacy_href,
         "scope": {
-            "competition": selected_competition or "全部赛事",
-            "season": selected_season or "全部赛季",
+            "competition": selected_competition,
+            "season": selected_season,
             "competition_options": player_competition_names,
             "season_options": season_names,
         },
@@ -1038,7 +1059,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             "owner": owner_user.get("display_name") or owner_user.get("username") if owner_user else "未绑定账号",
         },
         "actions": {
-            "players_href": "/players",
+            "players_href": build_scoped_path("/players", selected_competition, selected_season),
             "team_href": team_href,
             "legacy_href": legacy_href,
             "manage_href": manage_href,

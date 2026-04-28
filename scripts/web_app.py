@@ -11769,6 +11769,12 @@ def handle_match_create(ctx: RequestContext, start_response):
     return impl(ctx, start_response)
 
 
+def handle_dimension_stats_manage(ctx: RequestContext, start_response):
+    from web.features.matches import handle_dimension_stats_manage as impl
+
+    return impl(ctx, start_response)
+
+
 def app(environ, start_response):
     try:
         ctx = build_context(environ)
@@ -11897,6 +11903,11 @@ def app(environ, start_response):
             if manager_guard is not None:
                 return manager_guard
             return handle_match_create(ctx, start_response)
+        if path == "/dimension-stats":
+            guard = require_login(ctx, start_response)
+            if guard is not None:
+                return guard
+            return handle_dimension_stats_manage(ctx, start_response)
         if path.startswith("/matches/") and path.endswith("/legacy"):
             parts = path.strip("/").split("/")
             if len(parts) == 3 and parts[0] == "matches" and parts[2] == "legacy":

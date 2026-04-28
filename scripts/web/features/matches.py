@@ -13,7 +13,11 @@ from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
 import web_app as legacy
-from sqlite_store import clear_season_dimension_stats, save_season_dimension_stats
+from sqlite_store import (
+    clear_season_dimension_stats,
+    clear_season_dimension_stats_for_day,
+    save_season_dimension_stats,
+)
 
 CAMP_OPTIONS = legacy.CAMP_OPTIONS
 RequestContext = legacy.RequestContext
@@ -432,6 +436,7 @@ def build_dimension_import_panel(
         </div>
         <div class="d-flex flex-wrap gap-2">
           <a class="btn btn-outline-dark" href="/assets/templates/dimension-stats-upload-template-jcds.xlsx">下载京城大师赛维度模板</a>
+          <a class="btn btn-outline-dark" href="/dimension-stats">管理已导入维度数据</a>
         </div>
       </div>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
@@ -481,6 +486,370 @@ def build_dimension_import_panel(
       </div>
     </section>
     """
+
+
+def build_dimension_stats_day_rows(data: dict[str, object]) -> list[dict[str, object]]:
+    grouped: dict[tuple[str, str, str], dict[str, object]] = {}
+    player_names = {
+        str(player.get("player_id") or ""): str(player.get("display_name") or player.get("player_id") or "")
+        for player in data.get("players", [])
+        if isinstance(player, dict)
+    }
+    team_names = {
+        str(team.get("team_id") or ""): str(team.get("name") or team.get("team_id") or "")
+        for team in data.get("teams", [])
+        if isinstance(team, dict)
+    }
+    for row in data.get("season_player_dimension_stats", []):
+        if not isinstance(row, dict):
+            continue
+        key = (
+            str(row.get("competition_name") or "").strip(),
+            str(row.get("season_name") or "").strip(),
+            str(row.get("played_on") or "").strip(),
+        )
+        if not all(key):
+            continue
+        item = grouped.setdefault(
+            key,
+            {
+                "competition_name": key[0],
+                "season_name": key[1],
+                "played_on": key[2],
+                "player_count": 0,
+                "team_count": 0,
+                "players": set(),
+                "teams": set(),
+            },
+        )
+        item["player_count"] = int(item["player_count"] or 0) + 1
+        player_name = player_names.get(str(row.get("player_id") or "").strip())
+        if player_name:
+            item["players"].add(player_name)
+        team_name = team_names.get(str(row.get("team_id") or "").strip())
+        if team_name:
+            item["teams"].add(team_name)
+    for row in data.get("season_team_dimension_stats", []):
+        if not isinstance(row, dict):
+            continue
+        key = (
+            str(row.get("competition_name") or "").strip(),
+            str(row.get("season_name") or "").strip(),
+            str(row.get("played_on") or "").strip(),
+        )
+        if not all(key):
+            continue
+        item = grouped.setdefault(
+            key,
+            {
+                "competition_name": key[0],
+                "season_name": key[1],
+                "played_on": key[2],
+                "player_count": 0,
+                "team_count": 0,
+                "players": set(),
+                "teams": set(),
+            },
+        )
+        item["team_count"] = int(item["team_count"] or 0) + 1
+        team_name = team_names.get(str(row.get("team_id") or "").strip())
+        if team_name:
+            item["teams"].add(team_name)
+    rows = []
+    for item in grouped.values():
+        rows.append(
+            {
+                **item,
+                "players": sorted(item["players"]),
+                "teams": sorted(item["teams"]),
+            }
+        )
+    rows.sort(
+        key=lambda item: (
+            str(item["played_on"]),
+            str(item["competition_name"]),
+            str(item["season_name"]),
+        ),
+        reverse=True,
+    )
+    return rows
+
+
+def build_dimension_stats_chart_panel(rows: list[dict[str, object]]) -> str:
+    total_player_count = sum(int(row.get("player_count") or 0) for row in rows)
+    total_team_count = sum(int(row.get("team_count") or 0) for row in rows)
+    total_day_count = len(rows)
+    unique_player_count = len(
+        {
+            player_name
+            for row in rows
+            for player_name in row.get("players", [])
+            if str(player_name or "").strip()
+        }
+    )
+    unique_team_count = len(
+        {
+            team_name
+            for row in rows
+            for team_name in row.get("teams", [])
+            if str(team_name or "").strip()
+        }
+    )
+    max_daily_total = max(
+        [int(row.get("player_count") or 0) + int(row.get("team_count") or 0) for row in rows]
+        or [0]
+    )
+    chart_svg = ""
+    radar_items = [
+        {"label": "比赛日", "value": total_day_count},
+        {"label": "选手维度", "value": total_player_count},
+        {"label": "战队维度", "value": total_team_count},
+        {"label": "涉及选手", "value": unique_player_count},
+        {"label": "涉及战队", "value": unique_team_count},
+        {"label": "单日峰值", "value": max_daily_total},
+    ]
+    max_radar_value = max([int(item["value"] or 0) for item in radar_items] or [0])
+    if rows and max_radar_value > 0:
+        import math
+
+        center_x = 250
+        center_y = 225
+        radius = 132
+
+        def point_for(index: int, ratio: float, base_radius: float = radius) -> tuple[float, float]:
+            angle = -math.pi / 2 + index * 2 * math.pi / len(radar_items)
+            return (
+                center_x + math.cos(angle) * base_radius * ratio,
+                center_y + math.sin(angle) * base_radius * ratio,
+            )
+
+        grid_polygons = []
+        for step in range(1, 5):
+            ratio = step / 4
+            points = " ".join(
+                f"{point_for(index, ratio)[0]:.1f},{point_for(index, ratio)[1]:.1f}"
+                for index in range(len(radar_items))
+            )
+            grid_polygons.append(
+                f'<polygon points="{points}" fill="none" stroke="rgba(17, 24, 39, 0.10)" stroke-width="1"/>'
+            )
+        axis_lines = []
+        label_nodes = []
+        data_points = []
+        for index, item in enumerate(radar_items):
+            outer_x, outer_y = point_for(index, 1)
+            label_x, label_y = point_for(index, 1.28)
+            ratio = min(float(item["value"] or 0) / max_radar_value, 1.0)
+            data_x, data_y = point_for(index, ratio)
+            axis_lines.append(
+                f'<line x1="{center_x}" y1="{center_y}" x2="{outer_x:.1f}" y2="{outer_y:.1f}" stroke="rgba(17, 24, 39, 0.10)"/>'
+            )
+            label_nodes.append(
+                f"""
+                <g>
+                  <text x="{label_x:.1f}" y="{label_y:.1f}" text-anchor="middle" font-size="13" font-weight="700" fill="#111827">{escape(str(item['label']))}</text>
+                  <text x="{label_x:.1f}" y="{label_y + 17:.1f}" text-anchor="middle" font-size="12" fill="#64748b">{item['value']}</text>
+                </g>
+                """
+            )
+            data_points.append((data_x, data_y, item))
+        polygon_points = " ".join(f"{x:.1f},{y:.1f}" for x, y, _ in data_points)
+        point_nodes = "".join(
+            f'<circle cx="{x:.1f}" cy="{y:.1f}" r="5" fill="#2563eb"><title>{escape(str(item["label"]))}：{item["value"]}</title></circle>'
+            for x, y, item in data_points
+        )
+        chart_svg = f"""
+        <div class="dimension-chart-wrap" style="overflow-x:auto;">
+          <svg viewBox="0 0 500 450" role="img" aria-label="赛季维度数据六边形图" style="max-width:680px;width:100%;height:auto;display:block;margin:0 auto;">
+            <rect x="0" y="0" width="500" height="450" rx="28" fill="#f8fafc"/>
+            {''.join(grid_polygons)}
+            {''.join(axis_lines)}
+            <polygon points="{polygon_points}" fill="rgba(37, 99, 235, 0.22)" stroke="#2563eb" stroke-width="3"/>
+            {point_nodes}
+            {''.join(label_nodes)}
+          </svg>
+        </div>
+        """
+    else:
+        chart_svg = '<div class="alert alert-secondary mb-0">当前筛选范围内还没有可绘制的六边形维度数据。</div>'
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">维度数据六边形图</h2>
+          <p class="section-copy mb-0">按当前筛选范围汇总比赛日、选手维度、战队维度、涉及选手、涉及战队和单日峰值。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <span class="badge rounded-pill text-bg-primary">六维画像</span>
+          <span class="badge rounded-pill text-bg-light">按最大值归一</span>
+        </div>
+      </div>
+      <div class="row g-3 mb-3">
+        <div class="col-6 col-lg-3"><div class="stat-card h-100 p-3 border-0 shadow-sm"><div class="stat-label">比赛日</div><div class="stat-value mt-2">{total_day_count}</div></div></div>
+        <div class="col-6 col-lg-3"><div class="stat-card h-100 p-3 border-0 shadow-sm"><div class="stat-label">选手维度</div><div class="stat-value mt-2">{total_player_count}</div></div></div>
+        <div class="col-6 col-lg-3"><div class="stat-card h-100 p-3 border-0 shadow-sm"><div class="stat-label">战队维度</div><div class="stat-value mt-2">{total_team_count}</div></div></div>
+        <div class="col-6 col-lg-3"><div class="stat-card h-100 p-3 border-0 shadow-sm"><div class="stat-label">单日峰值</div><div class="stat-value mt-2">{max_daily_total}</div></div></div>
+      </div>
+      {chart_svg}
+    </section>
+    """
+
+
+def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str:
+    data = load_validated_data()
+    selected_competition = form_value(ctx.query, "competition").strip()
+    selected_season = form_value(ctx.query, "season").strip()
+    selected_played_on = form_value(ctx.query, "played_on").strip()
+    all_rows = build_dimension_stats_day_rows(data)
+    all_rows = [
+        row
+        for row in all_rows
+        if ctx.current_user and can_manage_matches(ctx.current_user, data, str(row["competition_name"]))
+    ]
+    visible_rows = [
+        row
+        for row in all_rows
+        if (not selected_competition or row["competition_name"] == selected_competition)
+        and (not selected_season or row["season_name"] == selected_season)
+        and (not selected_played_on or row["played_on"] == selected_played_on)
+    ]
+    chart_panel_html = build_dimension_stats_chart_panel(visible_rows)
+    competition_options = sorted({str(row["competition_name"]) for row in all_rows})
+    season_options = sorted(
+        {
+            str(row["season_name"])
+            for row in all_rows
+            if not selected_competition or row["competition_name"] == selected_competition
+        }
+    )
+    day_options = sorted(
+        {
+            str(row["played_on"])
+            for row in all_rows
+            if (not selected_competition or row["competition_name"] == selected_competition)
+            and (not selected_season or row["season_name"] == selected_season)
+        },
+        reverse=True,
+    )
+    rows_html = []
+    for row in visible_rows:
+        can_manage = bool(ctx.current_user and can_manage_matches(ctx.current_user, data, str(row["competition_name"])))
+        players_preview = "、".join(row["players"][:6]) + (" 等" if len(row["players"]) > 6 else "")
+        teams_preview = "、".join(row["teams"][:6]) + (" 等" if len(row["teams"]) > 6 else "")
+        delete_action = (
+            f"""
+            <form method="post" action="/dimension-stats" class="m-0" onsubmit="return confirm('确认删除 {escape(str(row['competition_name']))} / {escape(str(row['season_name']))} / {escape(str(row['played_on']))} 这一天的赛季维度数据吗？');">
+              <input type="hidden" name="action" value="delete_dimension_day">
+              <input type="hidden" name="competition_name" value="{escape(str(row['competition_name']))}">
+              <input type="hidden" name="season" value="{escape(str(row['season_name']))}">
+              <input type="hidden" name="played_on" value="{escape(str(row['played_on']))}">
+              <button type="submit" class="btn btn-sm btn-outline-danger">删除这一天</button>
+            </form>
+            """
+            if can_manage
+            else '<span class="text-secondary small">无管理权限</span>'
+        )
+        rows_html.append(
+            f"""
+            <tr>
+              <td>{escape(str(row['played_on']))}</td>
+              <td>{escape(str(row['competition_name']))}</td>
+              <td>{escape(str(row['season_name']))}</td>
+              <td>{row['player_count']} 条</td>
+              <td>{row['team_count']} 条</td>
+              <td class="small text-secondary">{escape(players_preview or '-')}</td>
+              <td class="small text-secondary">{escape(teams_preview or '-')}</td>
+              <td>{delete_action}</td>
+            </tr>
+            """
+        )
+    body = f"""
+    <section class="hero p-4 p-md-5 shadow-lg mb-4">
+      <div class="eyebrow mb-3">Dimension Stats Admin</div>
+      <h1 class="mb-3">赛季维度数据管理</h1>
+      <p class="hero-copy mb-0">按比赛日查看系统内已导入的赛季维度补充数据，并可按天删除后重新上传。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <form method="get" action="/dimension-stats" class="row g-3 align-items-end">
+        <div class="col-12 col-lg-4">
+          <label class="form-label">赛事</label>
+          <select class="form-select" name="competition" onchange="this.form.submit()">
+            <option value="">全部赛事</option>
+            {''.join(f'<option value="{escape(item)}"{" selected" if item == selected_competition else ""}>{escape(item)}</option>' for item in competition_options)}
+          </select>
+        </div>
+        <div class="col-12 col-lg-3">
+          <label class="form-label">赛季</label>
+          <select class="form-select" name="season" onchange="this.form.submit()">
+            <option value="">全部赛季</option>
+            {''.join(f'<option value="{escape(item)}"{" selected" if item == selected_season else ""}>{escape(item)}</option>' for item in season_options)}
+          </select>
+        </div>
+        <div class="col-12 col-lg-3">
+          <label class="form-label">比赛日</label>
+          <select class="form-select" name="played_on" onchange="this.form.submit()">
+            <option value="">全部比赛日</option>
+            {''.join(f'<option value="{escape(item)}"{" selected" if item == selected_played_on else ""}>{escape(item)}</option>' for item in day_options)}
+          </select>
+        </div>
+        <div class="col-12 col-lg-2">
+          <a class="btn btn-outline-dark w-100" href="/dimension-stats">重置</a>
+        </div>
+      </form>
+    </section>
+    {chart_panel_html}
+    <section class="panel shadow-sm p-3 p-lg-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">已导入比赛日</h2>
+          <p class="section-copy mb-0">共 {len(visible_rows)} 个比赛日；删除只影响这一天的赛季维度补充数据，不会删除比赛记录、队员或战队档案。</p>
+        </div>
+        <a class="btn btn-dark" href="/matches/new">返回批量导入</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead>
+            <tr><th>比赛日</th><th>赛事</th><th>赛季</th><th>选手维度</th><th>战队维度</th><th>涉及选手</th><th>涉及战队</th><th>操作</th></tr>
+          </thead>
+          <tbody>{''.join(rows_html) or '<tr><td colspan="8" class="text-secondary">当前没有符合条件的赛季维度数据。</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+    return layout("赛季维度数据管理", body, ctx, alert=alert or form_value(ctx.query, "alert").strip())
+
+
+def handle_dimension_stats_manage(ctx: RequestContext, start_response):
+    if not ctx.current_user:
+        return redirect(start_response, f"/login?next={quote('/dimension-stats')}")
+    if ctx.method == "GET":
+        return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx))
+    action = form_value(ctx.form, "action").strip()
+    if action != "delete_dimension_day":
+        return start_response_html(start_response, "405 Method Not Allowed", layout("请求无效", '<div class="alert alert-danger">请求无效。</div>', ctx))
+    data = load_validated_data()
+    competition_name = form_value(ctx.form, "competition_name").strip()
+    season_name = form_value(ctx.form, "season").strip()
+    played_on = form_value(ctx.form, "played_on").strip()
+    if not competition_name or not season_name or not played_on:
+        return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, "请先选择要删除的赛事、赛季和比赛日。"))
+    if not can_manage_matches(ctx.current_user, data, competition_name):
+        return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, f"你没有权限管理 {competition_name} 的维度数据。"))
+    try:
+        deleted_player_count, deleted_team_count = clear_season_dimension_stats_for_day(
+            competition_name,
+            season_name,
+            played_on,
+        )
+        invalidate_validated_data_cache()
+    except Exception as exc:
+        return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, f"删除维度数据失败：{exc}"))
+    next_path = build_scoped_path("/dimension-stats", competition_name, season_name)
+    next_path = append_alert_query(
+        f"{next_path}&played_on={quote(played_on)}" if "?" in next_path else f"{next_path}?played_on={quote(played_on)}",
+        f"已删除 {played_on} 维度数据：选手 {deleted_player_count} 条，战队 {deleted_team_count} 条。",
+    )
+    return redirect(start_response, next_path)
 
 
 def build_team_logo_import_panel(

@@ -1142,7 +1142,11 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
                 "name": player.get("display_name") or player_id,
                 "photo": _team_asset_href(player.get("photo"), DEFAULT_PLAYER_PHOTO),
                 "notes": player.get("notes") or "暂无选手备注",
-                "href": f"/players/{quote(player_id)}",
+                "href": build_scoped_path(
+                    f"/players/{quote(player_id)}",
+                    selected_competition,
+                    selected_season,
+                ),
                 "matches": int(stat.get("matches") or 0),
                 "wins": int(stat.get("wins") or 0),
                 "points": round(float(stat.get("points") or 0), 1),

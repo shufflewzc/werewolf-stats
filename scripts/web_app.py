@@ -15,8 +15,6 @@ import secrets
 import sys
 import threading
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesParser
@@ -66,8 +64,11 @@ from competition_meta import (
 )
 from sqlite_store import (
     DB_PATH,
+    add_ai_job_step,
+    create_ai_job,
     delete_session,
     delete_sessions_for_username,
+    load_ai_jobs,
     load_session_username,
     load_membership_requests,
     load_meta_value,
@@ -77,6 +78,7 @@ from sqlite_store import (
     save_membership_requests,
     save_meta_value,
     save_repository_data,
+    update_ai_job_status,
     save_users,
 )
 from validate_data import validate_repository
@@ -114,6 +116,21 @@ from web_config import (
     STANCE_OPTIONS,
     WINNING_CAMP_OPTIONS,
 )
+from ai.artifacts import (
+    load_ai_settings as ai_load_settings,
+    load_prompt_templates as ai_load_prompt_templates,
+    load_text_artifact as ai_load_text_artifact,
+    save_ai_settings as ai_save_settings,
+    save_prompt_templates as ai_save_prompt_templates,
+    save_text_artifact as ai_save_text_artifact,
+)
+from ai.client import (
+    extract_openai_compatible_text as ai_extract_openai_compatible_text,
+    normalize_openai_compatible_base_url as ai_normalize_openai_compatible_base_url,
+    request_openai_compatible_completion as ai_request_openai_compatible_completion,
+)
+from ai.context import render_ai_prompt_template as ai_render_ai_prompt_template
+from ai.jobs import run_ai_generation_job as ai_run_ai_generation_job
 
 from zoneinfo import ZoneInfo
 
@@ -295,37 +312,15 @@ def china_today_label() -> str:
 
 
 def normalize_openai_compatible_base_url(base_url: str) -> str:
-    normalized = str(base_url or "").strip().rstrip("/")
-    lowered = normalized.lower()
-    if lowered.endswith("/chat/completions"):
-        return normalized
-    if lowered.endswith("/v1"):
-        return normalized + "/chat/completions"
-    return normalized + "/v1/chat/completions"
+    return ai_normalize_openai_compatible_base_url(base_url)
 
 
 def load_ai_daily_brief_settings() -> dict[str, str]:
-    raw_value = load_meta_value(AI_DAILY_BRIEF_SETTINGS_KEY) or ""
-    if not raw_value.strip():
-        return {
-            "base_url": "",
-            "api_key": "",
-            "model": DEFAULT_AI_DAILY_BRIEF_MODEL,
-        }
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {
-            "base_url": "",
-            "api_key": "",
-            "model": DEFAULT_AI_DAILY_BRIEF_MODEL,
-        }
-    return {
-        "base_url": str(parsed.get("base_url") or "").strip(),
-        "api_key": str(parsed.get("api_key") or "").strip(),
-        "model": str(parsed.get("model") or DEFAULT_AI_DAILY_BRIEF_MODEL).strip()
-        or DEFAULT_AI_DAILY_BRIEF_MODEL,
-    }
+    return ai_load_settings(
+        load_meta_value,
+        settings_key=AI_DAILY_BRIEF_SETTINGS_KEY,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+    )
 
 
 def save_ai_daily_brief_settings(
@@ -334,21 +329,20 @@ def save_ai_daily_brief_settings(
     model: str,
     preserve_existing_api_key: bool = True,
 ) -> None:
-    existing_settings = load_ai_daily_brief_settings()
-    normalized_api_key = str(api_key or "").strip()
-    if preserve_existing_api_key and not normalized_api_key:
-        normalized_api_key = existing_settings.get("api_key", "")
-    payload = {
-        "base_url": str(base_url or "").strip(),
-        "api_key": normalized_api_key,
-        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
-    }
-    save_meta_value(AI_DAILY_BRIEF_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
+    ai_save_settings(
+        load_meta_value,
+        save_meta_value,
+        settings_key=AI_DAILY_BRIEF_SETTINGS_KEY,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        preserve_existing_api_key=preserve_existing_api_key,
+    )
 
 
-def load_ai_prompt_templates() -> dict[str, str]:
-    raw_value = load_meta_value(AI_PROMPT_TEMPLATES_KEY) or ""
-    default_payload = {
+def get_default_ai_prompt_templates() -> dict[str, str]:
+    return {
         "match_day_system_prompt": DEFAULT_MATCH_DAY_SYSTEM_PROMPT,
         "match_day_user_prompt": DEFAULT_MATCH_DAY_USER_PROMPT,
         "season_summary_system_prompt": DEFAULT_SEASON_SUMMARY_SYSTEM_PROMPT,
@@ -358,16 +352,14 @@ def load_ai_prompt_templates() -> dict[str, str]:
         "team_season_summary_system_prompt": DEFAULT_TEAM_SEASON_SUMMARY_SYSTEM_PROMPT,
         "team_season_summary_user_prompt": DEFAULT_TEAM_SEASON_SUMMARY_USER_PROMPT,
     }
-    if not raw_value.strip():
-        return default_payload
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return default_payload
-    return {
-        key: str(parsed.get(key) or default_value).strip() or default_value
-        for key, default_value in default_payload.items()
-    }
+
+
+def load_ai_prompt_templates() -> dict[str, str]:
+    return ai_load_prompt_templates(
+        load_meta_value,
+        templates_key=AI_PROMPT_TEMPLATES_KEY,
+        default_payload=get_default_ai_prompt_templates(),
+    )
 
 
 def save_ai_prompt_templates(
@@ -380,25 +372,21 @@ def save_ai_prompt_templates(
     team_season_summary_system_prompt: str,
     team_season_summary_user_prompt: str,
 ) -> None:
-    payload = {
-        "match_day_system_prompt": str(match_day_system_prompt or "").strip()
-        or DEFAULT_MATCH_DAY_SYSTEM_PROMPT,
-        "match_day_user_prompt": str(match_day_user_prompt or "").strip()
-        or DEFAULT_MATCH_DAY_USER_PROMPT,
-        "season_summary_system_prompt": str(season_summary_system_prompt or "").strip()
-        or DEFAULT_SEASON_SUMMARY_SYSTEM_PROMPT,
-        "season_summary_user_prompt": str(season_summary_user_prompt or "").strip()
-        or DEFAULT_SEASON_SUMMARY_USER_PROMPT,
-        "player_season_summary_system_prompt": str(player_season_summary_system_prompt or "").strip()
-        or DEFAULT_PLAYER_SEASON_SUMMARY_SYSTEM_PROMPT,
-        "player_season_summary_user_prompt": str(player_season_summary_user_prompt or "").strip()
-        or DEFAULT_PLAYER_SEASON_SUMMARY_USER_PROMPT,
-        "team_season_summary_system_prompt": str(team_season_summary_system_prompt or "").strip()
-        or DEFAULT_TEAM_SEASON_SUMMARY_SYSTEM_PROMPT,
-        "team_season_summary_user_prompt": str(team_season_summary_user_prompt or "").strip()
-        or DEFAULT_TEAM_SEASON_SUMMARY_USER_PROMPT,
-    }
-    save_meta_value(AI_PROMPT_TEMPLATES_KEY, json.dumps(payload, ensure_ascii=False))
+    ai_save_prompt_templates(
+        save_meta_value,
+        templates_key=AI_PROMPT_TEMPLATES_KEY,
+        default_payload=get_default_ai_prompt_templates(),
+        values={
+            "match_day_system_prompt": match_day_system_prompt,
+            "match_day_user_prompt": match_day_user_prompt,
+            "season_summary_system_prompt": season_summary_system_prompt,
+            "season_summary_user_prompt": season_summary_user_prompt,
+            "player_season_summary_system_prompt": player_season_summary_system_prompt,
+            "player_season_summary_user_prompt": player_season_summary_user_prompt,
+            "team_season_summary_system_prompt": team_season_summary_system_prompt,
+            "team_season_summary_user_prompt": team_season_summary_user_prompt,
+        },
+    )
 
 
 def load_dashboard_activity_settings() -> dict[str, Any]:
@@ -454,13 +442,7 @@ def render_ai_prompt_template(
     values: dict[str, Any],
     template_label: str,
 ) -> str:
-    try:
-        return str(template).format_map(
-            {key: str(value) for key, value in values.items()}
-        )
-    except KeyError as exc:
-        missing_key = str(exc).strip("'")
-        raise ValueError(f"{template_label} 缺少占位符参数：{missing_key}") from exc
+    return ai_render_ai_prompt_template(template, values, template_label)
 
 
 def mask_api_key(value: str) -> str:
@@ -473,22 +455,10 @@ def mask_api_key(value: str) -> str:
 
 
 def load_ai_match_day_report(played_on: str) -> dict[str, str] | None:
-    raw_value = load_meta_value(AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on) or ""
-    if not raw_value.strip():
-        return None
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {
-            "content": raw_value,
-            "generated_at": "",
-            "model": "",
-        }
-    return {
-        "content": str(parsed.get("content") or "").strip(),
-        "generated_at": str(parsed.get("generated_at") or "").strip(),
-        "model": str(parsed.get("model") or "").strip(),
-    }
+    return ai_load_text_artifact(
+        load_meta_value,
+        AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on,
+    )
 
 
 def save_ai_match_day_report(
@@ -497,14 +467,13 @@ def save_ai_match_day_report(
     model: str,
     generated_at: str | None = None,
 ) -> None:
-    payload = {
-        "content": str(content or "").strip(),
-        "generated_at": str(generated_at or china_now_label()).strip(),
-        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
-    }
-    save_meta_value(
+    ai_save_text_artifact(
+        save_meta_value,
         AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on,
-        json.dumps(payload, ensure_ascii=False),
+        content=content,
+        model=model,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        generated_at=generated_at,
     )
 
 
@@ -512,24 +481,10 @@ def load_ai_season_summary(
     competition_name: str,
     season_name: str,
 ) -> dict[str, str] | None:
-    raw_value = load_meta_value(
-        AI_SEASON_SUMMARY_KEY_PREFIX + competition_name + ":" + season_name
-    ) or ""
-    if not raw_value.strip():
-        return None
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {
-            "content": raw_value,
-            "generated_at": "",
-            "model": "",
-        }
-    return {
-        "content": str(parsed.get("content") or "").strip(),
-        "generated_at": str(parsed.get("generated_at") or "").strip(),
-        "model": str(parsed.get("model") or "").strip(),
-    }
+    return ai_load_text_artifact(
+        load_meta_value,
+        AI_SEASON_SUMMARY_KEY_PREFIX + competition_name + ":" + season_name,
+    )
 
 
 def save_ai_season_summary(
@@ -539,14 +494,13 @@ def save_ai_season_summary(
     model: str,
     generated_at: str | None = None,
 ) -> None:
-    payload = {
-        "content": str(content or "").strip(),
-        "generated_at": str(generated_at or china_now_label()).strip(),
-        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
-    }
-    save_meta_value(
+    ai_save_text_artifact(
+        save_meta_value,
         AI_SEASON_SUMMARY_KEY_PREFIX + competition_name + ":" + season_name,
-        json.dumps(payload, ensure_ascii=False),
+        content=content,
+        model=model,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        generated_at=generated_at,
     )
 
 
@@ -555,29 +509,15 @@ def load_ai_player_season_summary(
     competition_name: str,
     season_name: str,
 ) -> dict[str, str] | None:
-    raw_value = load_meta_value(
+    return ai_load_text_artifact(
+        load_meta_value,
         AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX
         + player_id
         + ":"
         + competition_name
         + ":"
-        + season_name
-    ) or ""
-    if not raw_value.strip():
-        return None
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {
-            "content": raw_value,
-            "generated_at": "",
-            "model": "",
-        }
-    return {
-        "content": str(parsed.get("content") or "").strip(),
-        "generated_at": str(parsed.get("generated_at") or "").strip(),
-        "model": str(parsed.get("model") or "").strip(),
-    }
+        + season_name,
+    )
 
 
 def save_ai_player_season_summary(
@@ -588,19 +528,18 @@ def save_ai_player_season_summary(
     model: str,
     generated_at: str | None = None,
 ) -> None:
-    payload = {
-        "content": str(content or "").strip(),
-        "generated_at": str(generated_at or china_now_label()).strip(),
-        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
-    }
-    save_meta_value(
+    ai_save_text_artifact(
+        save_meta_value,
         AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX
         + player_id
         + ":"
         + competition_name
         + ":"
         + season_name,
-        json.dumps(payload, ensure_ascii=False),
+        content=content,
+        model=model,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        generated_at=generated_at,
     )
 
 
@@ -609,29 +548,15 @@ def load_ai_team_season_summary(
     competition_name: str,
     season_name: str,
 ) -> dict[str, str] | None:
-    raw_value = load_meta_value(
+    return ai_load_text_artifact(
+        load_meta_value,
         AI_TEAM_SEASON_SUMMARY_KEY_PREFIX
         + team_id
         + ":"
         + competition_name
         + ":"
-        + season_name
-    ) or ""
-    if not raw_value.strip():
-        return None
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return {
-            "content": raw_value,
-            "generated_at": "",
-            "model": "",
-        }
-    return {
-        "content": str(parsed.get("content") or "").strip(),
-        "generated_at": str(parsed.get("generated_at") or "").strip(),
-        "model": str(parsed.get("model") or "").strip(),
-    }
+        + season_name,
+    )
 
 
 def save_ai_team_season_summary(
@@ -642,59 +567,23 @@ def save_ai_team_season_summary(
     model: str,
     generated_at: str | None = None,
 ) -> None:
-    payload = {
-        "content": str(content or "").strip(),
-        "generated_at": str(generated_at or china_now_label()).strip(),
-        "model": str(model or "").strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
-    }
-    save_meta_value(
+    ai_save_text_artifact(
+        save_meta_value,
         AI_TEAM_SEASON_SUMMARY_KEY_PREFIX
         + team_id
         + ":"
         + competition_name
         + ":"
         + season_name,
-        json.dumps(payload, ensure_ascii=False),
+        content=content,
+        model=model,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        generated_at=generated_at,
     )
 
 
 def extract_openai_compatible_text(response_payload: dict[str, Any]) -> str:
-    output_text = str(response_payload.get("output_text") or "").strip()
-    if output_text:
-        return output_text
-    choices = response_payload.get("choices")
-    if isinstance(choices, list) and choices:
-        first_choice = choices[0] if isinstance(choices[0], dict) else {}
-        message = first_choice.get("message") if isinstance(first_choice, dict) else {}
-        content = message.get("content") if isinstance(message, dict) else ""
-        if isinstance(content, str):
-            return content.strip()
-        if isinstance(content, list):
-            text_parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict):
-                    if isinstance(item.get("text"), str):
-                        text_parts.append(item["text"])
-                    elif item.get("type") == "output_text" and isinstance(item.get("text"), str):
-                        text_parts.append(item["text"])
-            return "\n".join(part.strip() for part in text_parts if part.strip()).strip()
-    output = response_payload.get("output")
-    if isinstance(output, list):
-        text_parts = []
-        for item in output:
-            if not isinstance(item, dict):
-                continue
-            content_items = item.get("content")
-            if not isinstance(content_items, list):
-                continue
-            for content_item in content_items:
-                if (
-                    isinstance(content_item, dict)
-                    and isinstance(content_item.get("text"), str)
-                ):
-                    text_parts.append(content_item["text"])
-        return "\n".join(part.strip() for part in text_parts if part.strip()).strip()
-    return ""
+    return ai_extract_openai_compatible_text(response_payload)
 
 
 def request_openai_compatible_completion(
@@ -706,56 +595,46 @@ def request_openai_compatible_completion(
     user_prompt: str,
     timeout_seconds: int = 90,
 ) -> str:
-    endpoint = normalize_openai_compatible_base_url(base_url)
-    payload = {
-        "model": model.strip() or DEFAULT_AI_DAILY_BRIEF_MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.7,
-    }
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {api_key.strip()}",
-            "Content-Type": "application/json",
-        },
-        method="POST",
+    return ai_request_openai_compatible_completion(
+        base_url=base_url,
+        api_key=api_key,
+        model=model,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        max_retries=AI_COMPLETION_MAX_RETRIES,
+        retry_delay_seconds=AI_COMPLETION_RETRY_DELAY_SECONDS,
+        timeout_seconds=timeout_seconds,
     )
-    last_error: ValueError | None = None
-    for attempt in range(1, AI_COMPLETION_MAX_RETRIES + 1):
-        try:
-            with urllib.request.urlopen(request, timeout=timeout_seconds) as response:
-                response_body = response.read().decode("utf-8")
-            try:
-                payload_data = json.loads(response_body)
-            except json.JSONDecodeError as exc:
-                raise ValueError("AI 接口返回了无法解析的 JSON 响应。") from exc
-            output_text = extract_openai_compatible_text(payload_data)
-            if not output_text:
-                raise ValueError("AI 接口已返回结果，但没有解析到正文内容。")
-            return output_text.strip()
-        except urllib.error.HTTPError as exc:
-            error_body = exc.read().decode("utf-8", errors="ignore").strip()
-            detail = error_body[:400] if error_body else exc.reason
-            last_error = ValueError(f"AI 接口返回 {exc.code}：{detail}")
-            if exc.code < 500 and exc.code not in {408, 409, 429}:
-                raise last_error from exc
-        except urllib.error.URLError as exc:
-            last_error = ValueError(f"AI 接口请求失败：{exc.reason}")
-        except TimeoutError as exc:
-            last_error = ValueError("AI 接口请求超时，请稍后重试。")
-        except ValueError as exc:
-            last_error = exc
 
-        if attempt < AI_COMPLETION_MAX_RETRIES:
-            time.sleep(AI_COMPLETION_RETRY_DELAY_SECONDS)
 
-    if last_error is not None:
-        raise last_error
-    raise ValueError("AI 接口请求失败，请稍后重试。")
+def run_ai_generation_job(
+    *,
+    job_type: str,
+    scope_type: str,
+    scope_key: str,
+    system_prompt: str,
+    user_prompt: str,
+    missing_config_message: str,
+    created_by: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> tuple[str, str]:
+    return ai_run_ai_generation_job(
+        job_type=job_type,
+        scope_type=scope_type,
+        scope_key=scope_key,
+        system_prompt=system_prompt,
+        user_prompt=user_prompt,
+        missing_config_message=missing_config_message,
+        load_ai_settings=load_ai_daily_brief_settings,
+        default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
+        now_label=china_now_label,
+        create_ai_job=create_ai_job,
+        add_ai_job_step=add_ai_job_step,
+        update_ai_job_status=update_ai_job_status,
+        created_by=created_by,
+        metadata=metadata,
+    )
 
 
 def _is_safe_markdown_href(href: str) -> bool:
@@ -1709,6 +1588,8 @@ def build_region_picker(
 def is_management_path(path: str) -> bool:
     if path in {
         "/accounts",
+        "/ai-admin",
+        "/ai-jobs",
         "/permissions",
         "/profile",
         "/bindings",
@@ -1778,6 +1659,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                 )
             )
         if is_admin_user(ctx.current_user):
+            admin_nav_links.append(
+                build_nav_link("AI 管理", "/ai-admin", ctx.path in {"/ai-admin", "/ai-jobs"})
+            )
             admin_nav_links.append(
                 build_nav_link("账号管理", "/accounts", ctx.path == "/accounts")
             )
@@ -8464,7 +8348,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             </form>
             """
         elif not ai_configured and is_admin_user(ctx.current_user):
-            ai_team_summary_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+            ai_team_summary_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
         if ai_team_season_summary and is_admin_user(ctx.current_user):
             ai_team_summary_admin_editor = f"""
             <div class="form-panel p-3 p-lg-4 mt-4">
@@ -9237,17 +9121,12 @@ def generate_ai_team_season_summary(
     season_team_rows: list[dict[str, Any]],
     recent_matches: list[dict[str, Any]],
 ) -> tuple[str, str]:
-    settings = load_ai_daily_brief_settings()
     prompt_templates = load_ai_prompt_templates()
-    base_url = str(settings.get("base_url") or "").strip()
-    api_key = str(settings.get("api_key") or "").strip()
-    model = str(settings.get("model") or DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or DEFAULT_AI_DAILY_BRIEF_MODEL
-    if not base_url or not api_key:
-        raise ValueError("AI 战队赛季总结尚未配置 Base URL 或 API Key。")
-    report_text = request_openai_compatible_completion(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
+    return run_ai_generation_job(
+        job_type="team_season_summary",
+        scope_type="team_competition_season",
+        scope_key=f"{team.get('team_id') or ''}:{competition_name}:{season_name}",
+        missing_config_message="AI 战队赛季总结尚未配置 Base URL 或 API Key。",
         system_prompt=prompt_templates["team_season_summary_system_prompt"],
         user_prompt=build_ai_team_season_summary_prompt(
             team,
@@ -9259,7 +9138,6 @@ def generate_ai_team_season_summary(
             recent_matches,
         ),
     )
-    return report_text, model
 
 
 def build_guild_honor_rows(data: dict[str, Any], guild_id: str) -> list[dict[str, str]]:
@@ -9403,17 +9281,12 @@ def generate_ai_player_season_summary(
     season_player_rows: list[dict[str, Any]],
     season_team_rows: list[dict[str, Any]],
 ) -> tuple[str, str]:
-    settings = load_ai_daily_brief_settings()
     prompt_templates = load_ai_prompt_templates()
-    base_url = str(settings.get("base_url") or "").strip()
-    api_key = str(settings.get("api_key") or "").strip()
-    model = str(settings.get("model") or DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or DEFAULT_AI_DAILY_BRIEF_MODEL
-    if not base_url or not api_key:
-        raise ValueError("AI 选手赛季总结尚未配置 Base URL 或 API Key。")
-    report_text = request_openai_compatible_completion(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
+    return run_ai_generation_job(
+        job_type="player_season_summary",
+        scope_type="player_competition_season",
+        scope_key=f"{player_row.get('player_id') or player_name}:{competition_name}:{season_name}",
+        missing_config_message="AI 选手赛季总结尚未配置 Base URL 或 API Key。",
         system_prompt=prompt_templates["player_season_summary_system_prompt"],
         user_prompt=build_ai_player_season_summary_prompt(
             player_name,
@@ -9425,7 +9298,6 @@ def generate_ai_player_season_summary(
             season_team_rows,
         ),
     )
-    return report_text, model
 
 
 def handle_team_page(ctx: RequestContext, start_response, team_id: str):
@@ -9874,7 +9746,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
             </form>
             """
         elif not ai_configured and is_admin_user(ctx.current_user):
-            ai_player_summary_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+            ai_player_summary_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
         if ai_player_season_summary and is_admin_user(ctx.current_user):
             ai_player_summary_admin_editor = f"""
             <div class="form-panel p-3 p-lg-4 mt-4">
@@ -10569,6 +10441,20 @@ def get_accounts_page(
     ctx: RequestContext, alert: str = "", form_values: dict[str, str] | None = None
 ) -> str:
     from web.features.admin import get_accounts_page as impl
+
+    return impl(ctx, alert, form_values)
+
+
+def get_ai_jobs_page(ctx: RequestContext, alert: str = "") -> str:
+    from web.features.ai_admin import get_ai_jobs_page as impl
+
+    return impl(ctx, alert)
+
+
+def get_ai_admin_page(
+    ctx: RequestContext, alert: str = "", form_values: dict[str, str] | None = None
+) -> str:
+    from web.features.ai_admin import get_ai_admin_page as impl
 
     return impl(ctx, alert, form_values)
 
@@ -11523,6 +11409,16 @@ def handle_accounts(ctx: RequestContext, start_response):
     return impl(ctx, start_response)
 
 
+def handle_ai_jobs(ctx: RequestContext, start_response):
+    return start_response_html(start_response, "200 OK", get_ai_jobs_page(ctx))
+
+
+def handle_ai_admin(ctx: RequestContext, start_response):
+    from web.features.ai_admin import handle_ai_admin as impl
+
+    return impl(ctx, start_response)
+
+
 def handle_permission_control(ctx: RequestContext, start_response):
     from web.features.admin import handle_permission_control as impl
 
@@ -11966,6 +11862,16 @@ def app(environ, start_response):
             if admin_guard is not None:
                 return admin_guard
             return handle_accounts(ctx, start_response)
+        if path == "/ai-admin":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_ai_admin(ctx, start_response)
+        if path == "/ai-jobs":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_ai_jobs(ctx, start_response)
         if path == "/permissions":
             return handle_permission_control(ctx, start_response)
         if path == "/profile":

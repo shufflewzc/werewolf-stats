@@ -5,6 +5,7 @@ import json
 from datetime import datetime, date
 
 import web_app as legacy
+from ai.workflows import run_match_day_report_workflow
 
 Any = legacy.Any
 CAMP_OPTIONS = legacy.CAMP_OPTIONS
@@ -55,8 +56,8 @@ load_ai_prompt_templates = legacy.load_ai_prompt_templates
 load_ai_match_day_report = legacy.load_ai_match_day_report
 load_ai_season_summary = legacy.load_ai_season_summary
 mask_api_key = legacy.mask_api_key
-request_openai_compatible_completion = legacy.request_openai_compatible_completion
 render_ai_prompt_template = legacy.render_ai_prompt_template
+run_ai_generation_job = legacy.run_ai_generation_job
 require_admin = legacy.require_admin
 sort_match_days_by_relevance = legacy.sort_match_days_by_relevance
 load_season_catalog = legacy.load_season_catalog
@@ -1045,7 +1046,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "summary": None,
         "generate_form": None,
         "edit_form": None,
-        "settings_href": "/accounts",
+        "settings_href": "/ai-admin",
     }
     if ai_season_summary:
         ai_payload["summary"] = {
@@ -1506,7 +1507,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         </form>
         """
     elif selected_competition and selected_season and not ai_configured and is_admin_user(ctx.current_user):
-        ai_season_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+        ai_season_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
     if selected_competition and selected_season and is_admin_user(ctx.current_user) and ai_season_summary:
         ai_season_admin_editor = f"""
         <div class="form-panel p-3 p-lg-4 mt-4">
@@ -2005,7 +2006,7 @@ def build_match_day_api_payload(
             "can_generate": ai_configured and (not ai_report or is_admin_user(ctx.current_user)),
             "can_edit": bool(is_admin_user(ctx.current_user) and ai_report),
             "action_path": action_path,
-            "configure_href": "/accounts" if is_admin_user(ctx.current_user) and not ai_configured else "",
+            "configure_href": "/ai-admin" if is_admin_user(ctx.current_user) and not ai_configured else "",
             "generate_label": "重生成 AI 日报" if ai_report else "生成 AI 日报",
             "generated_at": (ai_report or {}).get("generated_at") or "未生成",
             "model": (ai_report or {}).get("model") or ai_settings.get("model") or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL,
@@ -2128,13 +2129,7 @@ def generate_ai_match_day_report(
     player_lookup: dict[str, dict[str, Any]],
     team_lookup: dict[str, dict[str, Any]],
 ) -> tuple[str, str]:
-    settings = load_ai_daily_brief_settings()
     prompt_templates = load_ai_prompt_templates()
-    base_url = str(settings.get("base_url") or "").strip()
-    api_key = str(settings.get("api_key") or "").strip()
-    model = str(settings.get("model") or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL
-    if not base_url or not api_key:
-        raise ValueError("AI 比赛日报尚未配置 Base URL 或 API Key。")
     user_prompt = build_ai_match_day_prompt(
         played_on,
         day_matches,
@@ -2143,14 +2138,18 @@ def generate_ai_match_day_report(
         player_lookup,
         team_lookup,
     )
-    report_text = request_openai_compatible_completion(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
+    return run_match_day_report_workflow(
+        played_on=played_on,
+        missing_config_message="AI 比赛日报尚未配置 Base URL 或 API Key。",
         system_prompt=prompt_templates["match_day_system_prompt"],
         user_prompt=user_prompt,
+        load_ai_settings=load_ai_daily_brief_settings,
+        default_model=legacy.DEFAULT_AI_DAILY_BRIEF_MODEL,
+        now_label=legacy.china_now_label,
+        create_ai_job=legacy.create_ai_job,
+        add_ai_job_step=legacy.add_ai_job_step,
+        update_ai_job_status=legacy.update_ai_job_status,
     )
-    return report_text, model
 
 
 def build_ai_season_summary_prompt(
@@ -2224,17 +2223,12 @@ def generate_ai_season_summary(
     stage_team_rows: dict[str, list[dict[str, Any]]],
     mvp_rows: list[dict[str, Any]],
 ) -> tuple[str, str]:
-    settings = load_ai_daily_brief_settings()
     prompt_templates = load_ai_prompt_templates()
-    base_url = str(settings.get("base_url") or "").strip()
-    api_key = str(settings.get("api_key") or "").strip()
-    model = str(settings.get("model") or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL).strip() or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL
-    if not base_url or not api_key:
-        raise ValueError("AI 赛季总结尚未配置 Base URL 或 API Key。")
-    report_text = request_openai_compatible_completion(
-        base_url=base_url,
-        api_key=api_key,
-        model=model,
+    return run_ai_generation_job(
+        job_type="season_summary",
+        scope_type="competition_season",
+        scope_key=f"{competition_name}:{season_name}",
+        missing_config_message="AI 赛季总结尚未配置 Base URL 或 API Key。",
         system_prompt=prompt_templates["season_summary_system_prompt"],
         user_prompt=build_ai_season_summary_prompt(
             competition_name,
@@ -2246,7 +2240,6 @@ def generate_ai_season_summary(
             mvp_rows,
         ),
     )
-    return report_text, model
 
 
 def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: str = "") -> str:
@@ -2455,7 +2448,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
         </form>
         """
     elif not ai_configured and is_admin_user(ctx.current_user):
-        ai_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+        ai_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
     if is_admin_user(ctx.current_user) and ai_report:
         ai_report_admin_editor = f"""
         <div class="form-panel p-3 p-lg-4 mt-4">

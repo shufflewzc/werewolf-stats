@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -151,6 +152,35 @@ def create_schema(connection: sqlite3.Connection) -> None:
             meta_value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS ai_jobs (
+            job_id TEXT PRIMARY KEY,
+            job_type TEXT NOT NULL,
+            scope_type TEXT NOT NULL DEFAULT '',
+            scope_key TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            created_by TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            error_message TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_job_steps (
+            step_id TEXT PRIMARY KEY,
+            job_id TEXT NOT NULL,
+            step_order INTEGER NOT NULL,
+            step_name TEXT NOT NULL,
+            status TEXT NOT NULL,
+            started_at TEXT NOT NULL,
+            finished_at TEXT NOT NULL DEFAULT '',
+            input_summary TEXT NOT NULL DEFAULT '',
+            output_summary TEXT NOT NULL DEFAULT '',
+            error_message TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            FOREIGN KEY (job_id) REFERENCES ai_jobs(job_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS user_sessions (
             session_token TEXT PRIMARY KEY,
             username TEXT NOT NULL,
@@ -257,6 +287,12 @@ def create_schema(connection: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_match_players_match_order
         ON match_players(match_id, sort_order);
+
+        CREATE INDEX IF NOT EXISTS idx_ai_jobs_created_at
+        ON ai_jobs(created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ai_job_steps_job_order
+        ON ai_job_steps(job_id, step_order);
 
         CREATE TABLE IF NOT EXISTS season_player_dimension_stats (
             competition_name TEXT NOT NULL,
@@ -1565,6 +1601,209 @@ def save_meta_value(meta_key: str, meta_value: str) -> None:
                 """,
                 (meta_key, meta_value),
             )
+
+
+def create_ai_job(
+    *,
+    job_type: str,
+    scope_type: str = "",
+    scope_key: str = "",
+    model: str = "",
+    created_by: str = "",
+    created_at: str,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    job_id = "aijob_" + secrets.token_hex(12)
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO ai_jobs (
+                    job_id, job_type, scope_type, scope_key, status, model,
+                    created_by, created_at, updated_at, error_message, metadata_json
+                )
+                VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, '', ?)
+                """,
+                (
+                    job_id,
+                    str(job_type or "").strip(),
+                    str(scope_type or "").strip(),
+                    str(scope_key or "").strip(),
+                    str(model or "").strip(),
+                    str(created_by or "").strip(),
+                    created_at,
+                    created_at,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+    return job_id
+
+
+def update_ai_job_status(
+    job_id: str,
+    *,
+    status: str,
+    updated_at: str,
+    model: str | None = None,
+    error_message: str = "",
+) -> None:
+    normalized_job_id = str(job_id or "").strip()
+    if not normalized_job_id:
+        return
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            if model is None:
+                connection.execute(
+                    """
+                    UPDATE ai_jobs
+                    SET status = ?, updated_at = ?, error_message = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        str(status or "").strip(),
+                        updated_at,
+                        str(error_message or "").strip(),
+                        normalized_job_id,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE ai_jobs
+                    SET status = ?, updated_at = ?, model = ?, error_message = ?
+                    WHERE job_id = ?
+                    """,
+                    (
+                        str(status or "").strip(),
+                        updated_at,
+                        str(model or "").strip(),
+                        str(error_message or "").strip(),
+                        normalized_job_id,
+                    ),
+                )
+
+
+def add_ai_job_step(
+    *,
+    job_id: str,
+    step_order: int,
+    step_name: str,
+    status: str,
+    started_at: str,
+    finished_at: str = "",
+    input_summary: str = "",
+    output_summary: str = "",
+    error_message: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    step_id = "aistep_" + secrets.token_hex(12)
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO ai_job_steps (
+                    step_id, job_id, step_order, step_name, status, started_at,
+                    finished_at, input_summary, output_summary, error_message,
+                    metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    step_id,
+                    str(job_id or "").strip(),
+                    int(step_order),
+                    str(step_name or "").strip(),
+                    str(status or "").strip(),
+                    started_at,
+                    str(finished_at or "").strip(),
+                    str(input_summary or "").strip(),
+                    str(output_summary or "").strip(),
+                    str(error_message or "").strip(),
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+    return step_id
+
+
+def load_ai_jobs(limit: int = 50) -> list[dict[str, Any]]:
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        job_rows = connection.execute(
+            """
+            SELECT job_id, job_type, scope_type, scope_key, status, model,
+                   created_by, created_at, updated_at, error_message, metadata_json
+            FROM ai_jobs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 200)),),
+        ).fetchall()
+        step_rows = connection.execute(
+            """
+            SELECT step_id, job_id, step_order, step_name, status, started_at,
+                   finished_at, input_summary, output_summary, error_message,
+                   metadata_json
+            FROM ai_job_steps
+            WHERE job_id IN (
+                SELECT job_id FROM ai_jobs ORDER BY created_at DESC LIMIT ?
+            )
+            ORDER BY job_id, step_order
+            """,
+            (max(1, min(int(limit), 200)),),
+        ).fetchall()
+
+    steps_by_job: dict[str, list[dict[str, Any]]] = {}
+    for row in step_rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        steps_by_job.setdefault(row["job_id"], []).append(
+            {
+                "step_id": row["step_id"],
+                "job_id": row["job_id"],
+                "step_order": row["step_order"],
+                "step_name": row["step_name"],
+                "status": row["status"],
+                "started_at": row["started_at"],
+                "finished_at": row["finished_at"],
+                "input_summary": row["input_summary"],
+                "output_summary": row["output_summary"],
+                "error_message": row["error_message"],
+                "metadata": metadata,
+            }
+        )
+
+    jobs: list[dict[str, Any]] = []
+    for row in job_rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        jobs.append(
+            {
+                "job_id": row["job_id"],
+                "job_type": row["job_type"],
+                "scope_type": row["scope_type"],
+                "scope_key": row["scope_key"],
+                "status": row["status"],
+                "model": row["model"],
+                "created_by": row["created_by"],
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+                "error_message": row["error_message"],
+                "metadata": metadata,
+                "steps": steps_by_job.get(row["job_id"], []),
+            }
+        )
+    return jobs
 
 
 def load_session_username(session_token: str) -> str | None:

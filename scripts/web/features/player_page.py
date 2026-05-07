@@ -361,7 +361,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
             </form>
             """
         elif not ai_configured and is_admin_user(ctx.current_user):
-            ai_player_summary_actions = '<a class="btn btn-outline-dark" href="/accounts">前往账号管理配置 AI 接口</a>'
+            ai_player_summary_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
         if ai_player_season_summary and is_admin_user(ctx.current_user):
             ai_player_summary_admin_editor = f"""
             <div class="form-panel p-3 p-lg-4 mt-4">

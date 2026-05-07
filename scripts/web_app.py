@@ -6321,6 +6321,13 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "featured_seasons": featured_seasons,
             "latest_played_on": latest_played_on or "待录入",
             "latest_match_day_href": latest_match_day_href,
+            "schedule_href": build_schedule_path(
+                selected_competition,
+                selected_season,
+                None,
+                selected_region,
+                selected_series_slug,
+            ),
             "competitions_href": "/competitions",
             "top_team": top_team,
             "top_player": top_player,

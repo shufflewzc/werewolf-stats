@@ -131,7 +131,7 @@
           <span>星期五</span>
         </div>
         <div class="dashboard-schedule-list">${rows.join("")}</div>
-        <a class="dashboard-section-action" href="${escapeHtml(hero.latest_match_day_href || "/competitions")}">查看完整赛程</a>
+        <a class="dashboard-section-action" href="${escapeHtml(hero.schedule_href || "/schedule")}">查看完整赛程</a>
       </aside>
     `;
   }

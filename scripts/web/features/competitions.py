@@ -118,6 +118,7 @@ def build_group_team_rows(
                     "team_id": team_id,
                     "team_name": team["name"],
                     "matches_represented": 0,
+                    "player_appearances": 0,
                     "player_count": 0,
                     "points_earned_total": 0.0,
                     "wins": 0,
@@ -129,6 +130,7 @@ def build_group_team_rows(
             key = (group_label, entry["team_id"])
             if key not in group_rows:
                 continue
+            group_rows[key]["player_appearances"] += 1
             group_rows[key]["points_earned_total"] += float(entry["points_earned"])
             group_rows[key]["wins"] += 1 if entry["result"] == "win" else 0
             represented_players[key].add(entry["player_id"])
@@ -143,8 +145,8 @@ def build_group_team_rows(
             else 0.0
         )
         row["win_rate"] = (
-            legacy.safe_rate(row["wins"], row["player_count"] and row["matches_represented"] * max(row["player_count"], 1))
-            if row["matches_represented"]
+            legacy.safe_rate(row["wins"], row["player_appearances"])
+            if row["player_appearances"]
             else 0.0
         )
         summary.append(row)

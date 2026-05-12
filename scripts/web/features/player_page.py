@@ -767,8 +767,9 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
     displayed_rows = visible_rows or player_rows
     displayed_rows.sort(
         key=lambda row: (
-            int(row.get("rank") or 9999),
             -float(row.get("points_earned_total") or 0.0),
+            -float(row.get("average_points") or 0.0),
+            -int(row.get("games_played") or 0),
             row.get("display_name") or "",
         )
     )
@@ -784,7 +785,7 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
     ) or f"{DEFAULT_REGION_NAME}赛区汇总"
     players = [
         {
-            "rank": int(row.get("rank") or index + 1),
+            "rank": index + 1,
             "player_id": row["player_id"],
             "display_name": row["display_name"],
             "team_name": row.get("team_name") or row.get("current_team_name") or "未绑定战队",
@@ -796,7 +797,6 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "points_total": f"{float(row.get('points_earned_total') or 0.0):.2f}",
             "average_points": f"{float(row.get('average_points') or 0.0):.2f}",
             "win_rate": format_pct(float(row.get("win_rate") or 0.0)),
-            "stance_rate": format_pct(float(row.get("stance_rate") or 0.0)),
             "href": build_scoped_path(
                 "/players/" + row["player_id"],
                 selected_competition,

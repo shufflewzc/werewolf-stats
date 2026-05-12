@@ -8,7 +8,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 import re
 import secrets
-from urllib.parse import quote
+from urllib.parse import quote, urlencode
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
@@ -964,12 +964,55 @@ def get_management_form_values(
 ) -> dict[str, str]:
     current = values or {}
     return {
-        "competition_name": current.get("competition_name", form_value(ctx.query, "competition").strip()),
-        "season": current.get("season", form_value(ctx.query, "season").strip()),
-        "stage": current.get("stage", form_value(ctx.query, "stage").strip()),
-        "played_on": current.get("played_on", form_value(ctx.query, "played_on").strip()),
-        "keyword": current.get("keyword", form_value(ctx.query, "keyword").strip()),
+        "competition_name": current.get(
+            "competition_name",
+            form_value(ctx.form, "competition_name").strip()
+            or form_value(ctx.query, "competition").strip(),
+        ),
+        "season": current.get(
+            "season",
+            form_value(ctx.form, "season").strip() or form_value(ctx.query, "season").strip(),
+        ),
+        "stage": current.get(
+            "stage",
+            form_value(ctx.form, "stage").strip() or form_value(ctx.query, "stage").strip(),
+        ),
+        "played_on": current.get(
+            "played_on",
+            form_value(ctx.form, "played_on").strip() or form_value(ctx.query, "played_on").strip(),
+        ),
+        "keyword": current.get(
+            "keyword",
+            form_value(ctx.form, "keyword").strip() or form_value(ctx.query, "keyword").strip(),
+        ),
     }
+
+
+def build_match_management_path(
+    ctx: RequestContext,
+    competition_name: str = "",
+    season_name: str = "",
+    values: dict[str, str] | None = None,
+) -> str:
+    current = get_management_form_values(ctx, values)
+    if competition_name and not current["competition_name"]:
+        current["competition_name"] = competition_name
+    if season_name and not current["season"]:
+        current["season"] = season_name
+    params = {
+        key: value
+        for key, value in {
+            "competition": current["competition_name"],
+            "season": current["season"],
+            "stage": current["stage"],
+            "played_on": current["played_on"],
+            "keyword": current["keyword"],
+        }.items()
+        if value
+    }
+    if not params:
+        return "/matches/new"
+    return f"/matches/new?{urlencode(params)}"
 
 
 def build_match_management_panel(
@@ -2882,6 +2925,7 @@ def get_match_edit_page(
     alert: str = "",
     field_values: dict[str, object] | None = None,
 ) -> str:
+    alert = alert or form_value(ctx.query, "alert").strip()
     data = load_validated_data()
     match = get_match_by_id(data["matches"], match_id)
     if not match:
@@ -2894,7 +2938,7 @@ def get_match_edit_page(
         return layout("没有权限", '<div class="alert alert-danger">你不能编辑这个地区系列赛下的比赛。</div>', ctx)
 
     current = ensure_match_form_players(field_values or match)
-    next_path = form_value(ctx.query, "next", "/dashboard")
+    next_path = form_value(ctx.query, "next").strip() or "/matches/new"
     match_code_hint = current.get("match_id", match_id)
     form_html = render_match_form_page(
         ctx,
@@ -2927,6 +2971,7 @@ def get_match_create_page(
     batch_form_values: dict[str, str] | None = None,
     excel_form_values: dict[str, str] | None = None,
 ) -> str:
+    alert = alert or form_value(ctx.query, "alert").strip()
     current = ensure_match_form_players(field_values or build_empty_match(
         form_value(ctx.query, "competition").strip(),
         form_value(ctx.query, "season").strip(),
@@ -2939,11 +2984,11 @@ def get_match_create_page(
             str(current.get("competition_name") or ""),
         ):
             return layout("没有权限", '<div class="alert alert-danger">你不能在这个地区系列赛下创建比赛。</div>', ctx)
-    next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-        "/competitions",
-        current.get("competition_name") or None,
-        current.get("season") or None,
-    ) or "/competitions"
+    next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+        ctx,
+        str(current.get("competition_name") or ""),
+        str(current.get("season") or ""),
+    )
     manual_form_html = render_match_form_page(
         ctx,
         current,
@@ -3127,10 +3172,12 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="批量删除失败：" + "；".join(errors[:3])),
             )
-        return start_response_html(
+        return redirect(
             start_response,
-            "200 OK",
-            get_match_create_page(ctx, alert=f"已删除 {len(selected_match_ids)} 场比赛。"),
+            append_alert_query(
+                build_match_management_path(ctx, values=management_form_values),
+                f"已删除 {len(selected_match_ids)} 场比赛。",
+            ),
         )
     if action == "batch_create_matches":
         competition_name = form_value(ctx.form, "competition_name").strip()
@@ -3207,14 +3254,14 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="批量创建失败：" + "；".join(errors[:3]), batch_form_values=batch_form_values),
             )
-        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-            "/competitions",
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+            ctx,
             competition_name,
             season_name,
         )
         return redirect(
             start_response,
-            append_alert_query(next_path or "/competitions", f"已批量创建 {len(new_matches)} 场待补录比赛。"),
+            append_alert_query(next_path, f"已批量创建 {len(new_matches)} 场待补录比赛。"),
         )
     if action == "import_match_excel":
         group_label = form_value(ctx.form, "group_label").strip()
@@ -3250,7 +3297,7 @@ def handle_match_create(ctx: RequestContext, start_response):
                     excel_form_values=excel_form_values,
                 ),
             )
-        next_path = form_value(ctx.query, "next").strip() or "/competitions"
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(ctx)
         alert_message = import_message
         if created_player_ids:
             alert_message += " 系统还为模板里不存在的参赛 ID 自动创建了赛季档案。"
@@ -3288,12 +3335,12 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=f"维度数据保存失败：{exc}"),
             )
-        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-            "/competitions",
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+            ctx,
             competition_name,
             season_name,
         )
-        return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
+        return redirect(start_response, append_alert_query(next_path, import_message))
     if action == "clear_dimension_stats":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()
@@ -3345,15 +3392,15 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=f"清空维度数据失败：{exc}"),
             )
-        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-            "/competitions",
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+            ctx,
             competition_name,
             season_name,
         )
         return redirect(
             start_response,
             append_alert_query(
-                next_path or "/competitions",
+                next_path,
                 f"已清空维度数据：选手 {deleted_player_count} 条，战队 {deleted_team_count} 条。",
             ),
         )
@@ -3390,12 +3437,12 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="战队图标导入保存失败：" + "；".join(errors[:3])),
             )
-        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-            "/competitions",
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+            ctx,
             competition_name,
             season_name,
         )
-        return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
+        return redirect(start_response, append_alert_query(next_path, import_message))
     if action == "import_player_photo_excel":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()
@@ -3429,12 +3476,12 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="队员头像导入保存失败：" + "；".join(errors[:3])),
             )
-        next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
-            "/competitions",
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+            ctx,
             competition_name,
             season_name,
         )
-        return redirect(start_response, append_alert_query(next_path or "/competitions", import_message))
+        return redirect(start_response, append_alert_query(next_path, import_message))
 
     new_match = parse_match_form(ctx.form, build_empty_match())
     resolution_errors = resolve_match_entities(data, [new_match])
@@ -3519,7 +3566,11 @@ def handle_match_create(ctx: RequestContext, start_response):
         if created_player_ids and next_path.startswith("/matches/"):
             next_path = append_alert_query(next_path, "placeholder-created")
         return redirect(start_response, next_path)
-    redirect_path = f"/matches/{resolved_match_id}"
+    redirect_path = build_match_management_path(
+        ctx,
+        str(new_match.get("competition_name") or ""),
+        str(new_match.get("season") or ""),
+    )
     if created_player_ids:
         redirect_path = append_alert_query(redirect_path, "placeholder-created")
     return redirect(start_response, redirect_path)

@@ -85,7 +85,6 @@
             <div class="players-meta-row">
               <span>${escapeHtml(player.record)} 战绩</span>
               <span>均分 ${escapeHtml(player.average_points)}</span>
-              <span>站边 ${escapeHtml(player.stance_rate)}</span>
             </div>
           </a>
         `).join("")}

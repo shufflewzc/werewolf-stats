@@ -80,13 +80,6 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
         participant = participant_by_id.get(player_id)
         player = player_lookup.get(player_id)
         display_name = player["display_name"] if player else player_id
-        detail_path = build_scoped_path(
-            f"/players/{player_id}",
-            competition_name,
-            season_name,
-            selected_region,
-            selected_series_slug,
-        )
         meta_parts = []
         if participant:
             seat = participant.get("seat")
@@ -104,6 +97,15 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
         meta_html = ""
         if meta_parts:
             meta_html = f'<div class="small-muted mt-2">{" · ".join(escape(part) for part in meta_parts)}</div>'
+        if not player:
+            return f'<span class="fw-semibold fs-4">{escape(display_name)}</span>{meta_html}'
+        detail_path = build_scoped_path(
+            f"/players/{player_id}",
+            competition_name,
+            season_name,
+            selected_region,
+            selected_series_slug,
+        )
         return (
             f'<a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover '
             f'fw-semibold fs-4" href="{escape(detail_path)}">{escape(display_name)}</a>'
@@ -182,7 +184,11 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
             f"""
             <tr>
               <td>{participant['seat']}</td>
-              <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + participant['player_id'], competition_name, season_name))}">{escape(player_name)}</a></td>
+              <td>{
+                f'<a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path("/players/" + participant["player_id"], competition_name, season_name))}">{escape(player_name)}</a>'
+                if player
+                else f'<span class="fw-semibold">{escape(player_name)}</span>'
+              }</td>
               <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(build_scoped_path('/teams/' + participant['team_id'], competition_name, season_name))}">{escape(team_name)}</a></td>
               <td>{escape(participant['role'])}</td>
               <td>{escape(to_chinese_camp(participant['camp']))}</td>
@@ -427,6 +433,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         team_id = str(participant.get("team_id") or "").strip()
         player = player_lookup.get(player_id, {})
         team = team_lookup.get(team_id, {})
+        has_player_profile = bool(player)
         team_scores[team_id] = team_scores.get(team_id, 0.0) + float(participant.get("points_earned") or 0)
         participant_by_id[player_id] = participant
         breakdown = normalize_score_breakdown(participant) if show_score_breakdown else {}
@@ -435,7 +442,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
                 "seat": participant.get("seat") or 0,
                 "player_id": player_id,
                 "player_name": player.get("display_name") or player_id,
-                "player_href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug),
+                "player_href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug) if has_player_profile else "",
                 "team_id": team_id,
                 "team_name": team.get("name") or team_id,
                 "team_href": build_scoped_path(f"/teams/{team_id}", competition_name, season_name, selected_region, selected_series_slug),
@@ -459,7 +466,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
             "empty_label": empty_label,
             "player_id": player_id,
             "player_name": player.get("display_name") or (player_id if player_id else ""),
-            "href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug) if player_id else "",
+            "href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug) if player_id and player else "",
             "meta": " · ".join(str(part) for part in [participant.get("seat") and f"{participant.get('seat')}号", participant.get("role"), team.get("name")] if part),
         }
 

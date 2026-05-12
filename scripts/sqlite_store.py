@@ -760,6 +760,7 @@ def replace_repository_data(
         FROM user_sessions
         """
     ).fetchall()
+    connection.execute("PRAGMA foreign_keys = OFF")
     with connection:
         connection.execute("DELETE FROM match_players")
         connection.execute("DELETE FROM matches")
@@ -984,6 +985,7 @@ def replace_repository_data(
             ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
             """
         )
+    connection.execute("PRAGMA foreign_keys = ON")
 
 
 def ensure_database() -> None:

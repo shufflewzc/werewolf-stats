@@ -17,6 +17,7 @@ VALID_WINNING_CAMPS = {"villagers", "werewolves", "third_party"}
 VALID_RESULTS = {"win", "loss"}
 VALID_STANCE_RESULTS = {"correct", "incorrect", "none"}
 VALID_SCORE_MODELS = {"standard", "jingcheng_daily"}
+NON_PROFILE_PLAYER_IDS = {"NPC"}
 MATCH_SCORE_COMPONENT_FIELDS = {
     "result_points",
     "vote_points",
@@ -57,6 +58,10 @@ def validate_slug(value: Any, label: str) -> list[str]:
     if not isinstance(value, str) or not SLUG_PATTERN.match(value):
         return [f"{label}: expected lowercase slug-like string"]
     return []
+
+
+def is_non_profile_player_id(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().upper() in NON_PROFILE_PLAYER_IDS
 
 
 def validate_non_empty_string(value: Any, label: str) -> list[str]:
@@ -514,8 +519,19 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                 )
 
                 participant_id = participant.get("player_id")
-                errors.extend(validate_slug(participant_id, f"{participant_label}.player_id"))
-                if isinstance(participant_id, str):
+                if is_non_profile_player_id(participant_id):
+                    normalized_participant_id = participant_id.strip().upper()
+                    participant_id = normalized_participant_id
+                    if normalized_participant_id in seen_players:
+                        errors.append(
+                            f"{participant_label}.player_id: duplicate player in match {normalized_participant_id!r}"
+                        )
+                    else:
+                        seen_players.add(normalized_participant_id)
+                        participant_ids_in_match.add(normalized_participant_id)
+                else:
+                    errors.extend(validate_slug(participant_id, f"{participant_label}.player_id"))
+                if isinstance(participant_id, str) and not is_non_profile_player_id(participant_id):
                     if participant_id not in player_ids:
                         errors.append(
                             f"{participant_label}.player_id: unknown player_id {participant_id!r}"
@@ -618,6 +634,8 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         mvp_player_id = match.get("mvp_player_id")
         if isinstance(mvp_player_id, str) and not mvp_player_id.strip() and is_placeholder_match:
             pass
+        elif is_non_profile_player_id(mvp_player_id):
+            mvp_player_id = mvp_player_id.strip().upper()
         else:
             errors.extend(validate_slug(mvp_player_id, f"{label}.mvp_player_id"))
         if (
@@ -632,6 +650,8 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         svp_player_id = match.get("svp_player_id")
         if isinstance(svp_player_id, str) and not svp_player_id.strip() and is_placeholder_match:
             pass
+        elif is_non_profile_player_id(svp_player_id):
+            svp_player_id = svp_player_id.strip().upper()
         else:
             errors.extend(validate_slug(svp_player_id, f"{label}.svp_player_id"))
         if (
@@ -660,9 +680,12 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             elif scapegoat_player_id.strip():
                 errors.append(f"{label}.scapegoat_player_id: must be empty when non-werewolves win")
         else:
-            errors.extend(
-                validate_slug(scapegoat_player_id, f"{label}.scapegoat_player_id")
-            )
+            if is_non_profile_player_id(scapegoat_player_id):
+                scapegoat_player_id = scapegoat_player_id.strip().upper()
+            else:
+                errors.extend(
+                    validate_slug(scapegoat_player_id, f"{label}.scapegoat_player_id")
+                )
             if (
                 isinstance(scapegoat_player_id, str)
                 and scapegoat_player_id not in participant_ids_in_match

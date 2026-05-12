@@ -38,7 +38,9 @@
           <article class="match-detail-card">
             <div class="competitions-section-kicker">${escapeHtml(award.label)}</div>
             ${award.player_id ? `
-              <a class="match-detail-card-title" href="${escapeHtml(award.href)}">${escapeHtml(award.player_name)}</a>
+              ${award.href
+                ? `<a class="match-detail-card-title" href="${escapeHtml(award.href)}">${escapeHtml(award.player_name)}</a>`
+                : `<div class="match-detail-card-title">${escapeHtml(award.player_name)}</div>`}
               <p>${escapeHtml(award.meta || "")}</p>
             ` : `<p>${escapeHtml(award.empty_label || "暂未设置")}</p>`}
           </article>
@@ -79,7 +81,7 @@
             ${items.map((item) => `
               <tr>
                 <td>${escapeHtml(item.seat)}</td>
-                <td><a href="${escapeHtml(item.player_href || "#")}">${escapeHtml(item.player_name)}</a></td>
+                <td>${item.player_href ? `<a href="${escapeHtml(item.player_href)}">${escapeHtml(item.player_name)}</a>` : `<span>${escapeHtml(item.player_name)}</span>`}</td>
                 <td><a href="${escapeHtml(item.team_href || "#")}">${escapeHtml(item.team_name)}</a></td>
                 <td>${escapeHtml(item.role)}</td>
                 <td>${escapeHtml(item.camp)}</td>

@@ -45,6 +45,11 @@ STANCE_TO_CHINESE = {
     "werewolves": "站狼人",
     "third_party": "站第三方",
 }
+NON_PROFILE_PLAYER_IDS = {"NPC"}
+
+
+def is_non_profile_player_id(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().upper() in NON_PROFILE_PLAYER_IDS
 
 
 def safe_rate(numerator: float, denominator: float) -> float:
@@ -223,7 +228,9 @@ def build_player_rows(
 
     for match in matches:
         for entry in match["players"]:
-            row = aggregates[entry["player_id"]]
+            row = aggregates.get(entry["player_id"])
+            if row is None:
+                continue
             stance_result = normalize_stance_result(entry)
             camp = str(entry.get("camp") or "").strip()
             row["games_played"] += 1
@@ -334,7 +341,8 @@ def build_team_rows(
             row = aggregates[entry["team_id"]]
             stance_result = normalize_stance_result(entry)
             row["player_appearances"] += 1
-            represented_players[entry["team_id"]].add(entry["player_id"])
+            if not is_non_profile_player_id(entry.get("player_id")):
+                represented_players[entry["team_id"]].add(entry["player_id"])
             row["wins"] += 1 if entry["result"] == "win" else 0
             row["losses"] += 1 if entry["result"] == "loss" else 0
             row["points_earned_total"] += float(entry["points_earned"])

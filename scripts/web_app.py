@@ -144,6 +144,7 @@ TEAM_ASSETS_DIR = ASSETS_DIR / "teams"
 TEAM_UPLOAD_DIR = TEAM_ASSETS_DIR / "uploads"
 DEFAULT_PLAYER_PHOTO = "assets/players/default-player.svg"
 DEFAULT_TEAM_LOGO = "assets/teams/default-team.svg"
+NON_PROFILE_PLAYER_IDS = {"NPC"}
 SESSION_COOKIE = "werewolf_session"
 SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30
 HOST = os.getenv("HOST", "")
@@ -1058,6 +1059,10 @@ def build_unique_slug(existing_ids: set[str], prefix: str, source: str, fallback
         candidate = f"{base}-{counter}"
         counter += 1
     return candidate
+
+
+def is_non_profile_player_id(value: Any) -> bool:
+    return isinstance(value, str) and value.strip().upper() in NON_PROFILE_PLAYER_IDS
 
 
 def list_region_names(catalog: list[dict[str, Any]]) -> list[str]:
@@ -4550,6 +4555,10 @@ def resolve_match_entities(
             if not player_name:
                 errors.append(f"{team_name} 有一行缺少队员姓名。")
                 continue
+            if is_non_profile_player_id(player_name) or is_non_profile_player_id(entry.get("player_id")):
+                entry["player_id"] = "NPC"
+                entry["player_name"] = "NPC"
+                continue
             player = find_player_by_name_in_scope(
                 data,
                 competition_name,
@@ -4589,6 +4598,9 @@ def ensure_placeholder_players_for_matches(
         for entry in match.get("players", []):
             player_id = str(entry.get("player_id") or "").strip()
             team_id = str(entry.get("team_id") or "").strip()
+            if is_non_profile_player_id(player_id):
+                entry["player_id"] = "NPC"
+                continue
             if not player_id or player_id in existing_player_ids:
                 continue
             team = team_lookup.get(team_id)

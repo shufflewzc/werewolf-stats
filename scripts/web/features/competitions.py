@@ -935,6 +935,49 @@ def build_playoff_progress_overview(
     }
 
 
+def render_legacy_progress_overview(progress: dict[str, Any]) -> str:
+    rules = progress.get("rules") if isinstance(progress.get("rules"), list) else []
+    rule_cards = "".join(
+        f"""
+        <div class="col-12 col-lg-4">
+          <div class="team-link-card shadow-sm p-4 h-100">
+            <div class="card-kicker mb-2">{escape(str(rule.get('group_label') or '分组'))}</div>
+            <div class="alert alert-success py-2 mb-2 fw-semibold">{escape(str(rule.get('direct_label') or ''))}</div>
+            <div class="alert alert-danger py-2 mb-0 fw-semibold">{escape(str(rule.get('eliminated_label') or ''))}</div>
+          </div>
+        </div>
+        """
+        for rule in rules
+        if isinstance(rule, dict)
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <div class="eyebrow mb-2">Tournament Progress</div>
+          <h2 class="section-title mb-2">比赛进程总览</h2>
+          <p class="section-copy mb-0">{escape(str(progress.get('summary') or ''))}</p>
+        </div>
+        <div class="team-link-card shadow-sm px-4 py-3">
+          <div class="card-kicker mb-1">{escape(str(progress.get('stage_label') or '当前赛段'))}</div>
+          <div class="h5 mb-0">{escape(str(progress.get('status_label') or '待排期'))}</div>
+        </div>
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-lg-4">
+          <div class="team-link-card shadow-sm p-4 h-100">
+            <div class="card-kicker mb-2">当前阶段</div>
+            <h3 class="h4 mb-3">{escape(str(progress.get('stage_label') or '季后赛'))}</h3>
+            <div class="small-muted mb-1">最近比赛日 {escape(str(progress.get('latest_played_on') or '待更新'))}</div>
+            <div class="small-muted">赛段时间 {escape(str(progress.get('period') or '未设置'))}</div>
+          </div>
+        </div>
+        {rule_cards}
+      </div>
+    </section>
+    """
+
+
 def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -1525,6 +1568,9 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     season_registration_panel = ""
     if selected_season:
         season_registration_panel = f"""<section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">赛季档期</h2><p class="section-copy mb-0">当前查看的是 {escape(selected_season)}。赛季战队与队员由比赛补录、战队档案和管理员维护直接决定，不再单独提供报名操作。</p></div><div class="d-flex flex-wrap gap-2">{season_manage_button}</div></div><div class="team-link-card shadow-sm p-4"><div class="card-kicker mb-2">赛季状态</div><h3 class="h5 mb-2">{escape(season_status_text)}</h3><div class="small-muted mb-2">起止时间 {escape(season_period_text)}</div><p class="section-copy mb-0">{escape(season_note_text)}</p></div></section>"""
+    progress_overview_panel = render_legacy_progress_overview(
+        build_playoff_progress_overview(match_rows, season_entry)
+    )
     stage_team_sections: list[str] = []
     for stage_key, rows in stage_team_rows.items():
         stage_table_rows = "".join(
@@ -1701,6 +1747,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">{escape(page_badge)}</div><h1 class="hero-title mb-3">{escape(hero_title)}</h1><p class="hero-copy mb-0">{escape(hero_intro)}</p>{region_switcher_html}{series_switcher_html}<div class="hero-switchers mt-3">{competition_switcher}</div>{season_switcher_html}<div class="hero-kpis"><div class="hero-pill"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>{escape(selected_season or '当前赛季')} 真实参赛</small></div><div class="hero-pill"><span>参赛队员</span><strong>{player_count}</strong><small>{escape(selected_season or '当前赛季')} 已上场</small></div><div class="hero-pill"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>{escape(scope_label)} 完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Event Sheet</div><div class="hero-stage-label">Season Overview</div><div class="hero-stage-title">{escape(scope_label)}</div><div class="hero-stage-note">{escape(hero_note)}</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(selected_season or (' / '.join(competition_meta['seasons'][:2]) if competition_meta and competition_meta['seasons'] else '赛季待录入'))}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>该赛季参赛战队</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{player_count}</strong><small>该赛季实际出场</small></div><div class="hero-stage-metric"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>该赛季完整赛程</small></div></div></div></div></section>
     {season_registration_panel}
+    {progress_overview_panel}
     {ai_season_summary_panel}
     {leaderboard_sections}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季战队入口</h2><p class="section-copy mb-0">这里只保留当前赛季的战队名称入口，点进后继续看同一赛季口径下的战队详情。</p></div><div class="d-flex flex-wrap gap-2">{create_match_button}{edit_competition_button}{series_topic_button}{schedule_page_button}<a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', None, None, selected_region, selected_series_slug))}">返回地区赛事列表</a></div></div><div class="d-flex flex-wrap gap-2">{team_links_html or '<div class="alert alert-secondary mb-0 w-100">当前赛季还没有战队数据。</div>'}</div></section>

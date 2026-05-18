@@ -5998,6 +5998,17 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     series_rows = scope["series_rows"]
     season_names = list_seasons(data, selected_competition) if selected_competition else []
     selected_season = get_selected_season(ctx, season_names)
+    season_catalog = load_season_catalog(data)
+    season_entry = (
+        get_season_entry(
+            season_catalog,
+            selected_entry["series_slug"] if selected_entry else selected_series_slug,
+            selected_season,
+            competition_name=selected_competition,
+        )
+        if selected_season
+        else None
+    )
     scoped_competition_rows = filtered_rows or region_rows
     scoped_competition_names = {
         row["competition_name"] for row in scoped_competition_rows
@@ -6390,6 +6401,137 @@ def handle_dashboard_api(ctx: RequestContext, start_response):
     )
 
 
+def get_dashboard_stage_status(window: dict[str, Any], now: datetime | None = None) -> str:
+    current = now or china_now()
+    start_at = parse_china_datetime(str(window.get("start_at") or ""))
+    end_at = parse_china_datetime(str(window.get("end_at") or ""))
+    if start_at and current < start_at:
+        return "upcoming"
+    if end_at and current > end_at:
+        return "ended"
+    if start_at or end_at:
+        return "ongoing"
+    return "draft"
+
+
+def select_dashboard_stage_key(
+    season_entry: dict[str, Any] | None,
+    matches: list[dict[str, Any]],
+    requested_stage: str,
+) -> str:
+    available_stage_keys = {
+        str(match.get("stage") or "").strip()
+        for match in matches
+        if str(match.get("stage") or "").strip() in STAGE_OPTIONS
+    }
+    configured_stage_keys = {
+        str(window.get("stage") or "").strip()
+        for window in (season_entry or {}).get("stage_windows", [])
+        if isinstance(window, dict) and str(window.get("stage") or "").strip() in STAGE_OPTIONS
+    }
+    selectable_stage_keys = available_stage_keys | configured_stage_keys
+    if requested_stage in STAGE_OPTIONS:
+        return requested_stage
+
+    now = china_now()
+    windows = []
+    for window in (season_entry or {}).get("stage_windows", []):
+        if not isinstance(window, dict):
+            continue
+        stage_key = str(window.get("stage") or "").strip()
+        if stage_key not in STAGE_OPTIONS:
+            continue
+        start_at = parse_china_datetime(str(window.get("start_at") or ""))
+        end_at = parse_china_datetime(str(window.get("end_at") or ""))
+        status = get_dashboard_stage_status(window, now)
+        windows.append(
+            {
+                "stage": stage_key,
+                "status": status,
+                "start_at": start_at,
+                "end_at": end_at,
+            }
+        )
+    active_window = next((window for window in windows if window["status"] == "ongoing"), None)
+    if active_window:
+        return str(active_window["stage"])
+    upcoming = [window for window in windows if window["status"] == "upcoming" and window["start_at"]]
+    if upcoming:
+        return str(min(upcoming, key=lambda item: item["start_at"])["stage"])
+    ended = [window for window in windows if window["status"] == "ended" and window["end_at"]]
+    if ended:
+        return str(max(ended, key=lambda item: item["end_at"])["stage"])
+    return "playoffs"
+
+
+def build_dashboard_group_team_rows(
+    data: dict[str, Any],
+    matches: list[dict[str, Any]],
+    group_label: str,
+    selected_competition: str | None,
+    selected_season: str | None,
+    selected_region: str | None,
+    selected_series_slug: str | None,
+) -> list[dict[str, Any]]:
+    team_lookup = {team["team_id"]: team for team in data["teams"]}
+    rows: dict[str, dict[str, Any]] = {}
+    represented_players: dict[str, set[str]] = {}
+    for match in matches:
+        normalized_group_label = str(match.get("group_label") or "").strip() or "未分组"
+        if normalized_group_label != group_label:
+            continue
+        team_ids = {
+            str(entry.get("team_id") or "").strip()
+            for entry in match.get("players", [])
+            if str(entry.get("team_id") or "").strip() in team_lookup
+        }
+        for team_id in team_ids:
+            if team_id not in rows:
+                team = team_lookup[team_id]
+                rows[team_id] = {
+                    "team_id": team_id,
+                    "team_name": team["name"],
+                    "matches_represented": 0,
+                    "player_appearances": 0,
+                    "player_count": 0,
+                    "points_total": 0.0,
+                    "wins": 0,
+                }
+                represented_players[team_id] = set()
+            rows[team_id]["matches_represented"] += 1
+        for entry in match.get("players", []):
+            team_id = str(entry.get("team_id") or "").strip()
+            if team_id not in rows:
+                continue
+            rows[team_id]["player_appearances"] += 1
+            rows[team_id]["points_total"] += float(entry.get("points_earned") or 0.0)
+            rows[team_id]["wins"] += 1 if entry.get("result") == "win" else 0
+            player_id = str(entry.get("player_id") or "").strip()
+            if player_id:
+                represented_players[team_id].add(player_id)
+
+    ranked_rows = []
+    for team_id, row in rows.items():
+        matches_represented = int(row["matches_represented"])
+        appearances = int(row["player_appearances"])
+        row["player_count"] = len(represented_players.get(team_id, set()))
+        row["points_total"] = round(float(row["points_total"]), 2)
+        row["points_per_match"] = round(row["points_total"] / matches_represented, 2) if matches_represented else 0.0
+        row["win_rate"] = safe_rate(int(row["wins"]), appearances) if appearances else 0.0
+        row["href"] = build_scoped_path(
+            "/teams/" + team_id,
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )
+        ranked_rows.append(row)
+    ranked_rows.sort(key=lambda item: (-float(item["points_total"]), -int(item["matches_represented"]), item["team_name"]))
+    for index, row in enumerate(ranked_rows, start=1):
+        row["rank"] = index
+    return ranked_rows
+
+
 def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -6403,6 +6545,17 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     series_rows = scope["series_rows"]
     season_names = list_seasons(data, selected_competition) if selected_competition else []
     selected_season = get_selected_season(ctx, season_names)
+    season_catalog = load_season_catalog(data)
+    season_entry = (
+        get_season_entry(
+            season_catalog,
+            selected_entry["series_slug"] if selected_entry else selected_series_slug,
+            selected_season,
+            competition_name=selected_competition,
+        )
+        if selected_season
+        else None
+    )
     scoped_competition_rows = filtered_rows or region_rows
     scoped_competition_names = {
         row["competition_name"] for row in scoped_competition_rows
@@ -6727,6 +6880,151 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
             """
         )
 
+    scoped_played_matches = [
+        match
+        for match in data["matches"]
+        if is_match_counted_as_played(match)
+        and (
+            match_in_scope(match, selected_competition, selected_season)
+            if selected_competition
+            else (
+                get_match_competition_name(match) in scoped_competition_names
+                and (
+                    not selected_season
+                    or str(match.get("season") or "").strip() == selected_season
+                )
+            )
+        )
+    ]
+    requested_board = form_value(ctx.query, "board").strip()
+    selected_board = requested_board if requested_board in {"group", "player"} else "group"
+    requested_stage = form_value(ctx.query, "stage").strip()
+    selected_stage_key = select_dashboard_stage_key(
+        season_entry,
+        scoped_played_matches,
+        requested_stage,
+    )
+    stage_matches = [
+        match
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip() == selected_stage_key
+    ]
+    group_labels = sorted(
+        {
+            str(match.get("group_label") or "").strip() or "未分组"
+            for match in stage_matches
+        }
+    )
+    requested_group = form_value(ctx.query, "group").strip()
+    selected_group = requested_group if requested_group in group_labels else (group_labels[0] if group_labels else "")
+    group_board_rows = (
+        build_dashboard_group_team_rows(
+            data,
+            stage_matches,
+            selected_group,
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )
+        if selected_group
+        else []
+    )
+    stage_option_keys = list(STAGE_OPTIONS.keys())
+    dashboard_scope_hidden_fields = "".join(
+        f'<input type="hidden" name="{escape(key)}" value="{escape(value)}">'
+        for key, value in {
+            "region": selected_region or "",
+            "series": selected_series_slug or "",
+            "competition": selected_competition or "",
+            "season": selected_season or "",
+        }.items()
+        if value
+    )
+    stage_options_html = "".join(
+        f'<option value="{escape(stage_key)}"{" selected" if stage_key == selected_stage_key else ""}>{escape(STAGE_OPTIONS.get(stage_key, stage_key))}</option>'
+        for stage_key in stage_option_keys
+    )
+    group_options_html = "".join(
+        f'<option value="{escape(group_label)}"{" selected" if group_label == selected_group else ""}>{escape(group_label)}</option>'
+        for group_label in group_labels
+    )
+    group_board_table_rows = "".join(
+        f"""
+        <tr>
+          <td>{row['rank']}</td>
+          <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(row['href'])}">{escape(row['team_name'])}</a></td>
+          <td>{row['matches_represented']}</td>
+          <td>{row['player_count']}</td>
+          <td>{row['points_total']:.2f}</td>
+          <td>{row['points_per_match']:.2f}</td>
+          <td>{format_pct(row['win_rate'])}</td>
+        </tr>
+        """
+        for row in group_board_rows
+    )
+    player_total_table_rows = "".join(
+        f"""
+        <tr>
+          <td>{row['rank']}</td>
+          <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td>
+          <td>{escape(row['team_name'])}</td>
+          <td>{row['games_played']}</td>
+          <td>{escape(row['record'])}</td>
+          <td>{row['points_earned_total']:.2f}</td>
+          <td>{row['average_points']:.2f}</td>
+          <td>{format_pct(row['win_rate'])}</td>
+        </tr>
+        """
+        for row in displayed_player_rows
+    )
+    group_board_table_html = (
+        '<div class="table-responsive"><table class="table align-middle mb-0">'
+        "<thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均</th><th>胜率</th></tr></thead>"
+        f"<tbody>{group_board_table_rows or '<tr><td colspan=\"7\" class=\"text-secondary\">当前赛段分组还没有积分数据。</td></tr>'}</tbody>"
+        "</table></div>"
+    )
+    player_total_table_html = (
+        '<div class="table-responsive"><table class="table align-middle mb-0">'
+        "<thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>总积分</th><th>场均</th><th>胜率</th></tr></thead>"
+        f"<tbody>{player_total_table_rows or '<tr><td colspan=\"8\" class=\"text-secondary\">当前口径下没有个人积分数据。</td></tr>'}</tbody>"
+        "</table></div>"
+    )
+    dashboard_board_table_html = group_board_table_html if selected_board == "group" else player_total_table_html
+    dashboard_board_panel = f"""
+    <section class="panel dashboard-section-panel shadow-sm">
+      <div class="dashboard-section-head">
+        <div>
+          <h2 class="section-title mb-2">榜单中心</h2>
+          <p class="dashboard-section-copy mb-0">默认显示距离当前北京时间最近赛段的分组积分榜，也可以切到其他赛段、分组或个人总积分。</p>
+        </div>
+      </div>
+      <form method="get" action="/dashboard" class="row g-3 align-items-end mb-4">
+        {dashboard_scope_hidden_fields}
+        <div class="col-12 col-md-3">
+          <label class="form-label">榜单类型</label>
+          <select class="form-select" name="board">
+            <option value="group"{" selected" if selected_board == "group" else ""}>分组战队积分</option>
+            <option value="player"{" selected" if selected_board == "player" else ""}>个人总积分</option>
+          </select>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label">赛段</label>
+          <select class="form-select" name="stage">{stage_options_html}</select>
+        </div>
+        <div class="col-12 col-md-3">
+          <label class="form-label">分组</label>
+          <select class="form-select" name="group"{" disabled" if selected_board == "player" else ""}>{group_options_html or '<option value="">暂无分组</option>'}</select>
+        </div>
+        <div class="col-12 col-md-3">
+          <button type="submit" class="btn btn-dark w-100">更新榜单</button>
+        </div>
+      </form>
+      <div class="dashboard-panel-kicker mb-3">{escape(STAGE_OPTIONS.get(selected_stage_key, selected_stage_key))}{f" · {escape(selected_group)}" if selected_board == "group" and selected_group else ""}</div>
+      {dashboard_board_table_html}
+    </section>
+    """
+
     body = f"""
     <div class="dashboard-home">
       <section class="dashboard-hero hero shadow-lg">
@@ -6816,6 +7114,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         </div>
       </section>
       {metrics_cards}
+      {dashboard_board_panel}
       <section class="dashboard-grid">
         <section class="panel dashboard-section-panel shadow-sm">
           <div class="dashboard-section-head">

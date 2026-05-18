@@ -905,7 +905,7 @@ def get_guild_legacy_page(ctx: RequestContext, guild_id: str, alert: str = "") -
 
 def handle_guilds(ctx: RequestContext, start_response):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", build_guilds_frontend_page(ctx))
+        return start_response_html(start_response, "200 OK", get_guilds_page(ctx))
 
     guard = require_login(ctx, start_response)
     if guard is not None:
@@ -1082,7 +1082,7 @@ def handle_guild_api(ctx: RequestContext, start_response, guild_id: str):
 
 def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", build_guild_frontend_page(ctx, guild_id))
+        return start_response_html(start_response, "200 OK", get_guild_legacy_page(ctx, guild_id))
 
     guard = require_login(ctx, start_response)
     if guard is not None:

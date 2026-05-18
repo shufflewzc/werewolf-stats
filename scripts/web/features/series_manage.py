@@ -27,6 +27,7 @@ load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
 normalize_season_catalog_entry = legacy.normalize_season_catalog_entry
 normalize_series_catalog_entry = legacy.normalize_series_catalog_entry
+parse_china_datetime = legacy.parse_china_datetime
 require_competition_catalog_manager = legacy.require_competition_catalog_manager
 require_competition_season_manager = legacy.require_competition_season_manager
 save_membership_requests = legacy.save_membership_requests
@@ -35,6 +36,79 @@ save_season_catalog = legacy.save_season_catalog
 save_series_catalog = legacy.save_series_catalog
 season_status_label = legacy.season_status_label
 start_response_html = legacy.start_response_html
+STAGE_OPTIONS = legacy.STAGE_OPTIONS
+
+
+def build_stage_window_form_values(entry: dict[str, str] | None = None) -> dict[str, str]:
+    values: dict[str, str] = {}
+    windows = entry.get("stage_windows", []) if isinstance(entry, dict) else []
+    window_by_stage = {
+        str(item.get("stage") or "").strip(): item
+        for item in windows
+        if isinstance(item, dict)
+    }
+    for stage_key in STAGE_OPTIONS:
+        window = window_by_stage.get(stage_key, {})
+        values[f"stage_{stage_key}_start_at"] = str(window.get("start_at") or "")
+        values[f"stage_{stage_key}_end_at"] = str(window.get("end_at") or "")
+    return values
+
+
+def collect_stage_windows_from_form(form: dict[str, list[str]]) -> list[dict[str, str]]:
+    windows: list[dict[str, str]] = []
+    for stage_key in STAGE_OPTIONS:
+        start_at = form_value(form, f"stage_{stage_key}_start_at").strip()
+        end_at = form_value(form, f"stage_{stage_key}_end_at").strip()
+        if not start_at and not end_at:
+            continue
+        windows.append({"stage": stage_key, "start_at": start_at, "end_at": end_at})
+    return windows
+
+
+def validate_stage_windows(stage_windows: list[dict[str, str]]) -> str:
+    for window in stage_windows:
+        stage_key = str(window.get("stage") or "").strip()
+        stage_label = STAGE_OPTIONS.get(stage_key, stage_key or "赛段")
+        start_at = str(window.get("start_at") or "").strip()
+        end_at = str(window.get("end_at") or "").strip()
+        if not start_at or not end_at:
+            return f"{stage_label} 需要同时填写开始时间和结束时间。"
+        normalized_start = parse_china_datetime(start_at)
+        normalized_end = parse_china_datetime(end_at)
+        if not normalized_start or not normalized_end:
+            return f"{stage_label} 的起止时间格式无效。"
+        if normalized_start > normalized_end:
+            return f"{stage_label} 开始时间不能晚于结束时间。"
+    return ""
+
+
+def render_stage_window_cards(entry: dict[str, object]) -> str:
+    windows = entry.get("stage_windows", []) if isinstance(entry, dict) else []
+    window_by_stage = {
+        str(item.get("stage") or "").strip(): item
+        for item in windows
+        if isinstance(item, dict)
+    }
+    cards: list[str] = []
+    for stage_key, stage_label in STAGE_OPTIONS.items():
+        window = window_by_stage.get(stage_key)
+        period = (
+            f"{format_datetime_local_label(str(window.get('start_at') or ''))} - "
+            f"{format_datetime_local_label(str(window.get('end_at') or ''))}"
+            if window
+            else "未设置"
+        )
+        cards.append(
+            f"""
+            <div class="col-12 col-lg-6">
+              <div class="team-link-card shadow-sm p-4 h-100">
+                <div class="small text-secondary">{escape(stage_label)}</div>
+                <div class="fw-semibold mt-1">{escape(period)}</div>
+              </div>
+            </div>
+            """
+        )
+    return "".join(cards)
 
 
 def get_series_manage_page(
@@ -78,6 +152,7 @@ def get_series_manage_page(
         "end_at": "",
         "notes": "",
         "edit_mode": requested_edit_mode,
+        **build_stage_window_form_values(),
     }
     if selected_entry:
         current_form.update(
@@ -103,6 +178,7 @@ def get_series_manage_page(
                 "start_at": selected_season_entry.get("start_at", ""),
                 "end_at": selected_season_entry.get("end_at", ""),
                 "notes": selected_season_entry.get("notes", ""),
+                **build_stage_window_form_values(selected_season_entry),
             }
         )
     if form_values:
@@ -110,7 +186,20 @@ def get_series_manage_page(
         season_form.update(
             {
                 key: form_values[key]
-                for key in ("competition_name", "original_season_name", "season_name", "start_at", "end_at", "notes", "edit_mode")
+                for key in (
+                    "competition_name",
+                    "original_season_name",
+                    "season_name",
+                    "start_at",
+                    "end_at",
+                    "notes",
+                    "edit_mode",
+                    *[
+                        key
+                        for stage_key in STAGE_OPTIONS
+                        for key in (f"stage_{stage_key}_start_at", f"stage_{stage_key}_end_at")
+                    ],
+                )
                 if key in form_values
             }
         )
@@ -244,6 +333,8 @@ def get_series_manage_page(
             <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">结束时间</div><div class="fw-semibold mt-1">{escape(format_datetime_local_label(selected_season_entry.get('end_at', '')))}</div></div></div>
             <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">状态</div><div class="fw-semibold mt-1">{escape(season_status_label(selected_season_entry))}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4"><div class="small text-secondary">赛季说明</div><div class="fw-semibold mt-1">{escape(selected_season_entry.get('notes') or '暂无赛季说明')}</div></div></div>
+            <div class="col-12"><h3 class="h5 mb-0 mt-2">赛段时间</h3></div>
+            {render_stage_window_cards(selected_season_entry)}
           </div>
         </section>
         """
@@ -322,6 +413,26 @@ def get_series_manage_page(
                         """
                 season_form_title = "编辑赛季档期" if season_form["original_season_name"] else "新建赛季档期"
                 season_cancel_path = build_series_manage_path(selected_competition_name, current_form["next"], season_form["original_season_name"] or requested_season_name or None)
+                stage_window_inputs_html = "".join(
+                    f"""
+                    <div class="col-12 col-lg-6">
+                      <div class="team-link-card shadow-sm p-3 h-100">
+                        <div class="fw-semibold mb-3">{escape(stage_label)}</div>
+                        <div class="row g-2">
+                          <div class="col-12 col-md-6">
+                            <label class="form-label">开始时间</label>
+                            <input class="form-control" name="stage_{escape(stage_key)}_start_at" type="datetime-local" value="{escape(season_form[f'stage_{stage_key}_start_at'])}">
+                          </div>
+                          <div class="col-12 col-md-6">
+                            <label class="form-label">结束时间</label>
+                            <input class="form-control" name="stage_{escape(stage_key)}_end_at" type="datetime-local" value="{escape(season_form[f'stage_{stage_key}_end_at'])}">
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                    """
+                    for stage_key, stage_label in STAGE_OPTIONS.items()
+                )
                 season_section_html = f"""
                 <section class="form-panel shadow-sm p-3 p-lg-4 mb-4">
                   <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
@@ -341,6 +452,15 @@ def get_series_manage_page(
                       <div class="col-12 col-md-4"><label class="form-label">开始时间</label><input class="form-control" name="start_at" type="datetime-local" value="{escape(season_form['start_at'])}" required></div>
                       <div class="col-12 col-md-4"><label class="form-label">结束时间</label><input class="form-control" name="end_at" type="datetime-local" value="{escape(season_form['end_at'])}" required></div>
                       <div class="col-12"><label class="form-label">赛季说明</label><textarea class="form-control" name="notes" rows="3" placeholder="可写赛季定位、档期说明或补充备注。">{escape(season_form['notes'])}</textarea></div>
+                      <div class="col-12">
+                        <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mt-2">
+                          <div>
+                            <h3 class="h5 mb-1">赛段时间</h3>
+                            <div class="small text-secondary">以下时间均按北京时间保存；赛事页会用当前北京时间自动显示赛段状态。</div>
+                          </div>
+                        </div>
+                      </div>
+                      {stage_window_inputs_html}
                     </div>
                     <div class="d-flex flex-wrap gap-2 mt-4">
                       <button type="submit" class="btn btn-dark">保存赛季档期</button>
@@ -487,18 +607,35 @@ def handle_series_manage(ctx: RequestContext, start_response):
         end_at = form_value(ctx.form, "end_at").strip()
         notes = form_value(ctx.form, "notes").strip()
         next_path = form_value(ctx.form, "next").strip()
+        stage_windows = collect_stage_windows_from_form(ctx.form)
         permission_guard = require_competition_season_manager(ctx, start_response, data, competition_name, "你只能编辑自己负责地区系列赛下的赛季。")
         if permission_guard is not None:
             return permission_guard
         selected_entry = get_series_entry_by_competition(catalog, competition_name)
         series_slug = selected_entry["series_slug"] if selected_entry else ""
-        form_values = {"competition_name": competition_name, "original_season_name": original_season_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "notes": notes, "original_competition_name": competition_name, "next": next_path, "edit_mode": edit_mode}
+        form_values = {
+            "competition_name": competition_name,
+            "original_season_name": original_season_name,
+            "season_name": season_name,
+            "start_at": start_at,
+            "end_at": end_at,
+            "notes": notes,
+            "original_competition_name": competition_name,
+            "next": next_path,
+            "edit_mode": edit_mode,
+            **{
+                f"stage_{window['stage']}_{field}": window.get(f"{field}", "")
+                for window in stage_windows
+                for field in ("start_at", "end_at")
+            },
+        }
         error = legacy.validate_season_catalog_form(series_slug, season_name, start_at, end_at)
+        error = error or validate_stage_windows(stage_windows)
         if error:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert=error, form_values=form_values))
         lookup_season_name = original_season_name or season_name
         existing_entry = get_season_entry(season_catalog, series_slug, lookup_season_name, competition_name=competition_name)
-        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
+        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_windows": stage_windows, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
         if not new_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季保存失败。", form_values=form_values))
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == series_slug and item.get("competition_name", "") == competition_name and item["season_name"] == lookup_season_name)]

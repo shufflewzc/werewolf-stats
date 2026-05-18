@@ -56,6 +56,7 @@ load_ai_prompt_templates = legacy.load_ai_prompt_templates
 load_ai_match_day_report = legacy.load_ai_match_day_report
 load_ai_season_summary = legacy.load_ai_season_summary
 mask_api_key = legacy.mask_api_key
+parse_china_datetime = legacy.parse_china_datetime
 render_ai_prompt_template = legacy.render_ai_prompt_template
 run_ai_generation_job = legacy.run_ai_generation_job
 require_admin = legacy.require_admin
@@ -798,6 +799,142 @@ def _serialize_player_ranking_row(
     }
 
 
+def get_stage_window_status(window: dict[str, Any], now: datetime | None = None) -> str:
+    current = now or legacy.china_now()
+    start_at = parse_china_datetime(str(window.get("start_at") or ""))
+    end_at = parse_china_datetime(str(window.get("end_at") or ""))
+    if start_at and current < start_at:
+        return "upcoming"
+    if end_at and current > end_at:
+        return "ended"
+    if start_at or end_at:
+        return "ongoing"
+    return "draft"
+
+
+def stage_status_label(status: str) -> str:
+    return {
+        "upcoming": "未开始",
+        "ongoing": "进行中",
+        "ended": "已结束",
+        "draft": "待排期",
+    }.get(status, "待排期")
+
+
+def select_progress_stage(
+    season_entry: dict[str, Any] | None,
+    match_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    now = legacy.china_now()
+    stage_windows = [
+        window
+        for window in (season_entry or {}).get("stage_windows", [])
+        if isinstance(window, dict) and str(window.get("stage") or "").strip() in STAGE_OPTIONS
+    ]
+    enriched_windows = []
+    for window in stage_windows:
+        start_at = parse_china_datetime(str(window.get("start_at") or ""))
+        end_at = parse_china_datetime(str(window.get("end_at") or ""))
+        status = get_stage_window_status(window, now)
+        enriched_windows.append(
+            {
+                **window,
+                "status": status,
+                "start_at_value": start_at,
+                "end_at_value": end_at,
+            }
+        )
+
+    active_window = next((window for window in enriched_windows if window["status"] == "ongoing"), None)
+    if active_window:
+        selected_window = active_window
+    else:
+        upcoming_windows = [
+            window
+            for window in enriched_windows
+            if window["status"] == "upcoming" and window["start_at_value"] is not None
+        ]
+        ended_windows = [
+            window
+            for window in enriched_windows
+            if window["status"] == "ended" and window["end_at_value"] is not None
+        ]
+        if upcoming_windows:
+            selected_window = min(upcoming_windows, key=lambda item: item["start_at_value"])
+        elif ended_windows:
+            selected_window = max(ended_windows, key=lambda item: item["end_at_value"])
+        else:
+            selected_window = None
+
+    if selected_window:
+        stage_key = str(selected_window.get("stage") or "").strip()
+        return {
+            "stage_key": stage_key,
+            "stage_label": STAGE_OPTIONS.get(stage_key, stage_key),
+            "status": str(selected_window.get("status") or "draft"),
+            "start_at": str(selected_window.get("start_at") or ""),
+            "end_at": str(selected_window.get("end_at") or ""),
+        }
+
+    fallback_stage = "playoffs"
+    return {
+        "stage_key": fallback_stage,
+        "stage_label": STAGE_OPTIONS.get(fallback_stage, fallback_stage),
+        "status": legacy.get_season_status(season_entry or {}) if season_entry else "ongoing",
+        "start_at": "",
+        "end_at": "",
+    }
+
+
+def build_playoff_progress_overview(
+    match_rows: list[dict[str, Any]],
+    season_entry: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    selected_stage = select_progress_stage(season_entry, match_rows)
+    playoff_matches = [
+        match
+        for match in match_rows
+        if str(match.get("stage") or "").strip() == "playoffs"
+    ]
+    latest_playoff_day = (
+        get_scheduled_match_day_label(
+            playoff_matches,
+            legacy.china_today_label(),
+        )
+        if playoff_matches
+        else ""
+    )
+    latest_match_day = get_scheduled_match_day_label(
+        match_rows,
+        legacy.china_today_label(),
+    )
+    return {
+        "stage_key": selected_stage["stage_key"],
+        "stage_label": selected_stage["stage_label"],
+        "status_label": stage_status_label(str(selected_stage["status"])),
+        "summary": "当前比赛进程按赛季管理中的赛段时间自动判断，时间口径为北京时间。",
+        "latest_played_on": latest_playoff_day or latest_match_day or "待更新",
+        "period": (
+            f"{format_datetime_local_label(selected_stage['start_at'])} - "
+            f"{format_datetime_local_label(selected_stage['end_at'])}"
+            if selected_stage.get("start_at") or selected_stage.get("end_at")
+            else "未设置"
+        ),
+        "rules": [
+            {
+                "group_label": "S组",
+                "direct_label": "排名第 1-2 名直通",
+                "eliminated_label": "排名第 9-12 名淘汰",
+            },
+            {
+                "group_label": "F组",
+                "direct_label": "排名第 1 名直通",
+                "eliminated_label": "排名第 7-12 名淘汰",
+            },
+        ],
+    }
+
+
 def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -1173,6 +1310,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "period": season_period_text,
             "note": season_note_text,
         },
+        "progress_overview": build_playoff_progress_overview(match_rows, season_entry),
         "ai": ai_payload,
         "leaderboards": {
             "stage_team": [
@@ -1663,7 +1801,7 @@ def get_series_legacy_page(ctx: RequestContext, series_slug: str) -> str:
 
 
 def get_series_page(ctx: RequestContext, series_slug: str) -> str:
-    return build_series_frontend_page(ctx, series_slug)
+    return get_series_legacy_page(ctx, series_slug)
 
 
 def handle_series_api(ctx: RequestContext, start_response, series_slug: str):
@@ -2557,7 +2695,7 @@ def handle_match_day_api(ctx: RequestContext, start_response, played_on: str):
 
 def handle_match_day(ctx: RequestContext, start_response, played_on: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", build_match_day_frontend_page(ctx, played_on))
+        return start_response_html(start_response, "200 OK", get_match_day_legacy_page(ctx, played_on))
 
     next_path = legacy.form_value(ctx.query, "next").strip() or "/dashboard"
     redirect_path = build_match_day_path(played_on, next_path)
@@ -2699,7 +2837,7 @@ def build_teams_frontend_page(ctx: RequestContext) -> str:
 
 
 def get_teams_page(ctx: RequestContext) -> str:
-    return build_teams_frontend_page(ctx)
+    return legacy._legacy_get_teams_page_impl(ctx)
 
 
 def _serialize_teams_filter_links(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -3356,7 +3494,7 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
 
 
 def get_schedule_page(ctx: RequestContext) -> str:
-    return build_schedule_frontend_page(ctx)
+    return get_schedule_legacy_page(ctx)
 
 
 def handle_schedule_api(ctx: RequestContext, start_response):
@@ -3372,11 +3510,7 @@ def handle_schedule_api(ctx: RequestContext, start_response):
 
 def handle_competitions(ctx: RequestContext, start_response):
     if ctx.method == "GET":
-        return start_response_html(
-            start_response,
-            "200 OK",
-            build_competitions_frontend_page(ctx),
-        )
+        return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
 
     action = form_value(ctx.form, "action").strip()
     if action == "save_ai_season_summary":

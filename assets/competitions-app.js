@@ -474,6 +474,47 @@
     `;
   }
 
+  function renderProgressOverview(progress) {
+    if (!progress) {
+      return "";
+    }
+    const rules = Array.isArray(progress.rules) ? progress.rules : [];
+    return `
+      <section class="competitions-panel competitions-section competitions-progress-overview">
+        <div class="competitions-section-head">
+          <div>
+            <div class="competitions-section-kicker">Tournament Progress</div>
+            <h2 class="competitions-section-title">比赛进程总览</h2>
+            <p class="competitions-copy">${escapeHtml(progress.summary || "")}</p>
+          </div>
+          <div class="competitions-progress-status">
+            <span>${escapeHtml(progress.stage_label || "当前赛段")}</span>
+            <strong>${escapeHtml(progress.status_label || "进行中")}</strong>
+          </div>
+        </div>
+        <div class="competitions-progress-grid">
+          <article class="competitions-progress-card competitions-progress-current">
+            <div class="competitions-stat-label">当前阶段</div>
+            <strong>${escapeHtml(progress.stage_label || "季后赛")}</strong>
+            <div class="competitions-meta-text">最近比赛日 ${escapeHtml(progress.latest_played_on || "待更新")}</div>
+            <div class="competitions-meta-text">赛段时间 ${escapeHtml(progress.period || "未设置")}</div>
+          </article>
+          ${rules
+            .map(
+              (rule) => `
+                <article class="competitions-progress-card">
+                  <div class="competitions-stat-label">${escapeHtml(rule.group_label || "分组")}</div>
+                  <div class="competitions-progress-rule is-direct">${escapeHtml(rule.direct_label || "")}</div>
+                  <div class="competitions-progress-rule is-eliminated">${escapeHtml(rule.eliminated_label || "")}</div>
+                </article>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
+    `;
+  }
+
   function renderDetailView(payload) {
     const scope = payload.scope || {};
     const hero = payload.hero || {};
@@ -528,6 +569,7 @@
           </aside>
         </section>
         ${renderMetrics(payload.metrics || [])}
+        ${renderProgressOverview(payload.progress_overview)}
         <section class="competitions-panel competitions-section">
           <div class="competitions-section-head">
             <div>

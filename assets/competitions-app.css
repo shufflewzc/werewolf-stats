@@ -256,7 +256,8 @@ select {
 .competitions-sidebar-grid,
 .competitions-day-grid,
 .competitions-board-grid,
-.competitions-group-grid {
+.competitions-group-grid,
+.competitions-progress-grid {
   display: grid;
   gap: 16px;
 }
@@ -368,6 +369,73 @@ select {
   margin-top: 7px;
   font-size: 1.08rem;
   font-weight: 800;
+}
+
+.competitions-progress-overview {
+  overflow: hidden;
+}
+
+.competitions-progress-status {
+  display: inline-grid;
+  min-width: 132px;
+  gap: 4px;
+  padding: 12px 16px;
+  border: 1px solid rgba(182, 103, 57, 0.16);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.competitions-progress-status span {
+  color: var(--muted);
+  font-size: 0.82rem;
+  font-weight: 800;
+}
+
+.competitions-progress-status strong {
+  color: var(--accent-strong);
+  font-size: 1.08rem;
+  font-weight: 900;
+}
+
+.competitions-progress-grid {
+  grid-template-columns: 1.05fr repeat(2, minmax(0, 1fr));
+}
+
+.competitions-progress-card {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  min-height: 140px;
+  padding: 18px;
+  border: 1px solid rgba(182, 103, 57, 0.1);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.competitions-progress-current {
+  background: linear-gradient(135deg, rgba(182, 103, 57, 0.12), rgba(255, 255, 255, 0.78));
+}
+
+.competitions-progress-card strong {
+  font-size: 1.7rem;
+  font-weight: 900;
+  letter-spacing: 0;
+}
+
+.competitions-progress-rule {
+  padding: 12px 14px;
+  border-radius: 12px;
+  font-weight: 800;
+}
+
+.competitions-progress-rule.is-direct {
+  color: #176343;
+  background: rgba(38, 166, 115, 0.12);
+}
+
+.competitions-progress-rule.is-eliminated {
+  color: #8a3329;
+  background: rgba(197, 76, 54, 0.12);
 }
 
 .competitions-main-grid {
@@ -487,7 +555,8 @@ select {
 
   .competitions-metrics-grid,
   .competitions-card-grid,
-  .competitions-day-grid {
+  .competitions-day-grid,
+  .competitions-progress-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
@@ -513,7 +582,8 @@ select {
   .competitions-metrics-grid,
   .competitions-card-grid,
   .competitions-card-stat-grid,
-  .competitions-day-grid {
+  .competitions-day-grid,
+  .competitions-progress-grid {
     grid-template-columns: 1fr;
   }
 
@@ -2677,4 +2747,35 @@ body.player-detail-app-shell .player-detail-table td {
   body.player-detail-app-shell .player-detail-radar-grid {
     grid-template-columns: 1fr;
   }
+}
+
+body.competitions-app-shell .competitions-progress-status,
+body.competitions-app-shell .competitions-progress-card {
+  background: rgba(35, 58, 88, 0.72);
+  border-color: rgba(126, 181, 255, 0.26);
+}
+
+body.competitions-app-shell .competitions-progress-current {
+  background: linear-gradient(135deg, rgba(79, 139, 239, 0.28), rgba(35, 58, 88, 0.78));
+}
+
+body.competitions-app-shell .competitions-progress-status span,
+body.competitions-app-shell .competitions-progress-card .competitions-stat-label,
+body.competitions-app-shell .competitions-progress-card .competitions-meta-text {
+  color: #b9d8ff;
+}
+
+body.competitions-app-shell .competitions-progress-status strong,
+body.competitions-app-shell .competitions-progress-card strong {
+  color: #f8fbff;
+}
+
+body.competitions-app-shell .competitions-progress-rule.is-direct {
+  color: #dff8e8;
+  background: rgba(44, 184, 122, 0.22);
+}
+
+body.competitions-app-shell .competitions-progress-rule.is-eliminated {
+  color: #ffe4de;
+  background: rgba(223, 93, 70, 0.22);
 }

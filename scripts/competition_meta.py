@@ -13,6 +13,7 @@ from generate_stats import (
     list_seasons as stats_list_seasons,
 )
 from sqlite_store import load_meta_value, save_meta_value
+from web_config import STAGE_OPTIONS
 
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
@@ -487,6 +488,32 @@ def season_status_label(entry: dict[str, Any]) -> str:
     }.get(get_season_status(entry), "待排期")
 
 
+def normalize_stage_windows(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    windows: list[dict[str, str]] = []
+    seen_stages: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        stage_key = str(item.get("stage") or "").strip()
+        if stage_key not in STAGE_OPTIONS or stage_key in seen_stages:
+            continue
+        start_at = normalize_datetime_local_value(str(item.get("start_at") or ""))
+        end_at = normalize_datetime_local_value(str(item.get("end_at") or ""))
+        if not start_at and not end_at:
+            continue
+        windows.append(
+            {
+                "stage": stage_key,
+                "start_at": start_at,
+                "end_at": end_at,
+            }
+        )
+        seen_stages.add(stage_key)
+    return windows
+
+
 def normalize_season_catalog_entry(
     entry: dict[str, Any],
     series_catalog: list[dict[str, Any]] | None = None,
@@ -539,6 +566,7 @@ def normalize_season_catalog_entry(
         "season_name": season_name,
         "start_at": normalize_datetime_local_value(str(entry.get("start_at") or "")),
         "end_at": normalize_datetime_local_value(str(entry.get("end_at") or "")),
+        "stage_windows": normalize_stage_windows(entry.get("stage_windows", [])),
         "registered_team_ids": merge_team_ids(registered_team_ids),
         "notes": str(entry.get("notes") or "").strip(),
         "created_by": str(entry.get("created_by") or "system").strip() or "system",

@@ -9321,7 +9321,7 @@ def generate_ai_player_season_summary(
 
 def handle_team_page(ctx: RequestContext, start_response, team_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_team_frontend_page(ctx, team_id))
+        return start_response_html(start_response, "200 OK", get_team_legacy_page(ctx, team_id))
 
     action = form_value(ctx.form, "action").strip()
     competition_name = form_value(ctx.form, "competition_name").strip()
@@ -10014,7 +10014,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
 
 def handle_player_page(ctx: RequestContext, start_response, player_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_player_frontend_page(ctx, player_id))
+        return start_response_html(start_response, "200 OK", get_player_legacy_page(ctx, player_id))
 
     action = form_value(ctx.form, "action").strip()
     competition_name = form_value(ctx.form, "competition_name").strip()
@@ -11737,7 +11737,7 @@ def app(environ, start_response):
             return handle_logout(start_response, environ)
 
         if path == "/dashboard":
-            return start_response_html(start_response, "200 OK", build_dashboard_frontend_page(ctx))
+            return start_response_html(start_response, "200 OK", get_dashboard_page(ctx))
         if path == "/dashboard/legacy":
             return start_response_html(start_response, "200 OK", get_dashboard_page(ctx))
         if path == "/competitions":
@@ -11749,7 +11749,7 @@ def app(environ, start_response):
         if path == "/guilds/legacy":
             return start_response_html(start_response, "200 OK", get_guilds_page(ctx))
         if path == "/schedule":
-            return start_response_html(start_response, "200 OK", get_schedule_page(ctx))
+            return start_response_html(start_response, "200 OK", get_schedule_legacy_page(ctx))
         if path == "/schedule/legacy":
             return start_response_html(start_response, "200 OK", get_schedule_legacy_page(ctx))
         if path.startswith("/series/") and path.endswith("/legacy"):
@@ -11763,7 +11763,7 @@ def app(environ, start_response):
         if path.startswith("/series/"):
             parts = path.strip("/").split("/")
             if len(parts) == 2 and parts[0] == "series":
-                return start_response_html(start_response, "200 OK", get_series_page(ctx, parts[1]))
+                return start_response_html(start_response, "200 OK", get_series_legacy_page(ctx, parts[1]))
         if path.startswith("/days/") and path.endswith("/legacy"):
             parts = path.strip("/").split("/")
             if len(parts) == 3 and parts[0] == "days" and parts[2] == "legacy":
@@ -11774,7 +11774,11 @@ def app(environ, start_response):
                 )
         if path.startswith("/days/"):
             played_on = path.split("/", 2)[2]
-            return handle_match_day(ctx, start_response, played_on)
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_day_legacy_page(ctx, played_on),
+            )
         if path.startswith("/guilds/") and path.endswith("/legacy"):
             parts = path.strip("/").split("/")
             if len(parts) == 3 and parts[0] == "guilds" and parts[2] == "legacy":
@@ -11789,7 +11793,11 @@ def app(environ, start_response):
         if path == "/teams/legacy":
             return start_response_html(start_response, "200 OK", legacy._legacy_get_teams_page_impl(ctx))
         if path == "/teams":
-            return start_response_html(start_response, "200 OK", get_teams_page(ctx))
+            return start_response_html(
+                start_response,
+                "200 OK",
+                legacy._legacy_get_teams_page_impl(ctx),
+            )
         if path.startswith("/teams/") and path.endswith("/logo"):
             team_id = path.split("/")[2]
             guard = require_login(ctx, start_response)
@@ -11842,9 +11850,9 @@ def app(environ, start_response):
             return handle_match_edit(ctx, start_response, match_id)
         if path.startswith("/matches/"):
             match_id = path.split("/", 2)[2]
-            return start_response_html(start_response, "200 OK", get_match_frontend_page(ctx, match_id))
+            return start_response_html(start_response, "200 OK", get_match_legacy_page(ctx, match_id))
         if path == "/players":
-            return start_response_html(start_response, "200 OK", get_players_frontend_page(ctx))
+            return redirect(start_response, "/dashboard")
         if path.startswith("/players/") and path.endswith("/edit"):
             player_id = path.split("/")[2]
             guard = require_login(ctx, start_response)
@@ -11867,10 +11875,10 @@ def app(environ, start_response):
                 )
         if path.startswith("/players/"):
             player_id = path.split("/", 2)[2]
-            return handle_player_page(ctx, start_response, player_id)
+            return start_response_html(start_response, "200 OK", get_player_legacy_page(ctx, player_id))
         if path.startswith("/teams/"):
             team_id = path.split("/", 2)[2]
-            return handle_team_page(ctx, start_response, team_id)
+            return start_response_html(start_response, "200 OK", get_team_legacy_page(ctx, team_id))
 
         guard = require_login(ctx, start_response)
         if guard is not None:

@@ -921,36 +921,10 @@ def build_playoff_progress_overview(
             if selected_stage.get("start_at") or selected_stage.get("end_at")
             else "未设置"
         ),
-        "rules": [
-            {
-                "group_label": "S组",
-                "direct_label": "排名第 1-2 名直通",
-                "eliminated_label": "排名第 9-12 名淘汰",
-            },
-            {
-                "group_label": "F组",
-                "direct_label": "排名第 1 名直通",
-                "eliminated_label": "排名第 7-12 名淘汰",
-            },
-        ],
     }
 
 
 def render_legacy_progress_overview(progress: dict[str, Any]) -> str:
-    rules = progress.get("rules") if isinstance(progress.get("rules"), list) else []
-    rule_cards = "".join(
-        f"""
-        <div class="col-12 col-lg-4">
-          <div class="team-link-card shadow-sm p-4 h-100">
-            <div class="card-kicker mb-2">{escape(str(rule.get('group_label') or '分组'))}</div>
-            <div class="alert alert-success py-2 mb-2 fw-semibold">{escape(str(rule.get('direct_label') or ''))}</div>
-            <div class="alert alert-danger py-2 mb-0 fw-semibold">{escape(str(rule.get('eliminated_label') or ''))}</div>
-          </div>
-        </div>
-        """
-        for rule in rules
-        if isinstance(rule, dict)
-    )
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -965,7 +939,7 @@ def render_legacy_progress_overview(progress: dict[str, Any]) -> str:
         </div>
       </div>
       <div class="row g-3">
-        <div class="col-12 col-lg-4">
+        <div class="col-12">
           <div class="team-link-card shadow-sm p-4 h-100">
             <div class="card-kicker mb-2">当前阶段</div>
             <h3 class="h4 mb-3">{escape(str(progress.get('stage_label') or '季后赛'))}</h3>
@@ -973,7 +947,6 @@ def render_legacy_progress_overview(progress: dict[str, Any]) -> str:
             <div class="small-muted">赛段时间 {escape(str(progress.get('period') or '未设置'))}</div>
           </div>
         </div>
-        {rule_cards}
       </div>
     </section>
     """

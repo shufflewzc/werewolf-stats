@@ -6571,6 +6571,167 @@ def dashboard_regular_season_progress_label(group_label: str, rank: int) -> str:
     return ""
 
 
+def normalize_dashboard_promotion_row(
+    source_label: str,
+    row: dict[str, Any],
+    rank_label: str,
+    selected_competition: str | None,
+    selected_season: str | None,
+    selected_region: str | None,
+    selected_series_slug: str | None,
+) -> dict[str, Any]:
+    team_name = str(row.get("team_name") or row.get("name") or "未知战队")
+    points_total = float(row.get("points_total", row.get("points_earned_total", 0.0)) or 0.0)
+    matches_represented = int(row.get("matches_represented") or 0)
+    points_per_match = float(row.get("points_per_match") or 0.0)
+    team_id = str(row.get("team_id") or "")
+    return {
+        "source_label": source_label,
+        "rank_label": rank_label,
+        "team_id": team_id,
+        "team_name": team_name,
+        "logo": str(row.get("logo") or DEFAULT_TEAM_LOGO),
+        "href": str(row.get("href") or build_scoped_path(
+            "/teams/" + team_id,
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )),
+        "points_total": points_total,
+        "points_per_match": points_per_match,
+        "matches_represented": matches_represented,
+    }
+
+
+def build_dashboard_promotion_context(
+    data: dict[str, Any],
+    scoped_played_matches: list[dict[str, Any]],
+    selected_competition: str | None,
+    selected_season: str | None,
+    selected_region: str | None,
+    selected_series_slug: str | None,
+) -> dict[str, Any]:
+    regular_season_matches = [
+        match
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip() == "regular_season"
+    ]
+    regular_s_rows = build_dashboard_group_team_rows(
+        data,
+        regular_season_matches,
+        "S组",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    regular_f_rows = build_dashboard_group_team_rows(
+        data,
+        regular_season_matches,
+        "F组",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    direct_rows = [
+        ("S组", row)
+        for row in regular_s_rows
+        if int(row.get("rank") or 0) in {1, 2}
+    ] + [
+        ("F组", row)
+        for row in regular_f_rows
+        if int(row.get("rank") or 0) == 1
+    ]
+    playoff_rows = [
+        ("S组", row)
+        for row in regular_s_rows
+        if 3 <= int(row.get("rank") or 0) <= 9
+    ] + [
+        ("F组", row)
+        for row in regular_f_rows
+        if 2 <= int(row.get("rank") or 0) <= 6
+    ]
+    playoff_stage_matches = [
+        match
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip() == "playoffs"
+    ]
+    playoff_stage_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": playoff_stage_matches,
+    }
+    playoff_stage_rows = [
+        row
+        for row in build_team_rows(playoff_stage_data, selected_competition, selected_season)
+        if int(row.get("matches_represented") or 0) > 0
+    ]
+    playoff_stage_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", 9999),
+            -float(row.get("points_earned_total") or 0.0),
+            row.get("name") or "",
+        )
+    )
+    final_rows: list[dict[str, Any]] = []
+    seen_final_team_ids: set[str] = set()
+    for group_label, row in direct_rows:
+        normalized = normalize_dashboard_promotion_row(
+            "常规赛直通",
+            row,
+            f"{group_label}-{int(row['rank'])}",
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )
+        final_rows.append(normalized)
+        if normalized["team_id"]:
+            seen_final_team_ids.add(normalized["team_id"])
+    for row in playoff_stage_rows[:9]:
+        team_id = str(row.get("team_id") or "")
+        if team_id and team_id in seen_final_team_ids:
+            continue
+        normalized = normalize_dashboard_promotion_row(
+            "季后赛前9",
+            row,
+            f"季后赛-{int(row.get('points_rank') or len(final_rows) + 1)}",
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )
+        final_rows.append(normalized)
+        if team_id:
+            seen_final_team_ids.add(team_id)
+    playoff_promotion_rows = [
+        normalize_dashboard_promotion_row(
+            "常规赛晋级",
+            row,
+            f"{group_label}-{int(row['rank'])}",
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )
+        for group_label, row in playoff_rows
+    ]
+    return {
+        "rules": [
+            "决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成。",
+            "常规赛直通队伍：S组第1-2名、F组第1名。",
+            "季后赛区：常规赛 S组第3-9名、F组第2-6名。",
+        ],
+        "final_rows": final_rows,
+        "playoff_rows": playoff_promotion_rows,
+        "regular_s_rows": regular_s_rows,
+        "regular_f_rows": regular_f_rows,
+        "playoff_stage_rows": playoff_stage_rows,
+    }
+
+
 def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -7043,124 +7204,16 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         "</table></div>"
     )
     dashboard_board_table_html = group_board_table_html if selected_board == "group" else player_total_table_html
-    regular_season_matches = [
-        match
-        for match in scoped_played_matches
-        if str(match.get("stage") or "").strip() == "regular_season"
-    ]
-    regular_s_rows = build_dashboard_group_team_rows(
+    promotion_context = build_dashboard_promotion_context(
         data,
-        regular_season_matches,
-        "S组",
+        scoped_played_matches,
         selected_competition,
         selected_season,
         selected_region,
         selected_series_slug,
     )
-    regular_f_rows = build_dashboard_group_team_rows(
-        data,
-        regular_season_matches,
-        "F组",
-        selected_competition,
-        selected_season,
-        selected_region,
-        selected_series_slug,
-    )
-    direct_rows = [
-        ("S组", row)
-        for row in regular_s_rows
-        if int(row.get("rank") or 0) in {1, 2}
-    ] + [
-        ("F组", row)
-        for row in regular_f_rows
-        if int(row.get("rank") or 0) == 1
-    ]
-    playoff_rows = [
-        ("S组", row)
-        for row in regular_s_rows
-        if 3 <= int(row.get("rank") or 0) <= 9
-    ] + [
-        ("F组", row)
-        for row in regular_f_rows
-        if 2 <= int(row.get("rank") or 0) <= 6
-    ]
-    playoff_stage_matches = [
-        match
-        for match in scoped_played_matches
-        if str(match.get("stage") or "").strip() == "playoffs"
-    ]
-    playoff_stage_data = {
-        "teams": data["teams"],
-        "players": data["players"],
-        "matches": playoff_stage_matches,
-    }
-    playoff_stage_rows = [
-        row
-        for row in build_team_rows(playoff_stage_data, selected_competition, selected_season)
-        if int(row.get("matches_represented") or 0) > 0
-    ]
-    playoff_stage_rows.sort(
-        key=lambda row: (
-            row.get("points_rank", 9999),
-            -float(row.get("points_earned_total") or 0.0),
-            row.get("name") or "",
-        )
-    )
-
-    def normalize_promotion_row(source_label: str, row: dict[str, Any], rank_label: str) -> dict[str, Any]:
-        team_name = str(row.get("team_name") or row.get("name") or "未知战队")
-        points_total = float(row.get("points_total", row.get("points_earned_total", 0.0)) or 0.0)
-        matches_represented = int(row.get("matches_represented") or 0)
-        points_per_match = float(row.get("points_per_match") or 0.0)
-        return {
-            "source_label": source_label,
-            "rank_label": rank_label,
-            "team_id": str(row.get("team_id") or ""),
-            "team_name": team_name,
-            "logo": str(row.get("logo") or DEFAULT_TEAM_LOGO),
-            "href": str(row.get("href") or build_scoped_path(
-                "/teams/" + str(row.get("team_id") or ""),
-                selected_competition,
-                selected_season,
-                selected_region,
-                selected_series_slug,
-            )),
-            "points_total": points_total,
-            "points_per_match": points_per_match,
-            "matches_represented": matches_represented,
-        }
-
-    final_rows: list[dict[str, Any]] = []
-    seen_final_team_ids: set[str] = set()
-    for group_label, row in direct_rows:
-        normalized = normalize_promotion_row(
-            "常规赛直通",
-            row,
-            f"{group_label}-{int(row['rank'])}",
-        )
-        final_rows.append(normalized)
-        if normalized["team_id"]:
-            seen_final_team_ids.add(normalized["team_id"])
-    for row in playoff_stage_rows[:9]:
-        team_id = str(row.get("team_id") or "")
-        if team_id and team_id in seen_final_team_ids:
-            continue
-        normalized = normalize_promotion_row(
-            "季后赛前9",
-            row,
-            f"季后赛-{int(row.get('points_rank') or len(final_rows) + 1)}",
-        )
-        final_rows.append(normalized)
-        if team_id:
-            seen_final_team_ids.add(team_id)
-    playoff_promotion_rows = [
-        normalize_promotion_row(
-            "常规赛晋级",
-            row,
-            f"{group_label}-{int(row['rank'])}",
-        )
-        for group_label, row in playoff_rows
-    ]
+    final_rows = promotion_context["final_rows"]
+    playoff_promotion_rows = promotion_context["playoff_rows"]
 
     def dashboard_team_logo_src(logo_path: str) -> str:
         logo_text = str(logo_path or "").strip()

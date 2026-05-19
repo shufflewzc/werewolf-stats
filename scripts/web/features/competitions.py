@@ -17,6 +17,7 @@ build_scoped_path = legacy.build_scoped_path
 build_competition_catalog_rows = legacy.build_competition_catalog_rows
 build_filtered_data = legacy.build_filtered_data
 build_player_rows = legacy.build_player_rows
+build_dashboard_promotion_context = legacy.build_dashboard_promotion_context
 build_region_switcher = legacy.build_region_switcher
 build_series_manage_path = legacy.build_series_manage_path
 build_series_season_switcher = legacy.build_series_season_switcher
@@ -2150,6 +2151,7 @@ def build_ai_data_question_prompt(
     player_rows: list[dict[str, Any]],
     stage_team_rows: dict[str, list[dict[str, Any]]],
     mvp_rows: list[dict[str, Any]],
+    promotion_context: dict[str, Any],
     conversation: list[dict[str, str]],
     question: str,
 ) -> str:
@@ -2187,6 +2189,44 @@ def build_ai_data_question_prompt(
     for played_on in seen_days[:16]:
         day_count = sum(1 for match in match_rows if str(match.get("played_on") or "").strip() == played_on)
         match_day_lines.append(f"- {played_on}：{day_count} 场")
+    team_lookup = {str(team.get("team_id") or ""): team for team in load_validated_data()["teams"]}
+    player_lookup = {str(player.get("player_id") or ""): player for player in load_validated_data()["players"]}
+    all_match_lines = []
+    for match in sorted(
+        match_rows,
+        key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+    ):
+        match_title = (
+            f"- 比赛 {match.get('match_id')} | 日期 {match.get('played_on')} | "
+            f"赛段 {STAGE_OPTIONS.get(str(match.get('stage') or '').strip(), str(match.get('stage') or '').strip() or '未设置')} | "
+            f"分组 {str(match.get('group_label') or '').strip() or '未分组'} | "
+            f"轮次 {match.get('round')} | 局号 {match.get('game_no')} | "
+            f"台次 {str(match.get('table_label') or '').strip() or '未标注'} | "
+            f"胜方 {str(match.get('winning_camp') or '').strip() or '未录入'} | "
+            f"MVP {player_lookup.get(str(match.get('mvp_player_id') or ''), {}).get('display_name', str(match.get('mvp_player_id') or '').strip() or '未录入')}"
+        )
+        participant_lines = []
+        for entry in match.get("players", []):
+            player_name = player_lookup.get(str(entry.get("player_id") or ""), {}).get("display_name", str(entry.get("player_id") or "未知选手"))
+            team_name = team_lookup.get(str(entry.get("team_id") or ""), {}).get("name", str(entry.get("team_id") or "未知战队"))
+            participant_lines.append(
+                f"  * {player_name} | 战队 {team_name} | 阵营 {entry.get('camp') or ''} | 角色 {entry.get('role') or ''} | 结果 {entry.get('result') or ''} | 积分 {float(entry.get('points_earned') or 0.0):.2f}"
+            )
+        all_match_lines.append(match_title + "\n" + "\n".join(participant_lines))
+    promotion_rules = [
+        str(item)
+        for item in promotion_context.get("rules", [])
+        if str(item).strip()
+    ]
+
+    def render_promotion_prompt_rows(rows: list[dict[str, Any]]) -> str:
+        lines = []
+        for row in rows:
+            lines.append(
+                f"- {row.get('rank_label')} {row.get('team_name')} | {row.get('source_label')} | 总积分 {float(row.get('points_total') or 0.0):.2f} | 场均 {float(row.get('points_per_match') or 0.0):.2f} | 对局 {int(row.get('matches_represented') or 0)}"
+            )
+        return "\n".join(lines) if lines else "- 暂无可计算队伍"
+
     history_lines = []
     for index, item in enumerate(conversation[-6:], start=1):
         previous_question = str(item.get("question") or "").strip()
@@ -2224,6 +2264,18 @@ MVP 榜：
 
 比赛日分布：
 {chr(10).join(match_day_lines) if match_day_lines else "- 暂无比赛日数据"}
+
+dashboard 晋级名单规则：
+{chr(10).join(f"- {line}" for line in promotion_rules) if promotion_rules else "- 暂无晋级规则"}
+
+dashboard 决赛区名单：
+{render_promotion_prompt_rows(list(promotion_context.get("final_rows", [])))}
+
+dashboard 季后赛区名单：
+{render_promotion_prompt_rows(list(promotion_context.get("playoff_rows", [])))}
+
+全选手比赛明细：
+{chr(10).join(all_match_lines) if all_match_lines else "- 暂无逐局明细"}
 
 本轮对话历史：
 {chr(10).join(history_lines) if history_lines else "- 暂无历史对话"}
@@ -2297,6 +2349,15 @@ def generate_ai_data_question_answer(
     mvp_rows = build_player_mvp_rows(data, competition_name, season_name)
     team_rows.sort(key=lambda row: (row.get("points_rank", 9999), -row["points_earned_total"], row["name"]))
     player_rows.sort(key=lambda row: (row["rank"], -row["points_earned_total"], row["display_name"]))
+    series_entry = get_series_entry_by_competition(load_series_catalog(data), competition_name)
+    promotion_context = build_dashboard_promotion_context(
+        data,
+        played_match_rows,
+        competition_name,
+        season_name,
+        series_entry["region_name"] if series_entry else None,
+        series_entry["series_slug"] if series_entry else None,
+    )
     return run_ai_generation_job(
         job_type="data_analysis_question",
         scope_type="competition_season",
@@ -2314,6 +2375,7 @@ def generate_ai_data_question_answer(
             player_rows,
             stage_team_rows,
             mvp_rows,
+            promotion_context,
             conversation,
             question,
         ),

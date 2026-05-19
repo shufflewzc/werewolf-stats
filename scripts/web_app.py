@@ -8908,76 +8908,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             item["display_name"],
         )
     )
-    ai_team_season_summary = (
-        load_ai_team_season_summary(team_id, selected_competition, selected_season)
-        if selected_competition and selected_season
-        else None
-    )
-    ai_settings = load_ai_daily_brief_settings()
-    ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
-    ai_team_summary_actions = ""
-    ai_team_summary_admin_editor = ""
-    if selected_competition and selected_season:
-        if ai_configured and (not ai_team_season_summary or is_admin_user(ctx.current_user)):
-            ai_team_summary_actions = f"""
-            <form method="post" action="/teams/{escape(team_id)}" class="m-0">
-              <input type="hidden" name="action" value="generate_ai_team_season_summary">
-              <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
-              <input type="hidden" name="season_name" value="{escape(selected_season)}">
-              <button type="submit" class="btn btn-dark">{'重生成 AI 战队赛季总结' if ai_team_season_summary else '生成 AI 战队赛季总结'}</button>
-            </form>
-            """
-        elif not ai_configured and is_admin_user(ctx.current_user):
-            ai_team_summary_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
-        if ai_team_season_summary and is_admin_user(ctx.current_user):
-            ai_team_summary_admin_editor = f"""
-            <div class="form-panel p-3 p-lg-4 mt-4">
-              <h3 class="h5 mb-2">管理员编辑总结</h3>
-              <p class="section-copy mb-3">可以直接修改当前总结正文。保存后会立即覆盖展示内容。</p>
-              <form method="post" action="/teams/{escape(team_id)}">
-                <input type="hidden" name="action" value="save_ai_team_season_summary">
-                <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
-                <input type="hidden" name="season_name" value="{escape(selected_season)}">
-                <div class="mb-3">
-                  <textarea class="form-control" name="summary_content" rows="12">{escape(ai_team_season_summary.get('content') or '')}</textarea>
-                </div>
-                <div class="d-flex flex-wrap gap-2">
-                  <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
-                </div>
-              </form>
-            </div>
-            """
-    ai_team_summary_panel = ""
-    if selected_season:
-        ai_team_summary_panel = (
-            f"""
-            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-                <div>
-                  <h2 class="section-title mb-2">AI 战队赛季总结</h2>
-                  <p class="section-copy mb-0">基于当前战队在这个赛事赛季下的真实战绩、队员数据和比赛记录生成总结。首次生成对所有访客开放；生成后仅管理员可重生成或编辑。</p>
-                </div>
-                <div class="d-flex flex-wrap gap-2">{ai_team_summary_actions}</div>
-              </div>
-              <div class="small text-secondary mb-3">生成时间 {escape(ai_team_season_summary.get('generated_at') or '未生成')} · 模型 {escape(ai_team_season_summary.get('model') or ai_settings.get('model') or DEFAULT_AI_DAILY_BRIEF_MODEL)}</div>
-              <div class="editorial-copy mb-0">{render_ai_daily_brief_html(ai_team_season_summary.get('content') or '')}</div>
-              {ai_team_summary_admin_editor}
-            </section>
-            """
-            if ai_team_season_summary
-            else f"""
-            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
-                <div>
-                  <h2 class="section-title mb-2">AI 战队赛季总结</h2>
-                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成战队赛季总结。')}</p>
-                </div>
-                <div class="d-flex flex-wrap gap-2">{ai_team_summary_actions}</div>
-              </div>
-            </section>
-            """
-        )
-
     team_short_label = str(team.get("short_name") or team["name"]).strip() or team["name"]
     team_record = f"{team_stats.get('wins', 0)}-{team_stats.get('losses', 0)}"
     team_points_total = f"{float(team_stats.get('points_earned_total', 0.0)):.2f}"
@@ -9277,7 +9207,6 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
       if team_status == "completed"
       else ''
     )}
-    {ai_team_summary_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>

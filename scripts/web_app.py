@@ -3109,6 +3109,25 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         letter-spacing: 0.08em;
         text-transform: uppercase;
       }}
+      .dashboard-promotion-mark {{
+        display: flex;
+        align-items: center;
+        gap: 0.45rem;
+      }}
+      .dashboard-promotion-mark .dashboard-ranking-index {{
+        width: 4rem;
+        border-radius: 999px;
+        font-size: 0.72rem;
+      }}
+      .dashboard-promotion-logo {{
+        width: 2.4rem;
+        height: 2.4rem;
+        border-radius: 50%;
+        object-fit: cover;
+        background: #ffffff;
+        border: 1px solid rgba(15, 23, 42, 0.12);
+        box-shadow: 0 0.35rem 1rem rgba(15, 23, 42, 0.08);
+      }}
       .dashboard-day-grid {{
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6493,6 +6512,7 @@ def build_dashboard_group_team_rows(
                 rows[team_id] = {
                     "team_id": team_id,
                     "team_name": team["name"],
+                    "logo": team.get("logo") or DEFAULT_TEAM_LOGO,
                     "matches_represented": 0,
                     "player_appearances": 0,
                     "player_count": 0,
@@ -7064,20 +7084,109 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         for row in regular_f_rows
         if 2 <= int(row.get("rank") or 0) <= 6
     ]
+    playoff_stage_matches = [
+        match
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip() == "playoffs"
+    ]
+    playoff_stage_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": playoff_stage_matches,
+    }
+    playoff_stage_rows = [
+        row
+        for row in build_team_rows(playoff_stage_data, selected_competition, selected_season)
+        if int(row.get("matches_represented") or 0) > 0
+    ]
+    playoff_stage_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", 9999),
+            -float(row.get("points_earned_total") or 0.0),
+            row.get("name") or "",
+        )
+    )
 
-    def render_promotion_rows(rows: list[tuple[str, dict[str, Any]]]) -> str:
+    def normalize_promotion_row(source_label: str, row: dict[str, Any], rank_label: str) -> dict[str, Any]:
+        team_name = str(row.get("team_name") or row.get("name") or "未知战队")
+        points_total = float(row.get("points_total", row.get("points_earned_total", 0.0)) or 0.0)
+        matches_represented = int(row.get("matches_represented") or 0)
+        points_per_match = float(row.get("points_per_match") or 0.0)
+        return {
+            "source_label": source_label,
+            "rank_label": rank_label,
+            "team_id": str(row.get("team_id") or ""),
+            "team_name": team_name,
+            "logo": str(row.get("logo") or DEFAULT_TEAM_LOGO),
+            "href": str(row.get("href") or build_scoped_path(
+                "/teams/" + str(row.get("team_id") or ""),
+                selected_competition,
+                selected_season,
+                selected_region,
+                selected_series_slug,
+            )),
+            "points_total": points_total,
+            "points_per_match": points_per_match,
+            "matches_represented": matches_represented,
+        }
+
+    final_rows: list[dict[str, Any]] = []
+    seen_final_team_ids: set[str] = set()
+    for group_label, row in direct_rows:
+        normalized = normalize_promotion_row(
+            "常规赛直通",
+            row,
+            f"{group_label}-{int(row['rank'])}",
+        )
+        final_rows.append(normalized)
+        if normalized["team_id"]:
+            seen_final_team_ids.add(normalized["team_id"])
+    for row in playoff_stage_rows[:9]:
+        team_id = str(row.get("team_id") or "")
+        if team_id and team_id in seen_final_team_ids:
+            continue
+        normalized = normalize_promotion_row(
+            "季后赛前9",
+            row,
+            f"季后赛-{int(row.get('points_rank') or len(final_rows) + 1)}",
+        )
+        final_rows.append(normalized)
+        if team_id:
+            seen_final_team_ids.add(team_id)
+    playoff_promotion_rows = [
+        normalize_promotion_row(
+            "常规赛晋级",
+            row,
+            f"{group_label}-{int(row['rank'])}",
+        )
+        for group_label, row in playoff_rows
+    ]
+
+    def dashboard_team_logo_src(logo_path: str) -> str:
+        logo_text = str(logo_path or "").strip()
+        if logo_text.startswith(("http://", "https://")):
+            return logo_text
+        candidate = safe_asset_path(logo_text)
+        if candidate and candidate.is_file():
+            return public_asset_url(logo_text)
+        return public_asset_url(DEFAULT_TEAM_LOGO)
+
+    def render_promotion_rows(rows: list[dict[str, Any]]) -> str:
         return "".join(
             f"""
             <a class="dashboard-ranking-item" href="{escape(row['href'])}">
-              <span class="dashboard-ranking-index">{escape(group_label)}-{int(row['rank'])}</span>
+              <span class="dashboard-promotion-mark">
+                <span class="dashboard-ranking-index">{escape(row['rank_label'])}</span>
+                <img class="dashboard-promotion-logo" src="{escape(dashboard_team_logo_src(row['logo']))}" alt="{escape(row['team_name'])} 队标">
+              </span>
               <div>
                 <div class="dashboard-ranking-name">{escape(row['team_name'])}</div>
-                <div class="dashboard-ranking-meta">总积分 {row['points_total']:.2f} · 场均 {row['points_per_match']:.2f} · 对局 {row['matches_represented']} 场</div>
+                <div class="dashboard-ranking-meta">{escape(row['source_label'])} · 总积分 {row['points_total']:.2f} · 场均 {row['points_per_match']:.2f} · 对局 {row['matches_represented']} 场</div>
               </div>
               <div class="dashboard-ranking-score">{row['points_total']:.2f}<small>积分</small></div>
             </a>
             """
-            for group_label, row in rows
+            for row in rows
         )
 
     promotion_panel = f"""
@@ -7085,20 +7194,20 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
       <div class="dashboard-section-head">
         <div>
           <h2 class="section-title mb-2">晋级名单</h2>
-          <p class="dashboard-section-copy mb-0">按常规赛分组积分计算：S组第1-2名、F组第1名进入直通区；S组第3-7名、F组第2-6名进入季后赛区。</p>
+          <p class="dashboard-section-copy mb-0">决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成；季后赛区按常规赛 S组第3-7名、F组第2-6名计算。</p>
         </div>
       </div>
       <div class="row g-3">
         <div class="col-12 col-xl-5">
-          <div class="dashboard-panel-kicker mb-3">直通区</div>
+          <div class="dashboard-panel-kicker mb-3">决赛区</div>
           <div class="dashboard-ranking-list">
-            {render_promotion_rows(direct_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的直通队伍。</div>'}
+            {render_promotion_rows(final_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的决赛队伍。</div>'}
           </div>
         </div>
         <div class="col-12 col-xl-7">
           <div class="dashboard-panel-kicker mb-3">季后赛区</div>
           <div class="dashboard-ranking-list">
-            {render_promotion_rows(playoff_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的季后赛队伍。</div>'}
+            {render_promotion_rows(playoff_promotion_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的季后赛队伍。</div>'}
           </div>
         </div>
       </div>

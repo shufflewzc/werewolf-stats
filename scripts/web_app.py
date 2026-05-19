@@ -1640,6 +1640,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         nav_links = [
             build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
             build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
+            build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"),
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
         admin_nav_links = [
@@ -1682,6 +1683,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         nav_links = [
             build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
             build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
+            build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"),
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
         user_html = """
@@ -6532,6 +6534,23 @@ def build_dashboard_group_team_rows(
     return ranked_rows
 
 
+def dashboard_regular_season_progress_label(group_label: str, rank: int) -> str:
+    normalized_group = group_label.strip().upper()
+    if normalized_group in {"S组", "S"}:
+        if rank in {1, 2}:
+            return "直通"
+        if 9 <= rank <= 12:
+            return "淘汰"
+        return "争夺中"
+    if normalized_group in {"F组", "F"}:
+        if rank == 1:
+            return "直通"
+        if 7 <= rank <= 12:
+            return "淘汰"
+        return "争夺中"
+    return ""
+
+
 def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
@@ -6723,11 +6742,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         <div class="dashboard-metric-value">{active_match_count}</div>
         <div class="dashboard-metric-copy">包含已录入比分、阵营和个人表现的有效对局。</div>
       </article>
-      <article class="dashboard-metric-card">
-        <div class="dashboard-metric-label">最近比赛日</div>
-        <div class="dashboard-metric-value">{escape(latest_played_on)}</div>
-        <div class="dashboard-metric-copy">{escape(featured_seasons)} · 继续往下可以查看当天总览。</div>
-      </article>
     </section>
     """
 
@@ -6916,7 +6930,13 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         }
     )
     requested_group = form_value(ctx.query, "group").strip()
-    selected_group = requested_group if requested_group in group_labels else (group_labels[0] if group_labels else "")
+    requested_regular_progress_group = requested_group.strip().upper() in {"S组", "S", "F组", "F"}
+    selected_group = (
+        requested_group
+        if requested_group in group_labels
+        or (selected_stage_key == "regular_season" and requested_regular_progress_group)
+        else (group_labels[0] if group_labels else "")
+    )
     group_board_rows = (
         build_dashboard_group_team_rows(
             data,
@@ -6949,6 +6969,16 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         f'<option value="{escape(group_label)}"{" selected" if group_label == selected_group else ""}>{escape(group_label)}</option>'
         for group_label in group_labels
     )
+    if selected_group and selected_group not in group_labels:
+        group_options_html = (
+            f'<option value="{escape(selected_group)}" selected>{escape(selected_group)}</option>'
+            + group_options_html
+        )
+    show_regular_progress = (
+        selected_stage_key == "regular_season"
+        and selected_group.strip().upper() in {"S组", "S", "F组", "F"}
+    )
+    progress_header_html = "<th>进程</th>" if show_regular_progress else ""
     group_board_table_rows = "".join(
         f"""
         <tr>
@@ -6959,10 +6989,12 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
           <td>{row['points_total']:.2f}</td>
           <td>{row['points_per_match']:.2f}</td>
           <td>{format_pct(row['win_rate'])}</td>
+          {f'<td><span class="dashboard-day-tag">{escape(dashboard_regular_season_progress_label(selected_group, int(row["rank"])))}</span></td>' if show_regular_progress else ''}
         </tr>
         """
         for row in group_board_rows
     )
+    group_empty_colspan = 8 if show_regular_progress else 7
     player_total_table_rows = "".join(
         f"""
         <tr>
@@ -6980,8 +7012,8 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     )
     group_board_table_html = (
         '<div class="table-responsive"><table class="table align-middle mb-0">'
-        "<thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均</th><th>胜率</th></tr></thead>"
-        f"<tbody>{group_board_table_rows or '<tr><td colspan=\"7\" class=\"text-secondary\">当前赛段分组还没有积分数据。</td></tr>'}</tbody>"
+        f"<thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均</th><th>胜率</th>{progress_header_html}</tr></thead>"
+        f"<tbody>{group_board_table_rows or f'<tr><td colspan=\"{group_empty_colspan}\" class=\"text-secondary\">当前赛段分组还没有积分数据。</td></tr>'}</tbody>"
         "</table></div>"
     )
     player_total_table_html = (
@@ -6991,6 +7023,87 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         "</table></div>"
     )
     dashboard_board_table_html = group_board_table_html if selected_board == "group" else player_total_table_html
+    regular_season_matches = [
+        match
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip() == "regular_season"
+    ]
+    regular_s_rows = build_dashboard_group_team_rows(
+        data,
+        regular_season_matches,
+        "S组",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    regular_f_rows = build_dashboard_group_team_rows(
+        data,
+        regular_season_matches,
+        "F组",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    direct_rows = [
+        ("S组", row)
+        for row in regular_s_rows
+        if int(row.get("rank") or 0) in {1, 2}
+    ] + [
+        ("F组", row)
+        for row in regular_f_rows
+        if int(row.get("rank") or 0) == 1
+    ]
+    playoff_rows = [
+        ("S组", row)
+        for row in regular_s_rows
+        if 3 <= int(row.get("rank") or 0) <= 7
+    ] + [
+        ("F组", row)
+        for row in regular_f_rows
+        if 2 <= int(row.get("rank") or 0) <= 6
+    ]
+
+    def render_promotion_rows(rows: list[tuple[str, dict[str, Any]]]) -> str:
+        return "".join(
+            f"""
+            <a class="dashboard-ranking-item" href="{escape(row['href'])}">
+              <span class="dashboard-ranking-index">{escape(group_label)}-{int(row['rank'])}</span>
+              <div>
+                <div class="dashboard-ranking-name">{escape(row['team_name'])}</div>
+                <div class="dashboard-ranking-meta">总积分 {row['points_total']:.2f} · 场均 {row['points_per_match']:.2f} · 对局 {row['matches_represented']} 场</div>
+              </div>
+              <div class="dashboard-ranking-score">{row['points_total']:.2f}<small>积分</small></div>
+            </a>
+            """
+            for group_label, row in rows
+        )
+
+    promotion_panel = f"""
+    <section class="panel dashboard-section-panel shadow-sm">
+      <div class="dashboard-section-head">
+        <div>
+          <h2 class="section-title mb-2">晋级名单</h2>
+          <p class="dashboard-section-copy mb-0">按常规赛分组积分计算：S组第1-2名、F组第1名进入直通区；S组第3-7名、F组第2-6名进入季后赛区。</p>
+        </div>
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-xl-5">
+          <div class="dashboard-panel-kicker mb-3">直通区</div>
+          <div class="dashboard-ranking-list">
+            {render_promotion_rows(direct_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的直通队伍。</div>'}
+          </div>
+        </div>
+        <div class="col-12 col-xl-7">
+          <div class="dashboard-panel-kicker mb-3">季后赛区</div>
+          <div class="dashboard-ranking-list">
+            {render_promotion_rows(playoff_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的季后赛队伍。</div>'}
+          </div>
+        </div>
+      </div>
+    </section>
+    """
     dashboard_board_panel = f"""
     <section class="panel dashboard-section-panel shadow-sm">
       <div class="dashboard-section-head">
@@ -7036,7 +7149,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
             <div class="dashboard-status-row">
               <span class="dashboard-status-chip"><strong>当前焦点</strong>{escape(dashboard_scope_label)}</span>
               <span class="dashboard-status-chip"><strong>数据时间</strong>{escape(ctx.now_label)}</span>
-              <span class="dashboard-status-chip"><strong>比赛日</strong>{escape(latest_played_on)}</span>
             </div>
             <div class="dashboard-filter-grid">
               <div class="dashboard-filter-block">
@@ -7057,7 +7169,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               </div>
             </div>
             <div class="d-flex flex-wrap gap-2 mt-4">
-              <a class="btn btn-light" href="{escape(latest_match_day_path)}">打开比赛日时间线</a>
               <a class="btn btn-outline-dark" href="/competitions">打开全部赛事</a>
             </div>
           </div>
@@ -7089,71 +7200,22 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
                 </div>
               </div>
             </section>
-            <section class="dashboard-brief-card">
-              <div class="dashboard-panel-kicker">Quick Brief</div>
-              <div class="dashboard-brief-list">
-                <div class="dashboard-brief-item">
-                  <span class="dashboard-rank-badge">T</span>
-                  <div>
-                    <div class="dashboard-brief-name">{escape(top_team['name']) if top_team else '暂无战队头名'}</div>
-                    <div class="dashboard-brief-meta">{f"胜率 {format_pct(top_team['win_rate'])} · 对局 {top_team['matches_represented']} 场" if top_team else '当前口径下还没有有效战绩'}</div>
-                  </div>
-                  <div class="dashboard-brief-value">{f"{top_team['points_earned_total']:.2f}" if top_team else '--'}<small>team</small></div>
-                </div>
-                <div class="dashboard-brief-item">
-                  <span class="dashboard-rank-badge">P</span>
-                  <div>
-                    <div class="dashboard-brief-name">{escape(top_player['display_name']) if top_player else '暂无选手头名'}</div>
-                    <div class="dashboard-brief-meta">{f"胜率 {format_pct(top_player['win_rate'])} · 出场 {top_player['games_played']} 次" if top_player else '当前口径下还没有有效战绩'}</div>
-                  </div>
-                  <div class="dashboard-brief-value">{f"{top_player['points_earned_total']:.2f}" if top_player else '--'}<small>player</small></div>
-                </div>
-              </div>
-            </section>
           </div>
         </div>
       </section>
       {metrics_cards}
+      {promotion_panel}
       {dashboard_board_panel}
-      <section class="dashboard-grid">
-        <section class="panel dashboard-section-panel shadow-sm">
-          <div class="dashboard-section-head">
-            <div>
-              <h2 class="section-title mb-2">系列赛专题入口</h2>
-              <p class="dashboard-section-copy mb-0">首页先把“值得点进去的专题”摆出来。你可以先看系列赛品牌页，再根据需要落到某个地区赛事站点。</p>
-            </div>
-            <a class="btn btn-outline-dark" href="/competitions">进入全部赛事</a>
-          </div>
-          <div class="dashboard-feature-grid">
-            {''.join(series_cards) or '<div class="alert alert-secondary mb-0">当前地区还没有系列赛，请先创建系列赛目录。</div>'}
-          </div>
-        </section>
-        <aside class="panel dashboard-side-panel shadow-sm">
-          <div class="dashboard-section-head">
-            <div>
-              <h2 class="section-title mb-2">即时榜单</h2>
-              <p class="dashboard-section-copy mb-0">首页不放大表格，先给你当前口径下最能代表走势的头部名单。</p>
-            </div>
-          </div>
-          <div class="dashboard-panel-kicker">Top Teams</div>
-          <div class="dashboard-ranking-list">
-            {''.join(top_team_items) or '<div class="alert alert-secondary mb-0">当前没有可展示的战队榜单。</div>'}
-          </div>
-          <div class="dashboard-panel-kicker mt-4">Top Players</div>
-          <div class="dashboard-ranking-list">
-            {''.join(top_player_items) or '<div class="alert alert-secondary mb-0">当前没有可展示的选手榜单。</div>'}
-          </div>
-        </aside>
-      </section>
       <section class="panel dashboard-section-panel shadow-sm">
         <div class="dashboard-section-head">
           <div>
-            <h2 class="section-title mb-2">最近比赛日</h2>
-            <p class="dashboard-section-copy mb-0">把有比赛的日期做成时间卡片，方便从“今天发生了什么”这个入口快速下钻，而不是先读一堆说明文字。</p>
+            <h2 class="section-title mb-2">系列赛专题入口</h2>
+            <p class="dashboard-section-copy mb-0">首页先把“值得点进去的专题”摆出来。你可以先看系列赛品牌页，再根据需要落到某个地区赛事站点。</p>
           </div>
+          <a class="btn btn-outline-dark" href="/competitions">进入全部赛事</a>
         </div>
-        <div class="dashboard-day-grid">
-          {''.join(recent_day_cards) or '<div class="alert alert-secondary mb-0">当前统计范围还没有比赛日数据。</div>'}
+        <div class="dashboard-feature-grid">
+          {''.join(series_cards) or '<div class="alert alert-secondary mb-0">当前地区还没有系列赛，请先创建系列赛目录。</div>'}
         </div>
       </section>
     </div>
@@ -7342,6 +7404,12 @@ def handle_competitions(ctx: RequestContext, start_response):
 
 def handle_competitions_api(ctx: RequestContext, start_response):
     from web.features.competitions import handle_competitions_api as impl
+
+    return impl(ctx, start_response)
+
+
+def handle_ai_analysis(ctx: RequestContext, start_response):
+    from web.features.competitions import handle_ai_analysis as impl
 
     return impl(ctx, start_response)
 
@@ -12043,6 +12111,8 @@ def app(environ, start_response):
             return handle_competitions(ctx, start_response)
         if path == "/competitions/legacy":
             return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
+        if path == "/ai-analysis":
+            return handle_ai_analysis(ctx, start_response)
         if path == "/guilds":
             return handle_guilds(ctx, start_response)
         if path == "/guilds/legacy":

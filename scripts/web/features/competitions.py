@@ -1538,7 +1538,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
             key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
         )
         if match_in_scope(match, selected_competition, selected_season)
-    ]
+    ] if selected_competition and selected_season else []
     player_count = len({entry["player_id"] for match in match_rows for entry in match["players"]})
     scope_label = " / ".join(item for item in [selected_competition, selected_season] if item) or "比赛总览"
     season_switcher_html = f'<div class="hero-switchers mt-3">{season_switcher}</div>' if season_switcher else ""
@@ -1670,90 +1670,785 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         build_scoped_path("/competitions", selected_competition, selected_season, selected_region, selected_series_slug),
         season_entry,
     )
-    ai_season_summary = (
-        load_ai_season_summary(selected_competition, selected_season)
-        if selected_competition and selected_season
-        else None
-    )
-    ai_settings = load_ai_daily_brief_settings()
-    ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
-    ai_season_actions = ""
-    ai_season_admin_editor = ""
-    if selected_competition and selected_season and ai_configured and (
-        not ai_season_summary or is_admin_user(ctx.current_user)
-    ):
-        ai_season_actions = f"""
-        <form method="post" action="/competitions" class="m-0">
-          <input type="hidden" name="action" value="generate_ai_season_summary">
-          <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
-          <input type="hidden" name="season_name" value="{escape(selected_season)}">
-          <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
-          <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
-          <button type="submit" class="btn btn-dark">{'重生成 AI 赛季总结' if ai_season_summary else '生成 AI 赛季总结'}</button>
-        </form>
-        """
-    elif selected_competition and selected_season and not ai_configured and is_admin_user(ctx.current_user):
-        ai_season_actions = '<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>'
-    if selected_competition and selected_season and is_admin_user(ctx.current_user) and ai_season_summary:
-        ai_season_admin_editor = f"""
-        <div class="form-panel p-3 p-lg-4 mt-4">
-          <h3 class="h5 mb-2">管理员编辑总结</h3>
-          <p class="section-copy mb-3">可以直接修改当前赛季总结正文。保存后会立即覆盖展示内容。</p>
-          <form method="post" action="/competitions">
-            <input type="hidden" name="action" value="save_ai_season_summary">
-            <input type="hidden" name="competition_name" value="{escape(selected_competition)}">
-            <input type="hidden" name="season_name" value="{escape(selected_season)}">
-            <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
-            <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
-            <div class="mb-3">
-              <textarea class="form-control" name="summary_content" rows="14">{escape(ai_season_summary.get('content') or '')}</textarea>
-            </div>
-            <div class="d-flex flex-wrap gap-2">
-              <button type="submit" class="btn btn-outline-dark">保存人工编辑</button>
-            </div>
-          </form>
-        </div>
-        """
-    ai_season_summary_panel = ""
-    if selected_season:
-        ai_season_summary_panel = (
-            f"""
-            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
-                <div>
-                  <h2 class="section-title mb-2">AI 赛季总结</h2>
-                  <p class="section-copy mb-0">基于当前赛事页下该赛季的已录入数据生成总结，可在补录后重新生成。</p>
-                </div>
-                <div class="d-flex flex-wrap gap-2">{ai_season_actions}</div>
-              </div>
-              <div class="small text-secondary mb-3">生成时间 {escape(ai_season_summary.get('generated_at') or '未生成')} · 模型 {escape(ai_season_summary.get('model') or ai_settings.get('model') or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL)}</div>
-              <div class="editorial-copy mb-0">{render_ai_daily_brief_html(ai_season_summary.get('content') or '')}</div>
-              {ai_season_admin_editor}
-            </section>
-            """
-            if ai_season_summary
-            else f"""
-            <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-              <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
-                <div>
-                  <h2 class="section-title mb-2">AI 赛季总结</h2>
-                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成赛季总结。')}</p>
-                </div>
-                <div class="d-flex flex-wrap gap-2">{ai_season_actions}</div>
-              </div>
-            </section>
-            """
-        )
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4"><div class="hero-layout"><div><div class="eyebrow mb-3">{escape(page_badge)}</div><h1 class="hero-title mb-3">{escape(hero_title)}</h1><p class="hero-copy mb-0">{escape(hero_intro)}</p>{region_switcher_html}{series_switcher_html}<div class="hero-switchers mt-3">{competition_switcher}</div>{season_switcher_html}<div class="hero-kpis"><div class="hero-pill"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>{escape(selected_season or '当前赛季')} 真实参赛</small></div><div class="hero-pill"><span>参赛队员</span><strong>{player_count}</strong><small>{escape(selected_season or '当前赛季')} 已上场</small></div><div class="hero-pill"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>{escape(scope_label)} 完整赛程</small></div></div></div><div class="hero-stage-card"><div class="official-mark">Event Sheet</div><div class="hero-stage-label">Season Overview</div><div class="hero-stage-title">{escape(scope_label)}</div><div class="hero-stage-note">{escape(hero_note)}</div><div class="hero-stage-grid"><div class="hero-stage-metric"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(selected_season or (' / '.join(competition_meta['seasons'][:2]) if competition_meta and competition_meta['seasons'] else '赛季待录入'))}</small></div><div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>该赛季参赛战队</small></div><div class="hero-stage-metric"><span>参赛队员</span><strong>{player_count}</strong><small>该赛季实际出场</small></div><div class="hero-stage-metric"><span>赛季场次</span><strong>{len(match_rows)}</strong><small>该赛季完整赛程</small></div></div></div></div></section>
     {season_registration_panel}
     {progress_overview_panel}
-    {ai_season_summary_panel}
     {leaderboard_sections}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季战队入口</h2><p class="section-copy mb-0">这里只保留当前赛季的战队名称入口，点进后继续看同一赛季口径下的战队详情。</p></div><div class="d-flex flex-wrap gap-2">{create_match_button}{edit_competition_button}{series_topic_button}{schedule_page_button}<a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', None, None, selected_region, selected_series_slug))}">返回地区赛事列表</a></div></div><div class="d-flex flex-wrap gap-2">{team_links_html or '<div class="alert alert-secondary mb-0 w-100">当前赛季还没有战队数据。</div>'}</div></section>
     <section class="panel shadow-sm p-3 p-lg-4"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h2 class="section-title mb-2">该赛季完整赛程</h2><p class="section-copy mb-0">按日历展示当前赛季的比赛日期；有比赛的日期会高亮显示，点击即可进入当天比赛结果页。</p></div></div>{season_schedule_calendar}</section>
     """
     return layout(scope_label, body, ctx, alert=alert)
+
+
+def _resolve_ai_analysis_selection(ctx: RequestContext, data: dict[str, Any]) -> dict[str, Any]:
+    scope = resolve_catalog_scope(ctx, data)
+    competition_rows = scope["competition_rows"]
+    selected_competition = scope["selected_competition"]
+    selected_region = scope["selected_region"]
+    selected_series_slug = scope["selected_series_slug"]
+    selected_entry = scope["selected_entry"]
+    visible_rows = scope["filtered_rows"] or scope["region_rows"] or competition_rows
+
+    if not selected_competition:
+        featured_row = max(visible_rows, key=competition_latest_day_sort_key, default=None)
+        if featured_row:
+            selected_competition = featured_row["competition_name"]
+            selected_region = featured_row["region_name"]
+            selected_series_slug = featured_row["series_slug"]
+            selected_entry = featured_row
+
+    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    selected_season = get_selected_season(ctx, season_names) or (season_names[0] if season_names else None)
+
+    if selected_competition and not selected_entry:
+        selected_entry = next(
+            (
+                row
+                for row in competition_rows
+                if row["competition_name"] == selected_competition
+            ),
+            None,
+        )
+        if selected_entry:
+            selected_region = selected_region or selected_entry["region_name"]
+            selected_series_slug = selected_series_slug or selected_entry["series_slug"]
+
+    return {
+        "scope": scope,
+        "selected_competition": selected_competition,
+        "selected_season": selected_season,
+        "selected_region": selected_region,
+        "selected_series_slug": selected_series_slug,
+        "selected_entry": selected_entry,
+        "season_names": season_names,
+        "visible_rows": visible_rows,
+    }
+
+
+def get_ai_analysis_page(
+    ctx: RequestContext,
+    alert: str = "",
+    ai_conversation: list[dict[str, str]] | None = None,
+) -> str:
+    data = load_validated_data()
+    selection = _resolve_ai_analysis_selection(ctx, data)
+    scope = selection["scope"]
+    selected_competition = selection["selected_competition"]
+    selected_season = selection["selected_season"]
+    selected_region = selection["selected_region"]
+    selected_series_slug = selection["selected_series_slug"]
+    selected_entry = selection["selected_entry"]
+    season_names = selection["season_names"]
+    visible_rows = selection["visible_rows"]
+
+    region_switcher = build_region_switcher(
+        "/ai-analysis",
+        scope["region_names"],
+        selected_region,
+        selected_series_slug,
+    )
+    series_switcher = build_series_switcher(
+        "/ai-analysis",
+        scope["series_rows"],
+        selected_region,
+        selected_series_slug,
+    )
+    competition_switcher = build_competition_switcher(
+        "/ai-analysis",
+        [row["competition_name"] for row in visible_rows],
+        selected_competition,
+        tone="light",
+        all_label="自动选择最近赛事",
+        region_name=selected_region,
+        series_slug=selected_series_slug,
+    )
+    season_switcher = build_season_switcher(
+        "/ai-analysis",
+        selected_competition,
+        season_names,
+        selected_season,
+        tone="light",
+        region_name=selected_region,
+        series_slug=selected_series_slug,
+    )
+
+    match_rows = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+        )
+        if match_in_scope(match, selected_competition, selected_season)
+    ]
+    if not selected_competition or not selected_season:
+        match_rows = []
+    played_match_rows = [match for match in match_rows if is_match_counted_as_played(match)]
+    stats_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": played_match_rows,
+    }
+    team_rows = [
+        row
+        for row in build_team_rows(stats_data, selected_competition, selected_season)
+        if row["matches_represented"] > 0
+    ] if selected_competition and selected_season else []
+    player_rows = [
+        row
+        for row in build_player_rows(stats_data, selected_competition, selected_season)
+        if row["games_played"] > 0
+    ] if selected_competition and selected_season else []
+    team_rows.sort(key=lambda row: (row.get("points_rank", 9999), -row["points_earned_total"], row["name"]))
+    player_rows.sort(key=lambda row: (row["rank"], -row["points_earned_total"], row["display_name"]))
+
+    ai_settings = load_ai_daily_brief_settings()
+    ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
+
+    scope_label = " / ".join(item for item in [selected_competition, selected_season] if item) or "请选择赛事与赛季"
+    latest_played_on = get_scheduled_match_day_label(match_rows, legacy.china_today_label()) if match_rows else "待更新"
+    empty_selection_alert = "" if selected_competition and selected_season else '<div class="alert alert-secondary mb-0">当前还没有可分析的赛事赛季，请先录入赛事与赛季数据。</div>'
+    question_disabled = "" if ai_configured and selected_competition and selected_season else " disabled"
+    question_placeholder = (
+        "例如：目前哪几支队伍晋级压力最大？哪些选手近期表现突出？"
+        if ai_configured
+        else "当前还没有配置 AI 接口。"
+    )
+    question_action = build_scoped_path(
+        "/ai-analysis",
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
+    ai_conversation = ai_conversation or []
+    conversation_payload = json.dumps(ai_conversation[-8:], ensure_ascii=False)
+    conversation_items = []
+    for item in ai_conversation:
+        question = str(item.get("question") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        model = str(item.get("model") or "").strip()
+        if not question or not answer:
+            continue
+        conversation_items.append(
+            f"""
+            <div class="ai-chat-row is-user">
+              <div class="ai-chat-bubble">
+                <div class="ai-chat-name">你</div>
+                <div>{escape(question)}</div>
+              </div>
+            </div>
+            <div class="ai-chat-row is-ai">
+              <div class="ai-chat-bubble">
+                <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+                  <div class="ai-chat-name">AI</div>
+                  <div class="small text-secondary">模型 {escape(model or ai_settings.get('model') or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL)}</div>
+                </div>
+                <div class="editorial-copy mb-0">{render_ai_daily_brief_html(answer)}</div>
+              </div>
+            </div>
+            """
+        )
+    conversation_panel = (
+        "".join(conversation_items)
+        if conversation_items
+        else '<div class="ai-chat-empty" data-ai-chat-empty>还没有对话。输入一个问题后，后续追问会自动带上前文。</div>'
+    )
+    reset_link = (
+        f'<a class="btn btn-outline-dark" href="{escape(question_action)}">重新开始</a>'
+        if conversation_items
+        else ""
+    )
+
+    body = f"""
+    <style>
+      .ai-chat-shell {{
+        border: 1px solid rgba(15, 23, 42, 0.12);
+        border-radius: 8px;
+        background: #f8fafc;
+        overflow: hidden;
+      }}
+      .ai-chat-messages {{
+        min-height: 420px;
+        max-height: 62vh;
+        overflow-y: auto;
+        padding: 1rem;
+      }}
+      .ai-chat-row {{
+        display: flex;
+        margin-bottom: 1rem;
+      }}
+      .ai-chat-row.is-user {{
+        justify-content: flex-end;
+      }}
+      .ai-chat-row.is-ai {{
+        justify-content: flex-start;
+      }}
+      .ai-chat-bubble {{
+        max-width: min(760px, 88%);
+        border: 1px solid rgba(15, 23, 42, 0.1);
+        border-radius: 8px;
+        background: #fff;
+        padding: 0.9rem 1rem;
+        box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+      }}
+      .ai-chat-row.is-user .ai-chat-bubble {{
+        background: #111827;
+        color: #fff;
+      }}
+      .ai-chat-name {{
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0;
+        color: #64748b;
+        margin-bottom: 0.35rem;
+      }}
+      .ai-chat-row.is-user .ai-chat-name {{
+        color: rgba(255, 255, 255, 0.72);
+      }}
+      .ai-chat-empty {{
+        border: 1px dashed rgba(15, 23, 42, 0.18);
+        border-radius: 8px;
+        color: #64748b;
+        padding: 1rem;
+        background: #fff;
+      }}
+      .ai-chat-composer {{
+        border-top: 1px solid rgba(15, 23, 42, 0.1);
+        background: #fff;
+        padding: 1rem;
+      }}
+      .ai-chat-composer textarea {{
+        min-height: 84px;
+        resize: vertical;
+      }}
+    </style>
+    <section class="hero p-4 p-md-5 shadow-lg mb-4">
+      <div class="hero-layout">
+        <div>
+          <div class="eyebrow mb-3">AI 数据分析</div>
+          <h1 class="hero-title mb-3">AI数据分析</h1>
+          <p class="hero-copy mb-0">输入赛事问题，AI 会基于当前选择的赛事、赛季和站内已录入积分数据回答。</p>
+          <div class="hero-switchers mt-4">{region_switcher}</div>
+          <div class="hero-switchers mt-3">{series_switcher}</div>
+          <div class="hero-switchers mt-3">{competition_switcher}</div>
+          <div class="hero-switchers mt-3">{season_switcher}</div>
+          <div class="hero-kpis">
+            <div class="hero-pill"><span>分析赛事</span><strong>{escape(selected_entry['region_name'] if selected_entry else selected_region or DEFAULT_REGION_NAME)}</strong><small>{escape(selected_competition or '待选择')}</small></div>
+            <div class="hero-pill"><span>已赛场次</span><strong>{len(played_match_rows)}</strong><small>{escape(selected_season or '赛季待选择')}</small></div>
+            <div class="hero-pill"><span>最近比赛日</span><strong>{escape(latest_played_on)}</strong><small>{escape(scope_label)}</small></div>
+          </div>
+        </div>
+        <div class="hero-stage-card">
+          <div class="official-mark">AI Analytics</div>
+          <div class="hero-stage-label">Data Q&A</div>
+          <div class="hero-stage-title">{escape(scope_label)}</div>
+          <div class="hero-stage-note">AI 问答只基于站内已录入的比赛、战队、选手和赛段积分数据回答。</div>
+          <div class="hero-stage-grid">
+            <div class="hero-stage-metric"><span>参赛战队</span><strong>{len(team_rows)}</strong><small>当前赛季口径</small></div>
+            <div class="hero-stage-metric"><span>参赛队员</span><strong>{len(player_rows)}</strong><small>已有上场数据</small></div>
+          </div>
+        </div>
+      </div>
+    </section>
+    {empty_selection_alert}
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">AI 数据问答</h2>
+          <p class="section-copy mb-0">连续追问赛事问题，AI 会基于当前赛事数据和本轮对话前文回答。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">{reset_link}</div>
+      </div>
+      <div class="ai-chat-shell" data-ai-chat-root>
+        <div class="ai-chat-messages" data-ai-chat-messages>
+          {conversation_panel}
+        </div>
+        <form class="ai-chat-composer" method="post" action="{escape(question_action)}" data-ai-chat-form>
+          <input type="hidden" name="action" value="ask_ai_data_question">
+          <input type="hidden" name="response_mode" value="json">
+          <input type="hidden" name="competition_name" value="{escape(selected_competition or '')}">
+          <input type="hidden" name="season_name" value="{escape(selected_season or '')}">
+          <input type="hidden" name="region_name" value="{escape(selected_region or '')}">
+          <input type="hidden" name="series_slug" value="{escape(selected_series_slug or '')}">
+          <input type="hidden" name="conversation_payload" value="{escape(conversation_payload)}" data-ai-chat-history>
+          <div class="mb-3">
+            <textarea class="form-control" name="question" rows="3" placeholder="{escape(question_placeholder)}"{question_disabled} data-ai-chat-input></textarea>
+          </div>
+          <div class="d-flex flex-wrap gap-2">
+            <button type="submit" class="btn btn-dark"{question_disabled} data-ai-chat-submit>发送</button>
+            {reset_link}
+            {'<a class="btn btn-outline-dark" href="/ai-admin">前往 AI 管理配置接口</a>' if not ai_configured and is_admin_user(ctx.current_user) else ''}
+          </div>
+        </form>
+      </div>
+      <script>
+        (() => {{
+          const root = document.querySelector("[data-ai-chat-root]");
+          if (!root) return;
+          const form = root.querySelector("[data-ai-chat-form]");
+          const endpoint = form.getAttribute("action") || window.location.href;
+          const messages = root.querySelector("[data-ai-chat-messages]");
+          const input = root.querySelector("[data-ai-chat-input]");
+          const submit = root.querySelector("[data-ai-chat-submit]");
+          const historyInput = root.querySelector("[data-ai-chat-history]");
+          const escapeHtml = (value) => String(value || "").replace(/[&<>"']/g, (char) => ({{
+            "&": "&amp;",
+            "<": "&lt;",
+            ">": "&gt;",
+            '"': "&quot;",
+            "'": "&#39;",
+          }}[char]));
+          const scrollToBottom = () => {{
+            messages.scrollTop = messages.scrollHeight;
+          }};
+          const clearEmpty = () => {{
+            const empty = messages.querySelector("[data-ai-chat-empty]");
+            if (empty) empty.remove();
+          }};
+          const appendUserMessage = (text) => {{
+            clearEmpty();
+            const row = document.createElement("div");
+            row.className = "ai-chat-row is-user";
+            row.innerHTML = `<div class="ai-chat-bubble"><div class="ai-chat-name">你</div><div>${{escapeHtml(text)}}</div></div>`;
+            messages.appendChild(row);
+            scrollToBottom();
+            return row;
+          }};
+          const appendAiMessage = (html, model, loading = false) => {{
+            clearEmpty();
+            const row = document.createElement("div");
+            row.className = "ai-chat-row is-ai";
+            row.innerHTML = `
+              <div class="ai-chat-bubble">
+                <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+                  <div class="ai-chat-name">AI</div>
+                  <div class="small text-secondary">${{model ? `模型 ${{escapeHtml(model)}}` : ""}}</div>
+                </div>
+                <div class="editorial-copy mb-0">${{loading ? "生成中..." : html}}</div>
+              </div>
+            `;
+            messages.appendChild(row);
+            scrollToBottom();
+            return row;
+          }};
+          const setAiMessage = (row, html, model) => {{
+            row.innerHTML = `
+              <div class="ai-chat-bubble">
+                <div class="d-flex justify-content-between align-items-center gap-3 mb-2">
+                  <div class="ai-chat-name">AI</div>
+                  <div class="small text-secondary">模型 ${{escapeHtml(model || "")}}</div>
+                </div>
+                <div class="editorial-copy mb-0">${{html}}</div>
+              </div>
+            `;
+            scrollToBottom();
+          }};
+          form.addEventListener("submit", async (event) => {{
+            event.preventDefault();
+            const question = input.value.trim();
+            if (!question || submit.disabled) return;
+            appendUserMessage(question);
+            input.value = "";
+            input.focus();
+            const loadingRow = appendAiMessage("", "", true);
+            submit.disabled = true;
+            submit.textContent = "生成中";
+            const payload = new URLSearchParams(new FormData(form));
+            payload.set("question", question);
+            payload.set("response_mode", "json");
+            try {{
+              const response = await fetch(endpoint, {{
+                method: "POST",
+                headers: {{
+                  "Accept": "application/json",
+                  "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
+                  "X-Requested-With": "XMLHttpRequest",
+                }},
+                body: payload.toString(),
+              }});
+              const contentType = response.headers.get("content-type") || "";
+              if (!contentType.includes("application/json")) {{
+                const fallbackText = await response.text();
+                throw new Error(fallbackText.includes("<!doctype") || fallbackText.includes("<html") ? "接口返回了页面内容，请刷新后重试。" : (fallbackText || "生成失败，请稍后再试。"));
+              }}
+              const result = await response.json();
+              if (!response.ok || !result.ok) {{
+                throw new Error(result.error || "生成失败，请稍后再试。");
+              }}
+              setAiMessage(loadingRow, result.answer_html || "", result.model || "");
+              historyInput.value = JSON.stringify(result.conversation || []);
+            }} catch (error) {{
+              setAiMessage(loadingRow, `<p>${{escapeHtml(error.message || "生成失败，请稍后再试。")}}</p>`, "");
+            }} finally {{
+              submit.disabled = false;
+              submit.textContent = "发送";
+            }}
+          }});
+          input.addEventListener("keydown", (event) => {{
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {{
+              event.preventDefault();
+              form.requestSubmit();
+            }}
+          }});
+          scrollToBottom();
+        }})();
+      </script>
+    </section>
+    """
+    return layout("AI数据分析", body, ctx, alert=alert)
+
+
+def _generate_and_save_ai_season_summary(competition_name: str, season_name: str) -> None:
+    data = load_validated_data()
+    match_rows = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+        )
+        if match_in_scope(match, competition_name, season_name)
+    ]
+    if not match_rows:
+        raise ValueError("当前赛季还没有可用于总结的比赛数据。")
+
+    played_match_rows = [match for match in match_rows if is_match_counted_as_played(match)]
+    stats_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": played_match_rows,
+    }
+    team_rows = [
+        row for row in build_team_rows(stats_data, competition_name, season_name)
+        if row["matches_represented"] > 0
+    ]
+    player_rows = [
+        row for row in build_player_rows(stats_data, competition_name, season_name)
+        if row["games_played"] > 0
+    ]
+    stage_team_rows = build_stage_team_rows(data, competition_name, season_name)
+    mvp_rows = build_player_mvp_rows(data, competition_name, season_name)
+    team_rows.sort(key=lambda row: (row.get("points_rank", 9999), -row["points_earned_total"], row["name"]))
+    player_rows.sort(key=lambda row: (row["rank"], -row["points_earned_total"], row["display_name"]))
+    report_text, model = generate_ai_season_summary(
+        competition_name,
+        season_name,
+        match_rows,
+        team_rows,
+        player_rows,
+        stage_team_rows,
+        mvp_rows,
+    )
+    save_ai_season_summary(competition_name, season_name, report_text, model)
+
+
+def build_ai_data_question_prompt(
+    competition_name: str,
+    season_name: str,
+    match_rows: list[dict[str, Any]],
+    team_rows: list[dict[str, Any]],
+    player_rows: list[dict[str, Any]],
+    stage_team_rows: dict[str, list[dict[str, Any]]],
+    mvp_rows: list[dict[str, Any]],
+    conversation: list[dict[str, str]],
+    question: str,
+) -> str:
+    stage_lines = []
+    for stage_key, rows in stage_team_rows.items():
+        top_rows = rows[:8]
+        if not top_rows:
+            continue
+        summary = "；".join(
+            f"第{index}名 {row['name']} 总积分 {float(row['points_earned_total']):.2f} / 胜率 {format_pct(row['win_rate'])}"
+            for index, row in enumerate(top_rows, start=1)
+        )
+        stage_lines.append(f"- {STAGE_OPTIONS.get(stage_key, stage_key)}：{summary}")
+    top_team_lines = [
+        f"- 第{row.get('points_rank', '-')}名 {row['name']} | 场次 {row['matches_represented']} | 上场队员 {row['player_count']} | 总积分 {float(row['points_earned_total']):.2f} | 场均 {float(row.get('points_per_match', 0.0)):.2f} | 胜率 {format_pct(row['win_rate'])}"
+        for row in team_rows[:16]
+    ]
+    top_player_lines = [
+        f"- 第{row['rank']}名 {row['display_name']} | {row['team_name']} | 出场 {row['games_played']} | 战绩 {row['record']} | 总积分 {float(row['points_earned_total']):.2f} | 场均 {float(row['average_points']):.2f}"
+        for row in player_rows[:20]
+    ]
+    mvp_lines = [
+        f"- 第{row['rank']}名 {row['display_name']} | {row['team_name']} | MVP {row['mvp_count']} 次 | 最近获奖 {row.get('latest_awarded_on') or '待更新'}"
+        for row in mvp_rows[:12]
+    ]
+    match_day_lines = []
+    seen_days: list[str] = []
+    for match in sorted(
+        match_rows,
+        key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+    ):
+        played_on = str(match.get("played_on") or "").strip()
+        if played_on and played_on not in seen_days:
+            seen_days.append(played_on)
+    for played_on in seen_days[:16]:
+        day_count = sum(1 for match in match_rows if str(match.get("played_on") or "").strip() == played_on)
+        match_day_lines.append(f"- {played_on}：{day_count} 场")
+    history_lines = []
+    for index, item in enumerate(conversation[-6:], start=1):
+        previous_question = str(item.get("question") or "").strip()
+        previous_answer = str(item.get("answer") or "").strip()
+        if not previous_question or not previous_answer:
+            continue
+        history_lines.append(
+            f"第{index}轮\n用户：{previous_question}\nAI：{previous_answer}"
+        )
+    return f"""请基于下面的站内真实赛事数据回答用户问题。
+要求：
+1. 只能依据给定数据回答，不要编造未提供的事实、场外信息或未来结果。
+2. 如果数据不足以回答，请直接说明缺少哪些数据。
+3. 用中文回答，结论先行，必要时用短列表。
+4. 涉及排名、晋级、淘汰、强弱走势时，请引用对应积分、场次、胜率或榜单位置作为依据。
+5. 如果用户追问里的“它们”“这些队”“刚才说的”等指代依赖前文，请结合对话历史理解。
+
+赛事：{competition_name}
+赛季：{season_name}
+已录入比赛：{len(match_rows)} 场
+参赛战队：{len(team_rows)} 支
+参赛队员：{len(player_rows)} 名
+
+战队积分榜：
+{chr(10).join(top_team_lines) if top_team_lines else "- 暂无战队积分数据"}
+
+个人积分榜：
+{chr(10).join(top_player_lines) if top_player_lines else "- 暂无个人积分数据"}
+
+MVP 榜：
+{chr(10).join(mvp_lines) if mvp_lines else "- 暂无 MVP 数据"}
+
+赛段摘要：
+{chr(10).join(stage_lines) if stage_lines else "- 暂无赛段积分数据"}
+
+比赛日分布：
+{chr(10).join(match_day_lines) if match_day_lines else "- 暂无比赛日数据"}
+
+本轮对话历史：
+{chr(10).join(history_lines) if history_lines else "- 暂无历史对话"}
+
+当前用户问题：
+{question}
+"""
+
+
+def parse_ai_conversation_payload(raw_payload: str) -> list[dict[str, str]]:
+    text = str(raw_payload or "").strip()
+    if not text:
+        return []
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    conversation: list[dict[str, str]] = []
+    for item in payload[-8:]:
+        if not isinstance(item, dict):
+            continue
+        question = str(item.get("question") or "").strip()
+        answer = str(item.get("answer") or "").strip()
+        model = str(item.get("model") or "").strip()
+        if question and answer:
+            conversation.append(
+                {
+                    "question": question[:1000],
+                    "answer": answer[:4000],
+                    "model": model[:120],
+                }
+            )
+    return conversation
+
+
+def generate_ai_data_question_answer(
+    competition_name: str,
+    season_name: str,
+    conversation: list[dict[str, str]],
+    question: str,
+) -> tuple[str, str]:
+    data = load_validated_data()
+    match_rows = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
+        )
+        if match_in_scope(match, competition_name, season_name)
+    ]
+    if not match_rows:
+        raise ValueError("当前赛季还没有可用于分析的比赛数据。")
+
+    played_match_rows = [match for match in match_rows if is_match_counted_as_played(match)]
+    stats_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": played_match_rows,
+    }
+    team_rows = [
+        row for row in build_team_rows(stats_data, competition_name, season_name)
+        if row["matches_represented"] > 0
+    ]
+    player_rows = [
+        row for row in build_player_rows(stats_data, competition_name, season_name)
+        if row["games_played"] > 0
+    ]
+    stage_team_rows = build_stage_team_rows(data, competition_name, season_name)
+    mvp_rows = build_player_mvp_rows(data, competition_name, season_name)
+    team_rows.sort(key=lambda row: (row.get("points_rank", 9999), -row["points_earned_total"], row["name"]))
+    player_rows.sort(key=lambda row: (row["rank"], -row["points_earned_total"], row["display_name"]))
+    return run_ai_generation_job(
+        job_type="data_analysis_question",
+        scope_type="competition_season",
+        scope_key=f"{competition_name}:{season_name}",
+        missing_config_message="AI 数据问答尚未配置 Base URL 或 API Key。",
+        system_prompt=(
+            "你是一名狼人杀赛事数据分析助手。"
+            "你只能根据用户提供的站内赛事数据回答问题，禁止虚构。"
+        ),
+        user_prompt=build_ai_data_question_prompt(
+            competition_name,
+            season_name,
+            match_rows,
+            team_rows,
+            player_rows,
+            stage_team_rows,
+            mvp_rows,
+            conversation,
+            question,
+        ),
+        created_by="",
+        metadata={"question": question, "history_turns": len(conversation)},
+    )
+
+
+def handle_ai_analysis(ctx: RequestContext, start_response):
+    if ctx.method == "GET":
+        return start_response_html(start_response, "200 OK", get_ai_analysis_page(ctx))
+
+    action = form_value(ctx.form, "action").strip()
+    competition_name = form_value(ctx.form, "competition_name").strip()
+    season_name = form_value(ctx.form, "season_name").strip()
+    region_name = form_value(ctx.form, "region_name").strip()
+    series_slug = form_value(ctx.form, "series_slug").strip()
+    redirect_path = build_scoped_path(
+        "/ai-analysis",
+        competition_name,
+        season_name,
+        region_name,
+        series_slug,
+    )
+
+    if action == "save_ai_season_summary":
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
+        summary_content = form_value(ctx.form, "summary_content").strip()
+        if not summary_content:
+            return redirect(start_response, append_alert_query(redirect_path, "赛季总结正文不能为空。"))
+        save_ai_season_summary(
+            competition_name,
+            season_name,
+            summary_content,
+            "管理员手动编辑",
+        )
+        return redirect(start_response, append_alert_query(redirect_path, "AI 赛季总结已保存。"))
+
+    if action == "generate_ai_season_summary":
+        if not competition_name or not season_name:
+            return redirect(start_response, append_alert_query(redirect_path, "请先选择具体赛季，再生成 AI 赛季总结。"))
+        existing_summary = load_ai_season_summary(competition_name, season_name)
+        if existing_summary and not is_admin_user(ctx.current_user):
+            return redirect(start_response, append_alert_query(redirect_path, "当前赛季总结已生成，只有管理员可以重生成。"))
+        try:
+            _generate_and_save_ai_season_summary(competition_name, season_name)
+        except ValueError as exc:
+            return redirect(start_response, append_alert_query(redirect_path, str(exc)))
+        return redirect(start_response, append_alert_query(redirect_path, "AI 赛季总结已生成。"))
+
+    if action == "ask_ai_data_question":
+        question = form_value(ctx.form, "question").strip()
+        conversation = parse_ai_conversation_payload(
+            form_value(ctx.form, "conversation_payload")
+        )
+        wants_json = form_value(ctx.form, "response_mode").strip() == "json"
+
+        def data_question_error(message: str, status: str = "400 Bad Request"):
+            if wants_json:
+                return start_response_json(
+                    start_response,
+                    status,
+                    {"ok": False, "error": message},
+                )
+            return redirect(start_response, append_alert_query(redirect_path, message))
+
+        if not competition_name or not season_name:
+            return data_question_error("请先选择具体赛季，再进行 AI 数据问答。")
+        if not question:
+            return data_question_error("请输入要分析的问题。")
+        if len(question) > 1000:
+            return data_question_error("问题太长了，请控制在 1000 字以内。")
+        try:
+            answer, model = generate_ai_data_question_answer(
+                competition_name,
+                season_name,
+                conversation,
+                question,
+            )
+        except ValueError as exc:
+            return data_question_error(str(exc))
+        except Exception as exc:
+            return data_question_error(str(exc) or "AI 生成失败，请稍后再试。", "500 Internal Server Error")
+        conversation.append(
+            {
+                "question": question,
+                "answer": answer,
+                "model": model,
+            }
+        )
+        conversation = conversation[-8:]
+
+        if wants_json:
+            return start_response_json(
+                start_response,
+                "200 OK",
+                {
+                    "ok": True,
+                    "answer": answer,
+                    "answer_html": render_ai_daily_brief_html(answer),
+                    "model": model,
+                    "conversation": conversation,
+                },
+            )
+
+        response_ctx = RequestContext(
+            method="GET",
+            path="/ai-analysis",
+            query={
+                "competition": [competition_name],
+                "season": [season_name],
+                "region": [region_name],
+                "series": [series_slug],
+            },
+            form={},
+            files={},
+            current_user=ctx.current_user,
+            now_label=ctx.now_label,
+        )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_ai_analysis_page(
+                response_ctx,
+                ai_conversation=conversation,
+            ),
+        )
+
+    return start_response_html(
+        start_response,
+        "405 Method Not Allowed",
+        layout("请求无效", '<div class="alert alert-danger">AI 数据分析页不支持这个操作。</div>', ctx),
+    )
 
 
 def build_series_api_payload(

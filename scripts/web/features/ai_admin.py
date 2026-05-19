@@ -19,6 +19,7 @@ AI_JOB_TYPE_LABELS = {
     "match_day_report": "比赛日报",
     "match_day_report_pipeline": "比赛日报 Pipeline",
     "season_summary": "赛季总结",
+    "data_analysis_question": "数据问答",
     "team_season_summary": "战队赛季总结",
     "player_season_summary": "选手赛季总结",
 }
@@ -356,4 +357,3 @@ def handle_ai_admin(ctx: RequestContext, start_response):
         "200 OK",
         get_ai_admin_page(ctx, alert="未识别的操作。"),
     )
-

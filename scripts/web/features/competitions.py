@@ -59,6 +59,7 @@ load_ai_season_summary = legacy.load_ai_season_summary
 mask_api_key = legacy.mask_api_key
 parse_china_datetime = legacy.parse_china_datetime
 render_ai_prompt_template = legacy.render_ai_prompt_template
+record_ai_conversation = legacy.record_ai_conversation
 run_ai_generation_job = legacy.run_ai_generation_job
 require_admin = legacy.require_admin
 sort_match_days_by_relevance = legacy.sort_match_days_by_relevance
@@ -2291,6 +2292,7 @@ def generate_ai_data_question_answer(
     season_name: str,
     conversation: list[dict[str, str]],
     question: str,
+    created_by: str = "",
 ) -> tuple[str, str]:
     data = load_validated_data()
     match_rows = [
@@ -2352,7 +2354,7 @@ def generate_ai_data_question_answer(
             conversation,
             question,
         ),
-        created_by="",
+        created_by=created_by,
         metadata={"question": question, "history_turns": len(conversation)},
     )
 
@@ -2429,6 +2431,7 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
                 season_name,
                 conversation,
                 question,
+                str((ctx.current_user or {}).get("username") or ""),
             )
         except ValueError as exc:
             return data_question_error(str(exc))
@@ -2441,6 +2444,25 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
                 "model": model,
             }
         )
+        try:
+            record_ai_conversation(
+                competition_name=competition_name,
+                season_name=season_name,
+                region_name=region_name,
+                series_slug=series_slug,
+                question=question,
+                answer=answer,
+                model=model,
+                username=str((ctx.current_user or {}).get("username") or ""),
+                created_at=legacy.china_now_label(),
+                metadata={
+                    "history_turns": max(0, len(conversation) - 1),
+                    "previous_turns": conversation[:-1],
+                    "response_mode": "json" if wants_json else "html",
+                },
+            )
+        except Exception as exc:
+            print("AI 对话记录写入失败：", exc)
         conversation = conversation[-8:]
 
         if wants_json:

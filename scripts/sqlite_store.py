@@ -181,6 +181,31 @@ def create_schema(connection: sqlite3.Connection) -> None:
             FOREIGN KEY (job_id) REFERENCES ai_jobs(job_id) ON DELETE CASCADE
         );
 
+        CREATE TABLE IF NOT EXISTS access_logs (
+            log_id TEXT PRIMARY KEY,
+            path TEXT NOT NULL,
+            method TEXT NOT NULL,
+            query_string TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT '',
+            ip_address TEXT NOT NULL DEFAULT '',
+            user_agent TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS ai_conversations (
+            conversation_id TEXT PRIMARY KEY,
+            competition_name TEXT NOT NULL DEFAULT '',
+            season_name TEXT NOT NULL DEFAULT '',
+            region_name TEXT NOT NULL DEFAULT '',
+            series_slug TEXT NOT NULL DEFAULT '',
+            question TEXT NOT NULL,
+            answer TEXT NOT NULL,
+            model TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
+        );
+
         CREATE TABLE IF NOT EXISTS user_sessions (
             session_token TEXT PRIMARY KEY,
             username TEXT NOT NULL,
@@ -293,6 +318,18 @@ def create_schema(connection: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_ai_job_steps_job_order
         ON ai_job_steps(job_id, step_order);
+
+        CREATE INDEX IF NOT EXISTS idx_access_logs_created_at
+        ON access_logs(created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_access_logs_path_created_at
+        ON access_logs(path, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ai_conversations_created_at
+        ON ai_conversations(created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_ai_conversations_scope
+        ON ai_conversations(competition_name, season_name, created_at);
 
         CREATE TABLE IF NOT EXISTS season_player_dimension_stats (
             competition_name TEXT NOT NULL,
@@ -1806,6 +1843,159 @@ def load_ai_jobs(limit: int = 50) -> list[dict[str, Any]]:
             }
         )
     return jobs
+
+
+def record_access_log(
+    *,
+    path: str,
+    method: str,
+    query_string: str = "",
+    username: str = "",
+    ip_address: str = "",
+    user_agent: str = "",
+    created_at: str,
+) -> str:
+    log_id = "access_" + secrets.token_hex(12)
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO access_logs (
+                    log_id, path, method, query_string, username,
+                    ip_address, user_agent, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    log_id,
+                    str(path or "").strip() or "/",
+                    str(method or "").strip().upper() or "GET",
+                    str(query_string or "").strip(),
+                    str(username or "").strip(),
+                    str(ip_address or "").strip(),
+                    str(user_agent or "").strip()[:500],
+                    created_at,
+                ),
+            )
+    return log_id
+
+
+def load_access_overview(limit: int = 80) -> dict[str, Any]:
+    row_limit = max(1, min(int(limit), 300))
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        total_row = connection.execute("SELECT COUNT(*) AS count FROM access_logs").fetchone()
+        today_row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM access_logs
+            WHERE substr(created_at, 1, 10) = date('now', '+8 hours')
+            """
+        ).fetchone()
+        unique_ip_row = connection.execute(
+            "SELECT COUNT(DISTINCT ip_address) AS count FROM access_logs WHERE ip_address != ''"
+        ).fetchone()
+        top_path_rows = connection.execute(
+            """
+            SELECT path, COUNT(*) AS visits, MAX(created_at) AS last_seen_at
+            FROM access_logs
+            GROUP BY path
+            ORDER BY visits DESC, last_seen_at DESC
+            LIMIT 10
+            """
+        ).fetchall()
+        recent_rows = connection.execute(
+            """
+            SELECT log_id, path, method, query_string, username, ip_address,
+                   user_agent, created_at
+            FROM access_logs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (row_limit,),
+        ).fetchall()
+    return {
+        "total_visits": int(total_row["count"] or 0),
+        "today_visits": int(today_row["count"] or 0),
+        "unique_ip_count": int(unique_ip_row["count"] or 0),
+        "top_paths": [dict(row) for row in top_path_rows],
+        "recent_logs": [dict(row) for row in recent_rows],
+    }
+
+
+def record_ai_conversation(
+    *,
+    competition_name: str = "",
+    season_name: str = "",
+    region_name: str = "",
+    series_slug: str = "",
+    question: str,
+    answer: str,
+    model: str = "",
+    username: str = "",
+    created_at: str,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    conversation_id = "aichat_" + secrets.token_hex(12)
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        with connection:
+            connection.execute(
+                """
+                INSERT INTO ai_conversations (
+                    conversation_id, competition_name, season_name, region_name,
+                    series_slug, question, answer, model, username, created_at,
+                    metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    conversation_id,
+                    str(competition_name or "").strip(),
+                    str(season_name or "").strip(),
+                    str(region_name or "").strip(),
+                    str(series_slug or "").strip(),
+                    str(question or "").strip(),
+                    str(answer or "").strip(),
+                    str(model or "").strip(),
+                    str(username or "").strip(),
+                    created_at,
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                ),
+            )
+    return conversation_id
+
+
+def load_ai_conversations(limit: int = 80) -> list[dict[str, Any]]:
+    ensure_database()
+    with connect_db() as connection:
+        require_initialized_database(connection)
+        rows = connection.execute(
+            """
+            SELECT conversation_id, competition_name, season_name, region_name,
+                   series_slug, question, answer, model, username, created_at,
+                   metadata_json
+            FROM ai_conversations
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (max(1, min(int(limit), 300)),),
+        ).fetchall()
+    conversations: list[dict[str, Any]] = []
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        item = dict(row)
+        item["metadata"] = metadata
+        item.pop("metadata_json", None)
+        conversations.append(item)
+    return conversations
 
 
 def load_session_username(session_token: str) -> str | None:

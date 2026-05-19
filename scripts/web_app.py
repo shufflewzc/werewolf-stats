@@ -68,6 +68,8 @@ from sqlite_store import (
     create_ai_job,
     delete_session,
     delete_sessions_for_username,
+    load_access_overview,
+    load_ai_conversations,
     load_ai_jobs,
     load_session_username,
     load_membership_requests,
@@ -78,6 +80,8 @@ from sqlite_store import (
     save_membership_requests,
     save_meta_value,
     save_repository_data,
+    record_access_log,
+    record_ai_conversation,
     update_ai_job_status,
     save_users,
 )
@@ -1594,7 +1598,9 @@ def is_management_path(path: str) -> bool:
     if path in {
         "/accounts",
         "/ai-admin",
+        "/ai-conversations",
         "/ai-jobs",
+        "/access-stats",
         "/permissions",
         "/profile",
         "/bindings",
@@ -1666,7 +1672,14 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             )
         if is_admin_user(ctx.current_user):
             admin_nav_links.append(
-                build_nav_link("AI 管理", "/ai-admin", ctx.path in {"/ai-admin", "/ai-jobs"})
+                build_nav_link(
+                    "AI 管理",
+                    "/ai-admin",
+                    ctx.path in {"/ai-admin", "/ai-jobs", "/ai-conversations"},
+                )
+            )
+            admin_nav_links.append(
+                build_nav_link("访问统计", "/access-stats", ctx.path == "/access-stats")
             )
             admin_nav_links.append(
                 build_nav_link("账号管理", "/accounts", ctx.path == "/accounts")
@@ -11018,6 +11031,18 @@ def get_ai_jobs_page(ctx: RequestContext, alert: str = "") -> str:
     return impl(ctx, alert)
 
 
+def get_access_stats_page(ctx: RequestContext, alert: str = "") -> str:
+    from web.features.ai_admin import get_access_stats_page as impl
+
+    return impl(ctx, alert)
+
+
+def get_ai_conversations_page(ctx: RequestContext, alert: str = "") -> str:
+    from web.features.ai_admin import get_ai_conversations_page as impl
+
+    return impl(ctx, alert)
+
+
 def get_ai_admin_page(
     ctx: RequestContext, alert: str = "", form_values: dict[str, str] | None = None
 ) -> str:
@@ -11980,6 +12005,14 @@ def handle_ai_jobs(ctx: RequestContext, start_response):
     return start_response_html(start_response, "200 OK", get_ai_jobs_page(ctx))
 
 
+def handle_access_stats(ctx: RequestContext, start_response):
+    return start_response_html(start_response, "200 OK", get_access_stats_page(ctx))
+
+
+def handle_ai_conversations(ctx: RequestContext, start_response):
+    return start_response_html(start_response, "200 OK", get_ai_conversations_page(ctx))
+
+
 def handle_ai_admin(ctx: RequestContext, start_response):
     from web.features.ai_admin import handle_ai_admin as impl
 
@@ -12242,6 +12275,19 @@ def app(environ, start_response):
     try:
         ctx = build_context(environ)
         path = ctx.path
+        if not path.startswith("/assets/"):
+            try:
+                record_access_log(
+                    path=path,
+                    method=ctx.method,
+                    query_string=str(environ.get("QUERY_STRING") or ""),
+                    username=str((ctx.current_user or {}).get("username") or ""),
+                    ip_address=str(environ.get("REMOTE_ADDR") or ""),
+                    user_agent=str(environ.get("HTTP_USER_AGENT") or ""),
+                    created_at=ctx.now_label,
+                )
+            except Exception as exc:
+                print("访问日志写入失败：", exc)
 
         if path == "/":
             return redirect(start_response, "/dashboard")
@@ -12449,6 +12495,16 @@ def app(environ, start_response):
             if admin_guard is not None:
                 return admin_guard
             return handle_ai_jobs(ctx, start_response)
+        if path == "/access-stats":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_access_stats(ctx, start_response)
+        if path == "/ai-conversations":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_ai_conversations(ctx, start_response)
         if path == "/permissions":
             return handle_permission_control(ctx, start_response)
         if path == "/profile":

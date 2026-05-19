@@ -225,11 +225,13 @@ def get_accounts_page(
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
         <div>
           <h2 class="section-title mb-2">AI 管理</h2>
-          <p class="section-copy mb-0">模型接口、提示词模板和生成任务审计已经独立到 AI 管理页。</p>
+          <p class="section-copy mb-0">模型接口、提示词模板、AI 使用记录、AI 对话记录和访问统计已经独立到后台页面。</p>
         </div>
         <div class="d-flex flex-wrap gap-2">
           <a class="btn btn-dark" href="/ai-admin">打开 AI 管理</a>
-          <a class="btn btn-outline-dark" href="/ai-jobs">查看任务历史</a>
+          <a class="btn btn-outline-dark" href="/ai-jobs">AI 使用记录</a>
+          <a class="btn btn-outline-dark" href="/ai-conversations">AI 对话记录</a>
+          <a class="btn btn-outline-dark" href="/access-stats">访问统计</a>
         </div>
       </div>
     </section>

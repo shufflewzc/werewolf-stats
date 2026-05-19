@@ -7078,7 +7078,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     playoff_rows = [
         ("S组", row)
         for row in regular_s_rows
-        if 3 <= int(row.get("rank") or 0) <= 7
+        if 3 <= int(row.get("rank") or 0) <= 9
     ] + [
         ("F组", row)
         for row in regular_f_rows
@@ -7194,7 +7194,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
       <div class="dashboard-section-head">
         <div>
           <h2 class="section-title mb-2">晋级名单</h2>
-          <p class="dashboard-section-copy mb-0">决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成；季后赛区按常规赛 S组第3-7名、F组第2-6名计算。</p>
+          <p class="dashboard-section-copy mb-0">决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成；季后赛区按常规赛 S组第3-9名、F组第2-6名计算。</p>
         </div>
       </div>
       <div class="row g-3">

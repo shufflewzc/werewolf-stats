@@ -7191,6 +7191,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         """
         for row in displayed_player_rows
     )
+    board_stage_group_attrs = ' data-dashboard-board-filter="stage-group"' + (" hidden" if selected_board == "player" else "")
     group_board_table_html = (
         '<div class="table-responsive"><table class="table align-middle mb-0">'
         f"<thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均</th><th>胜率</th>{progress_header_html}</tr></thead>"
@@ -7278,25 +7279,43 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         {dashboard_scope_hidden_fields}
         <div class="col-12 col-md-3">
           <label class="form-label">榜单类型</label>
-          <select class="form-select" name="board">
+          <select class="form-select" name="board" data-dashboard-board-select>
             <option value="group"{" selected" if selected_board == "group" else ""}>分组战队积分</option>
             <option value="player"{" selected" if selected_board == "player" else ""}>个人总积分</option>
           </select>
         </div>
-        <div class="col-12 col-md-3">
+        <div class="col-12 col-md-3"{board_stage_group_attrs}>
           <label class="form-label">赛段</label>
           <select class="form-select" name="stage">{stage_options_html}</select>
         </div>
-        <div class="col-12 col-md-3">
+        <div class="col-12 col-md-3"{board_stage_group_attrs}>
           <label class="form-label">分组</label>
-          <select class="form-select" name="group"{" disabled" if selected_board == "player" else ""}>{group_options_html or '<option value="">暂无分组</option>'}</select>
+          <select class="form-select" name="group">{group_options_html or '<option value="">暂无分组</option>'}</select>
         </div>
         <div class="col-12 col-md-3">
           <button type="submit" class="btn btn-dark w-100">更新榜单</button>
         </div>
       </form>
-      <div class="dashboard-panel-kicker mb-3">{escape(STAGE_OPTIONS.get(selected_stage_key, selected_stage_key))}{f" · {escape(selected_group)}" if selected_board == "group" and selected_group else ""}</div>
+      <div class="dashboard-panel-kicker mb-3">{escape(STAGE_OPTIONS.get(selected_stage_key, selected_stage_key)) + (f" · {escape(selected_group)}" if selected_group else "") if selected_board == "group" else "全赛段 · 个人总积分"}</div>
       {dashboard_board_table_html}
+      <script>
+        (() => {{
+          const select = document.querySelector("[data-dashboard-board-select]");
+          if (!select) return;
+          const filterBlocks = Array.from(document.querySelectorAll("[data-dashboard-board-filter='stage-group']"));
+          const syncBoardFilters = () => {{
+            const isPlayerBoard = select.value === "player";
+            filterBlocks.forEach((block) => {{
+              block.hidden = isPlayerBoard;
+              block.querySelectorAll("select, input").forEach((field) => {{
+                field.disabled = isPlayerBoard;
+              }});
+            }});
+          }};
+          select.addEventListener("change", syncBoardFilters);
+          syncBoardFilters();
+        }})();
+      </script>
     </section>
     """
 

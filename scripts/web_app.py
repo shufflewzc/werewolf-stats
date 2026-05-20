@@ -165,6 +165,8 @@ AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
 DASHBOARD_ACTIVITY_SETTINGS_KEY = "dashboard_activity_settings"
 PLAYER_ACHIEVEMENT_RULES_KEY = "player_achievement_rules"
 PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "player_manual_achievements:"
+TEAM_ACHIEVEMENT_RULES_KEY = "team_achievement_rules"
+TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "team_manual_achievements:"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
@@ -221,6 +223,33 @@ DEFAULT_PLAYER_ACHIEVEMENT_RULES: list[dict[str, Any]] = [
     {"active": True, "code": "SVP", "tier": "silver", "title": "惜败高光", "description": "当前筛选口径下拿到过 SVP。", "metric": "svp_count", "operator": ">=", "value": 1, "min_games": 0, "meta_template": "{svp_count} 次", "sort_order": 120},
     {"active": True, "code": "STRK", "tier": "gold", "title": "连胜推进", "description": "当前筛选口径下曾连续赢下至少 3 局。", "metric": "best_win_streak", "operator": ">=", "value": 3, "min_games": 0, "meta_template": "{best_win_streak} 连胜", "sort_order": 130},
     {"active": True, "code": "PTS", "tier": "gold", "title": "高效得分", "description": "至少出场 3 局，场均得分达到 5 分。", "metric": "average_points", "operator": ">=", "value": 5, "min_games": 3, "meta_template": "场均 {average_points}", "sort_order": 140},
+]
+TEAM_ACHIEVEMENT_METRIC_OPTIONS = {
+    "points_rank": "战队积分排名",
+    "matches_represented": "出赛场次",
+    "win_rate": "战队胜率",
+    "points_per_match": "场均积分",
+    "points_total": "累计积分",
+    "player_count": "上场队员数",
+    "mvp_count": "MVP 次数",
+    "svp_count": "SVP 次数",
+    "scapegoat_count": "背锅次数",
+    "best_win_streak": "最长连胜",
+    "stance_rate": "站边命中率",
+    "wins": "胜场",
+}
+DEFAULT_TEAM_ACHIEVEMENT_RULES: list[dict[str, Any]] = [
+    {"active": True, "code": "R1", "tier": "legend", "title": "榜首战队", "description": "当前筛选口径下位列战队积分榜第一。", "metric": "points_rank", "operator": "<=", "value": 1, "min_matches": 1, "meta_template": "第 {points_rank} 名", "sort_order": 10},
+    {"active": True, "code": "TOP", "tier": "gold", "title": "积分前三", "description": "当前筛选口径下进入战队积分榜前三。", "metric": "points_rank", "operator": "<=", "value": 3, "min_matches": 1, "meta_template": "第 {points_rank} 名", "sort_order": 20},
+    {"active": True, "code": "T8", "tier": "silver", "title": "上游席位", "description": "当前筛选口径下进入战队积分榜前八。", "metric": "points_rank", "operator": "<=", "value": 8, "min_matches": 1, "meta_template": "第 {points_rank} 名", "sort_order": 30},
+    {"active": True, "code": "ACT", "tier": "silver", "title": "稳定参赛", "description": "当前筛选口径下出赛达到 4 场以上。", "metric": "matches_represented", "operator": ">=", "value": 4, "min_matches": 0, "meta_template": "{matches_represented} 场", "sort_order": 40},
+    {"active": True, "code": "WIN", "tier": "gold", "title": "胜率在线", "description": "至少出赛 4 场，胜率达到 60%。", "metric": "win_rate", "operator": ">=", "value": 0.6, "min_matches": 4, "meta_template": "{win_rate_pct}", "sort_order": 50},
+    {"active": True, "code": "STRK", "tier": "gold", "title": "团队连胜", "description": "当前筛选口径下曾连续赢下至少 3 场。", "metric": "best_win_streak", "operator": ">=", "value": 3, "min_matches": 0, "meta_template": "{best_win_streak} 连胜", "sort_order": 60},
+    {"active": True, "code": "PPM", "tier": "gold", "title": "高效得分", "description": "至少出赛 3 场，场均积分达到 5 分。", "metric": "points_per_match", "operator": ">=", "value": 5, "min_matches": 3, "meta_template": "场均 {points_per_match}", "sort_order": 70},
+    {"active": True, "code": "DEP", "tier": "silver", "title": "阵容深度", "description": "当前筛选口径下至少 6 名队员有出场记录。", "metric": "player_count", "operator": ">=", "value": 6, "min_matches": 0, "meta_template": "{player_count} 人", "sort_order": 80},
+    {"active": True, "code": "MVP", "tier": "silver", "title": "MVP 归属", "description": "当前筛选口径下战队成员拿到过 MVP。", "metric": "mvp_count", "operator": ">=", "value": 1, "min_matches": 0, "meta_template": "{mvp_count} 次", "sort_order": 90},
+    {"active": True, "code": "SVP", "tier": "silver", "title": "逆风韧性", "description": "当前筛选口径下战队成员拿到过 SVP。", "metric": "svp_count", "operator": ">=", "value": 1, "min_matches": 0, "meta_template": "{svp_count} 次", "sort_order": 100},
+    {"active": True, "code": "READ", "tier": "gold", "title": "团队判断", "description": "有效站边判断至少 5 次，命中率达到 70%。", "metric": "stance_rate", "operator": ">=", "value": 0.7, "min_matches": 0, "min_stance_calls": 5, "meta_template": "{stance_rate_pct}", "sort_order": 110},
 ]
 
 DEFAULT_MATCH_DAY_SYSTEM_PROMPT = (
@@ -1647,6 +1676,7 @@ def is_management_path(path: str) -> bool:
         "/ai-jobs",
         "/access-stats",
         "/achievement-rules",
+        "/team-achievement-rules",
         "/permissions",
         "/profile",
         "/bindings",
@@ -1729,6 +1759,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             )
             admin_nav_links.append(
                 build_nav_link("成就规则", "/achievement-rules", ctx.path == "/achievement-rules")
+            )
+            admin_nav_links.append(
+                build_nav_link("战队成就规则", "/team-achievement-rules", ctx.path == "/team-achievement-rules")
             )
             admin_nav_links.append(
                 build_nav_link("账号管理", "/accounts", ctx.path == "/accounts")
@@ -7731,6 +7764,289 @@ def get_team_frontend_page(ctx: RequestContext, team_id: str) -> str:
     return impl(ctx, team_id)
 
 
+def build_team_achievement_metrics(
+    team_id: str,
+    team_stats: dict[str, Any],
+    match_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    matches_represented = int(team_stats.get("matches_represented") or 0)
+    points_rank = int(team_stats.get("points_rank") or team_stats.get("rank") or 9999)
+    win_rate = float(team_stats.get("win_rate") or 0.0)
+    stance_calls = int(team_stats.get("stance_calls") or 0)
+    stance_rate = float(team_stats.get("stance_rate") or 0.0)
+    points_total = float(team_stats.get("points_earned_total") or 0.0)
+    points_per_match = float(team_stats.get("points_per_match") or 0.0)
+    player_count = int(team_stats.get("player_count") or 0)
+    wins = int(team_stats.get("wins") or 0)
+    losses = int(team_stats.get("losses") or 0)
+    mvp_count = 0
+    svp_count = 0
+    scapegoat_count = 0
+    best_win_streak = 0
+    current_streak = 0
+
+    def team_has_award(match: dict[str, Any], award_player_id: str) -> bool:
+        if not award_player_id:
+            return False
+        return any(
+            str(entry.get("team_id") or "").strip() == team_id
+            and str(entry.get("player_id") or "").strip() == award_player_id
+            for entry in match.get("players", [])
+        )
+
+    for match in match_rows:
+        if team_has_award(match, str(match.get("mvp_player_id") or "").strip()):
+            mvp_count += 1
+        if team_has_award(match, str(match.get("svp_player_id") or "").strip()):
+            svp_count += 1
+        if team_has_award(match, str(match.get("scapegoat_player_id") or "").strip()):
+            scapegoat_count += 1
+
+    for match in sorted(
+        match_rows,
+        key=lambda item: (item.get("played_on") or "", int(item.get("round") or 0), int(item.get("game_no") or 0), item.get("match_id") or ""),
+    ):
+        team_results = [
+            str(entry.get("result") or "").strip()
+            for entry in match.get("players", [])
+            if str(entry.get("team_id") or "").strip() == team_id
+        ]
+        if team_results and all(result == "win" for result in team_results):
+            current_streak += 1
+            best_win_streak = max(best_win_streak, current_streak)
+        else:
+            current_streak = 0
+
+    return {
+        "points_rank": points_rank,
+        "matches_represented": matches_represented,
+        "win_rate": win_rate,
+        "stance_calls": stance_calls,
+        "stance_rate": stance_rate,
+        "points_total": points_total,
+        "points_per_match": points_per_match,
+        "player_count": player_count,
+        "wins": wins,
+        "losses": losses,
+        "mvp_count": mvp_count,
+        "svp_count": svp_count,
+        "scapegoat_count": scapegoat_count,
+        "best_win_streak": best_win_streak,
+    }
+
+
+def normalize_team_achievement_rule(raw_rule: dict[str, Any], index: int = 0) -> dict[str, Any] | None:
+    if not isinstance(raw_rule, dict):
+        return None
+    title = str(raw_rule.get("title") or "").strip()
+    metric = str(raw_rule.get("metric") or "").strip()
+    if not title or metric not in TEAM_ACHIEVEMENT_METRIC_OPTIONS:
+        return None
+    operator = str(raw_rule.get("operator") or ">=").strip()
+    if operator not in PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS:
+        operator = ">="
+    tier = str(raw_rule.get("tier") or "gold").strip()
+    if tier not in PLAYER_ACHIEVEMENT_TIER_OPTIONS:
+        tier = "gold"
+    try:
+        value = float(raw_rule.get("value") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    try:
+        min_matches = int(float(raw_rule.get("min_matches") or 0))
+    except (TypeError, ValueError):
+        min_matches = 0
+    try:
+        min_stance_calls = int(float(raw_rule.get("min_stance_calls") or 0))
+    except (TypeError, ValueError):
+        min_stance_calls = 0
+    try:
+        sort_order = int(float(raw_rule.get("sort_order") if raw_rule.get("sort_order") not in {None, ""} else index * 10))
+    except (TypeError, ValueError):
+        sort_order = index * 10
+    return {
+        "active": bool(raw_rule.get("active", True)),
+        "code": str(raw_rule.get("code") or metric[:4].upper()).strip()[:8] or "TAG",
+        "tier": tier,
+        "title": title[:40],
+        "description": str(raw_rule.get("description") or "").strip()[:160],
+        "metric": metric,
+        "operator": operator,
+        "value": value,
+        "min_matches": max(0, min_matches),
+        "min_stance_calls": max(0, min_stance_calls),
+        "meta_template": str(raw_rule.get("meta_template") or "{" + metric + "}").strip()[:80],
+        "sort_order": sort_order,
+    }
+
+
+def load_team_achievement_rules() -> list[dict[str, Any]]:
+    saved = load_meta_value(TEAM_ACHIEVEMENT_RULES_KEY)
+    raw_rules: list[Any]
+    if saved:
+        try:
+            parsed = json.loads(saved)
+            raw_rules = parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            raw_rules = []
+    else:
+        raw_rules = DEFAULT_TEAM_ACHIEVEMENT_RULES
+    rules = [
+        rule
+        for index, item in enumerate(raw_rules)
+        if (rule := normalize_team_achievement_rule(item, index)) is not None
+    ]
+    if not rules:
+        rules = [
+            rule
+            for index, item in enumerate(DEFAULT_TEAM_ACHIEVEMENT_RULES)
+            if (rule := normalize_team_achievement_rule(item, index)) is not None
+        ]
+    return sorted(rules, key=lambda item: (item["sort_order"], item["title"]))
+
+
+def save_team_achievement_rules(rules: list[dict[str, Any]]) -> None:
+    normalized = [
+        rule
+        for index, item in enumerate(rules)
+        if (rule := normalize_team_achievement_rule(item, index)) is not None
+    ]
+    save_meta_value(TEAM_ACHIEVEMENT_RULES_KEY, json.dumps(normalized, ensure_ascii=False))
+
+
+def reset_team_achievement_rules() -> None:
+    save_team_achievement_rules(DEFAULT_TEAM_ACHIEVEMENT_RULES)
+
+
+def format_team_achievement_meta(template: str, metrics: dict[str, Any]) -> str:
+    values = {
+        **metrics,
+        "win_rate_pct": format_pct(float(metrics.get("win_rate") or 0.0)),
+        "stance_rate_pct": format_pct(float(metrics.get("stance_rate") or 0.0)),
+        "points_per_match": f"{float(metrics.get('points_per_match') or 0.0):.2f}",
+        "points_total": f"{float(metrics.get('points_total') or 0.0):.2f}",
+    }
+    try:
+        return str(template or "").format(**values)
+    except (KeyError, ValueError):
+        return ""
+
+
+def team_achievement_rule_matches(rule: dict[str, Any], metrics: dict[str, Any]) -> bool:
+    if not rule.get("active", True):
+        return False
+    if int(metrics.get("matches_represented") or 0) < int(rule.get("min_matches") or 0):
+        return False
+    if int(metrics.get("stance_calls") or 0) < int(rule.get("min_stance_calls") or 0):
+        return False
+    metric_value = float(metrics.get(str(rule.get("metric") or "")) or 0.0)
+    target_value = float(rule.get("value") or 0.0)
+    operator = str(rule.get("operator") or ">=")
+    if operator == "<=":
+        return metric_value <= target_value
+    if operator == "==":
+        return metric_value == target_value
+    return metric_value >= target_value
+
+
+def build_team_achievement_tags(
+    team_id: str,
+    team_stats: dict[str, Any],
+    match_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    metrics = build_team_achievement_metrics(team_id, team_stats, match_rows)
+    achievements = [
+        {
+            "tier": rule["tier"],
+            "code": rule["code"],
+            "title": rule["title"],
+            "description": rule["description"],
+            "meta": format_team_achievement_meta(rule.get("meta_template", ""), metrics),
+            "sort_order": rule.get("sort_order", 0),
+        }
+        for rule in load_team_achievement_rules()
+        if team_achievement_rule_matches(rule, metrics)
+    ]
+    achievements.extend(load_team_manual_achievements(team_id))
+    if not achievements:
+        achievements.append(
+            {
+                "tier": "locked",
+                "code": "NEW",
+                "title": "战队成就待解锁",
+                "description": "继续录入比赛后会自动点亮战队成就标签。",
+                "meta": "待解锁",
+                "sort_order": 9999,
+            }
+        )
+
+    tier_order = {"legend": 0, "gold": 1, "silver": 2, "bronze": 3, "locked": 4}
+    achievements.sort(key=lambda item: (tier_order.get(item["tier"], 9), int(item.get("sort_order") or 0), item["title"]))
+    return achievements[:12]
+
+
+def normalize_team_manual_achievement(raw_item: dict[str, Any], index: int = 0) -> dict[str, Any] | None:
+    if not isinstance(raw_item, dict):
+        return None
+    title = str(raw_item.get("title") or "").strip()
+    if not title:
+        return None
+    tier = str(raw_item.get("tier") or "gold").strip()
+    if tier not in PLAYER_ACHIEVEMENT_TIER_OPTIONS:
+        tier = "gold"
+    try:
+        sort_order = int(float(raw_item.get("sort_order") if raw_item.get("sort_order") not in {None, ""} else index * 10))
+    except (TypeError, ValueError):
+        sort_order = index * 10
+    return {
+        "active": bool(raw_item.get("active", True)),
+        "code": str(raw_item.get("code") or "TEAM").strip()[:8] or "TEAM",
+        "tier": tier,
+        "title": title[:40],
+        "description": str(raw_item.get("description") or "").strip()[:160],
+        "meta": str(raw_item.get("meta") or "自定义").strip()[:40] or "自定义",
+        "sort_order": sort_order,
+        "source": "manual",
+    }
+
+
+def load_team_manual_achievements(team_id: str, include_inactive: bool = False) -> list[dict[str, Any]]:
+    normalized_team_id = str(team_id or "").strip()
+    if not normalized_team_id:
+        return []
+    saved = load_meta_value(TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX + normalized_team_id)
+    if not saved:
+        return []
+    try:
+        parsed = json.loads(saved)
+    except json.JSONDecodeError:
+        return []
+    raw_items = parsed if isinstance(parsed, list) else []
+    items = [
+        item
+        for index, raw_item in enumerate(raw_items)
+        if (item := normalize_team_manual_achievement(raw_item, index)) is not None
+    ]
+    if not include_inactive:
+        items = [item for item in items if item.get("active", True)]
+    return sorted(items, key=lambda item: (int(item.get("sort_order") or 0), item.get("title") or ""))
+
+
+def save_team_manual_achievements(team_id: str, items: list[dict[str, Any]]) -> None:
+    normalized_team_id = str(team_id or "").strip()
+    if not normalized_team_id:
+        return
+    normalized = [
+        item
+        for index, raw_item in enumerate(items)
+        if (item := normalize_team_manual_achievement(raw_item, index)) is not None
+    ]
+    save_meta_value(
+        TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX + normalized_team_id,
+        json.dumps(normalized, ensure_ascii=False),
+    )
+
+
 def normalize_player_achievement_rule(raw_rule: dict[str, Any], index: int = 0) -> dict[str, Any] | None:
     if not isinstance(raw_rule, dict):
         return None
@@ -8218,6 +8534,203 @@ def handle_player_achievement_rules(ctx: RequestContext, start_response):
         )
     save_player_achievement_rules(rules)
     return redirect(start_response, append_alert_query("/achievement-rules", "自动成就规则已保存。"))
+
+
+def get_team_achievement_rules_page(ctx: RequestContext, alert: str = "") -> str:
+    rules = load_team_achievement_rules()
+    metric_options = "".join(
+        f'<option value="{escape(value)}">{{selected_{escape(value)}}}{escape(label)}</option>'
+        for value, label in TEAM_ACHIEVEMENT_METRIC_OPTIONS.items()
+    )
+    operator_options = "".join(
+        f'<option value="{escape(value)}">{{selected_op_{escape(value)}}}{escape(label)}</option>'
+        for value, label in PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS.items()
+    )
+    tier_options = "".join(
+        f'<option value="{escape(value)}">{{selected_tier_{escape(value)}}}{escape(label)}</option>'
+        for value, label in PLAYER_ACHIEVEMENT_TIER_OPTIONS.items()
+    )
+
+    def render_rule_row(rule: dict[str, Any], index: int) -> str:
+        row_metric_options = metric_options
+        for value in TEAM_ACHIEVEMENT_METRIC_OPTIONS:
+            row_metric_options = row_metric_options.replace(
+                "{selected_" + escape(value) + "}",
+                " selected" if rule.get("metric") == value else "",
+            )
+        row_operator_options = operator_options
+        for value in PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS:
+            row_operator_options = row_operator_options.replace(
+                "{selected_op_" + escape(value) + "}",
+                " selected" if rule.get("operator") == value else "",
+            )
+        row_tier_options = tier_options
+        for value in PLAYER_ACHIEVEMENT_TIER_OPTIONS:
+            row_tier_options = row_tier_options.replace(
+                "{selected_tier_" + escape(value) + "}",
+                " selected" if rule.get("tier") == value else "",
+            )
+        active_checked = " checked" if rule.get("active", True) else ""
+        return f"""
+        <article class="form-panel p-3 p-lg-4 mb-3" data-team-achievement-rule-row>
+          <div class="row g-3 align-items-end">
+            <div class="col-12 col-lg-1">
+              <label class="form-label">启用</label>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="active_{index}" value="1"{active_checked}>
+              </div>
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">标识</label>
+              <input class="form-control" name="code" value="{escape(rule.get('code') or '')}" maxlength="8">
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">标题</label>
+              <input class="form-control" name="title" value="{escape(rule.get('title') or '')}">
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">等级</label>
+              <select class="form-select" name="tier">{row_tier_options}</select>
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">指标</label>
+              <select class="form-select" name="metric">{row_metric_options}</select>
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">条件</label>
+              <select class="form-select" name="operator">{row_operator_options}</select>
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">阈值</label>
+              <input class="form-control" name="value" value="{escape(str(rule.get('value') if rule.get('value') is not None else ''))}">
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">场次</label>
+              <input class="form-control" name="min_matches" value="{escape(str(rule.get('min_matches') or 0))}">
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">排序</label>
+              <input class="form-control" name="sort_order" value="{escape(str(rule.get('sort_order') or 0))}">
+            </div>
+            <div class="col-12 col-lg-6">
+              <label class="form-label">描述</label>
+              <input class="form-control" name="description" value="{escape(rule.get('description') or '')}">
+            </div>
+            <div class="col-12 col-lg-4">
+              <label class="form-label">展示值模板</label>
+              <input class="form-control" name="meta_template" value="{escape(rule.get('meta_template') or '')}">
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">站边次数门槛</label>
+              <input class="form-control" name="min_stance_calls" value="{escape(str(rule.get('min_stance_calls') or 0))}">
+            </div>
+          </div>
+        </article>
+        """
+
+    blank_rule = {
+        "active": False,
+        "code": "",
+        "title": "",
+        "tier": "gold",
+        "metric": "matches_represented",
+        "operator": ">=",
+        "value": "",
+        "min_matches": 0,
+        "min_stance_calls": 0,
+        "description": "",
+        "meta_template": "{matches_represented} 场",
+        "sort_order": (rules[-1]["sort_order"] + 10) if rules else 10,
+    }
+    rule_template = render_rule_row(blank_rule, "__INDEX__")
+    body = f"""
+    <section class="hero p-4 p-md-5 shadow-lg mb-4">
+      <div class="eyebrow mb-3">战队成就系统</div>
+      <h1 class="display-6 fw-semibold mb-3">战队自动成就规则</h1>
+      <p class="mb-0 opacity-75">这里配置战队页自动点亮标签的规则。胜率类阈值用小数填写，例如 60% 填 0.6。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">规则列表</h2>
+          <p class="section-copy mb-0">空标题的行会被忽略。展示值模板可使用指标占位符，例如 `{{points_rank}}`、`{{matches_represented}}`、`{{win_rate_pct}}`、`{{mvp_count}}`。</p>
+        </div>
+        <form method="post" action="/team-achievement-rules" class="m-0">
+          <input type="hidden" name="action" value="reset">
+          <button class="btn btn-outline-dark" type="submit">恢复默认规则</button>
+        </form>
+      </div>
+      <form method="post" action="/team-achievement-rules" id="team-achievement-rules-form">
+        <input type="hidden" name="action" value="save">
+        <div id="team-achievement-rule-list">
+          {''.join(render_rule_row(rule, index) for index, rule in enumerate(rules))}
+        </div>
+        <template id="team-achievement-rule-template">{rule_template}</template>
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-outline-dark" type="button" data-add-team-achievement-rule>新增规则</button>
+          <button class="btn btn-dark" type="submit">保存规则</button>
+          <a class="btn btn-outline-dark" href="/dashboard">返回首页</a>
+        </div>
+      </form>
+    </section>
+    <script>
+      (() => {{
+        const list = document.getElementById("team-achievement-rule-list");
+        const template = document.getElementById("team-achievement-rule-template");
+        const addButton = document.querySelector("[data-add-team-achievement-rule]");
+        const form = document.getElementById("team-achievement-rules-form");
+        function renumber() {{
+          list?.querySelectorAll("[data-team-achievement-rule-row]").forEach((row, index) => {{
+            const active = row.querySelector('input[type="checkbox"]');
+            if (active) active.name = `active_${{index}}`;
+          }});
+        }}
+        addButton?.addEventListener("click", () => {{
+          if (!list || !template) return;
+          const index = list.querySelectorAll("[data-team-achievement-rule-row]").length;
+          const html = template.innerHTML.replaceAll("__INDEX__", String(index));
+          list.insertAdjacentHTML("beforeend", html);
+          renumber();
+        }});
+        form?.addEventListener("submit", renumber);
+      }})();
+    </script>
+    """
+    return layout("战队自动成就规则", body, ctx, alert=alert)
+
+
+def handle_team_achievement_rules(ctx: RequestContext, start_response):
+    if ctx.method == "GET":
+        return start_response_html(start_response, "200 OK", get_team_achievement_rules_page(ctx))
+    action = form_value(ctx.form, "action").strip()
+    if action == "reset":
+        reset_team_achievement_rules()
+        return redirect(start_response, append_alert_query("/team-achievement-rules", "已恢复默认战队成就规则。"))
+    if action != "save":
+        return redirect(start_response, append_alert_query("/team-achievement-rules", "未识别的操作。"))
+    titles = ctx.form.get("title", [])
+    rules: list[dict[str, Any]] = []
+    for index, title in enumerate(titles):
+        if not str(title or "").strip():
+            continue
+        rules.append(
+            {
+                "active": form_value(ctx.form, f"active_{index}").strip() == "1",
+                "code": (ctx.form.get("code", [""])[index] if index < len(ctx.form.get("code", [])) else ""),
+                "title": title,
+                "tier": (ctx.form.get("tier", ["gold"])[index] if index < len(ctx.form.get("tier", [])) else "gold"),
+                "metric": (ctx.form.get("metric", ["matches_represented"])[index] if index < len(ctx.form.get("metric", [])) else "matches_represented"),
+                "operator": (ctx.form.get("operator", [">="])[index] if index < len(ctx.form.get("operator", [])) else ">="),
+                "value": (ctx.form.get("value", ["0"])[index] if index < len(ctx.form.get("value", [])) else "0"),
+                "min_matches": (ctx.form.get("min_matches", ["0"])[index] if index < len(ctx.form.get("min_matches", [])) else "0"),
+                "min_stance_calls": (ctx.form.get("min_stance_calls", ["0"])[index] if index < len(ctx.form.get("min_stance_calls", [])) else "0"),
+                "description": (ctx.form.get("description", [""])[index] if index < len(ctx.form.get("description", [])) else ""),
+                "meta_template": (ctx.form.get("meta_template", [""])[index] if index < len(ctx.form.get("meta_template", [])) else ""),
+                "sort_order": (ctx.form.get("sort_order", ["0"])[index] if index < len(ctx.form.get("sort_order", [])) else "0"),
+            }
+        )
+    save_team_achievement_rules(rules)
+    return redirect(start_response, append_alert_query("/team-achievement-rules", "战队自动成就规则已保存。"))
 
 
 def get_team_legacy_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
@@ -9607,6 +10120,145 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         if get_match_competition_name(match) == selected_competition
         and (not selected_season or str(match.get("season") or "").strip() == selected_season)
     ]
+    scoped_team_match_rows = [
+        match
+        for match in team_matches
+        if get_match_competition_name(match) == selected_competition
+        and (not selected_season or str(match.get("season") or "").strip() == selected_season)
+    ]
+    achievement_tier_labels = {
+        "legend": "极难",
+        "gold": "困难",
+        "silver": "中等",
+        "bronze": "简单",
+        "locked": "未解锁",
+    }
+    team_achievement_cards_html = "".join(
+        f"""
+        <article class="player-achievement-card is-{escape(item['tier'])}">
+          <div class="player-achievement-top">
+            <span class="player-achievement-code">{escape(item['code'])}</span>
+            <span class="player-achievement-tier">{escape(achievement_tier_labels.get(item['tier'], item['tier']))}</span>
+          </div>
+          <div>
+            <div class="player-achievement-title">{escape(item['title'])}</div>
+            <div class="player-achievement-desc mt-2">{escape(item['description'])}</div>
+          </div>
+          <span class="player-achievement-meta">{escape(item['meta'])}</span>
+        </article>
+        """
+        for item in build_team_achievement_tags(team_id, team_stats, scoped_team_match_rows)
+    )
+    team_achievement_actions = (
+        f"""
+        <a class="btn btn-outline-dark" href="/team-achievement-rules">编辑自动规则</a>
+        <a class="btn btn-dark" href="#team-manual-achievements">编辑手动标签</a>
+        """
+        if can_manage_team_profile
+        else ""
+    )
+    team_manual_achievement_panel = ""
+    if can_manage_team_profile:
+        manual_items = load_team_manual_achievements(team_id, include_inactive=True)
+        blank_manual = {
+            "active": True,
+            "code": "",
+            "title": "",
+            "tier": "gold",
+            "description": "",
+            "meta": "自定义",
+            "sort_order": (manual_items[-1]["sort_order"] + 10) if manual_items else 10,
+        }
+
+        def render_team_manual_row(item: dict[str, Any], index: int) -> str:
+            tier_options_html = "".join(
+                f'<option value="{escape(value)}"{" selected" if item.get("tier") == value else ""}>{escape(label)}</option>'
+                for value, label in PLAYER_ACHIEVEMENT_TIER_OPTIONS.items()
+            )
+            return f"""
+            <article class="form-panel p-3 p-lg-4 mb-3" data-team-manual-achievement-row>
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-lg-1">
+                  <label class="form-label">显示</label>
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="manual_active_{index}" value="1"{" checked" if item.get("active", True) else ""}>
+                  </div>
+                </div>
+                <div class="col-6 col-lg-1">
+                  <label class="form-label">标识</label>
+                  <input class="form-control" name="manual_code" value="{escape(item.get('code') or '')}" maxlength="8">
+                </div>
+                <div class="col-12 col-lg-2">
+                  <label class="form-label">标题</label>
+                  <input class="form-control" name="manual_title" value="{escape(item.get('title') or '')}">
+                </div>
+                <div class="col-12 col-lg-2">
+                  <label class="form-label">等级</label>
+                  <select class="form-select" name="manual_tier">{tier_options_html}</select>
+                </div>
+                <div class="col-12 col-lg-2">
+                  <label class="form-label">展示值</label>
+                  <input class="form-control" name="manual_meta" value="{escape(item.get('meta') or '自定义')}">
+                </div>
+                <div class="col-6 col-lg-1">
+                  <label class="form-label">排序</label>
+                  <input class="form-control" name="manual_sort_order" value="{escape(str(item.get('sort_order') or 0))}">
+                </div>
+                <div class="col-12 col-lg-3">
+                  <label class="form-label">描述</label>
+                  <input class="form-control" name="manual_description" value="{escape(item.get('description') or '')}">
+                </div>
+              </div>
+            </article>
+            """
+
+        manual_template = render_team_manual_row(blank_manual, "__INDEX__")
+        team_manual_achievement_panel = f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4" id="team-manual-achievements">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">手动战队成就标签</h2>
+              <p class="section-copy mb-0">这里配置只给这支战队展示的自定义标签；空标题行会被忽略。</p>
+            </div>
+          </div>
+          <form method="post" action="/teams/{escape(team_id)}" id="team-manual-achievements-form">
+            <input type="hidden" name="action" value="save_team_manual_achievements">
+            <input type="hidden" name="competition_name" value="{escape(selected_competition or '')}">
+            <input type="hidden" name="season_name" value="{escape(selected_season or '')}">
+            <div id="team-manual-achievement-list">
+              {''.join(render_team_manual_row(item, index) for index, item in enumerate(manual_items))}
+            </div>
+            <template id="team-manual-achievement-template">{manual_template}</template>
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-outline-dark" type="button" data-add-team-manual-achievement>新增手动标签</button>
+              <button class="btn btn-dark" type="submit">保存手动标签</button>
+            </div>
+          </form>
+        </section>
+        <script>
+          (() => {{
+            const list = document.getElementById("team-manual-achievement-list");
+            const template = document.getElementById("team-manual-achievement-template");
+            const addButton = document.querySelector("[data-add-team-manual-achievement]");
+            const form = document.getElementById("team-manual-achievements-form");
+            function renumber() {{
+              list?.querySelectorAll("[data-team-manual-achievement-row]").forEach((row, index) => {{
+                const active = row.querySelector('input[type="checkbox"]');
+                if (active) active.name = `manual_active_${{index}}`;
+              }});
+            }}
+            addButton?.addEventListener("click", () => {{
+              if (!list || !template) return;
+              const index = list.querySelectorAll("[data-team-manual-achievement-row]").length;
+              const html = template.innerHTML.replaceAll("__INDEX__", String(index));
+              list.insertAdjacentHTML("beforeend", html);
+              renumber();
+            }});
+            form?.addEventListener("submit", renumber);
+            if (list && !list.querySelector("[data-team-manual-achievement-row]")) addButton?.click();
+          }})();
+        </script>
+        """
     roster_cards_html = "".join(
         f"""
         <a class="team-roster-card text-decoration-none" href="{escape(build_scoped_path('/players/' + player['player_id'], selected_competition, selected_season))}">
@@ -9885,6 +10537,17 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
       if team_status == "completed"
       else ''
     )}
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">战队成就</h2>
+          <p class="section-copy mb-0">按当前赛事和赛季数据自动点亮，用来标记战队的排名、胜率、阵容深度和高光产出。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">{team_achievement_actions}</div>
+      </div>
+      <div class="player-achievement-grid">{team_achievement_cards_html}</div>
+    </section>
+    {team_manual_achievement_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
@@ -10499,6 +11162,36 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
         competition_name or None,
         season_name or None,
     )
+
+    if action == "save_team_manual_achievements":
+        data = load_validated_data()
+        team_lookup = {item["team_id"]: item for item in data["teams"]}
+        team = team_lookup.get(team_id)
+        current_player = get_user_player(data, ctx.current_user)
+        if not can_manage_team(ctx, team, current_player):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">你没有权限编辑这支战队的手动成就标签。</div>', ctx),
+            )
+        titles = ctx.form.get("manual_title", [])
+        items: list[dict[str, Any]] = []
+        for index, title in enumerate(titles):
+            if not str(title or "").strip():
+                continue
+            items.append(
+                {
+                    "active": form_value(ctx.form, f"manual_active_{index}").strip() == "1",
+                    "code": (ctx.form.get("manual_code", [""])[index] if index < len(ctx.form.get("manual_code", [])) else ""),
+                    "title": title,
+                    "tier": (ctx.form.get("manual_tier", ["gold"])[index] if index < len(ctx.form.get("manual_tier", [])) else "gold"),
+                    "description": (ctx.form.get("manual_description", [""])[index] if index < len(ctx.form.get("manual_description", [])) else ""),
+                    "meta": (ctx.form.get("manual_meta", ["自定义"])[index] if index < len(ctx.form.get("manual_meta", [])) else "自定义"),
+                    "sort_order": (ctx.form.get("manual_sort_order", ["0"])[index] if index < len(ctx.form.get("manual_sort_order", [])) else "0"),
+                }
+            )
+        save_team_manual_achievements(team_id, items)
+        return redirect(start_response, append_alert_query(redirect_path, "手动战队成就标签已保存。"))
 
     if not competition_name or not season_name:
         return redirect(
@@ -13253,6 +13946,8 @@ def app(environ, start_response):
             return start_response_html(start_response, "200 OK", get_player_legacy_page(ctx, player_id))
         if path.startswith("/teams/"):
             team_id = path.split("/", 2)[2]
+            if ctx.method == "POST":
+                return handle_team_page(ctx, start_response, team_id)
             return start_response_html(start_response, "200 OK", get_team_legacy_page(ctx, team_id))
 
         guard = require_login(ctx, start_response)
@@ -13289,6 +13984,11 @@ def app(environ, start_response):
             if admin_guard is not None:
                 return admin_guard
             return handle_player_achievement_rules(ctx, start_response)
+        if path == "/team-achievement-rules":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_team_achievement_rules(ctx, start_response)
         if path == "/permissions":
             return handle_permission_control(ctx, start_response)
         if path == "/profile":

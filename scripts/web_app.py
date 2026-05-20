@@ -163,6 +163,7 @@ AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX = "ai_player_season_summary:"
 AI_TEAM_SEASON_SUMMARY_KEY_PREFIX = "ai_team_season_summary:"
 AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
 DASHBOARD_ACTIVITY_SETTINGS_KEY = "dashboard_activity_settings"
+PLAYER_ACHIEVEMENT_RULES_KEY = "player_achievement_rules"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
@@ -177,6 +178,49 @@ VALIDATED_DATA_CACHE: dict[str, Any] = {
     "cached_at": 0.0,
     "data": None,
 }
+PLAYER_ACHIEVEMENT_METRIC_OPTIONS = {
+    "rank": "个人积分排名",
+    "games_played": "出场局数",
+    "win_rate": "综合胜率",
+    "villagers_win_rate": "好人胜率",
+    "werewolves_win_rate": "狼人胜率",
+    "stance_rate": "站边命中率",
+    "mvp_count": "MVP 次数",
+    "svp_count": "SVP 次数",
+    "scapegoat_count": "背锅次数",
+    "best_win_streak": "最长连胜",
+    "current_win_streak": "当前连胜",
+    "average_points": "场均得分",
+    "points_total": "累计积分",
+    "top_role_games": "最高角色出场",
+}
+PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS = {
+    "<=": "小于等于",
+    ">=": "大于等于",
+    "==": "等于",
+}
+PLAYER_ACHIEVEMENT_TIER_OPTIONS = {
+    "legend": "传说",
+    "gold": "金色",
+    "silver": "银色",
+    "bronze": "铜色",
+}
+DEFAULT_PLAYER_ACHIEVEMENT_RULES: list[dict[str, Any]] = [
+    {"active": True, "code": "R1", "tier": "legend", "title": "榜首席位", "description": "当前筛选口径下位列个人积分榜第一。", "metric": "rank", "operator": "<=", "value": 1, "min_games": 1, "meta_template": "第 {rank} 名", "sort_order": 10},
+    {"active": True, "code": "TOP", "tier": "gold", "title": "积分前三", "description": "当前筛选口径下进入个人积分榜前三。", "metric": "rank", "operator": "<=", "value": 3, "min_games": 1, "meta_template": "第 {rank} 名", "sort_order": 20},
+    {"active": True, "code": "T10", "tier": "silver", "title": "前十常客", "description": "当前筛选口径下进入个人积分榜前十。", "metric": "rank", "operator": "<=", "value": 10, "min_games": 1, "meta_template": "第 {rank} 名", "sort_order": 30},
+    {"active": True, "code": "VET", "tier": "legend", "title": "赛场老将", "description": "当前筛选口径下出场达到 20 局以上。", "metric": "games_played", "operator": ">=", "value": 20, "min_games": 0, "meta_template": "{games_played} 局", "sort_order": 40},
+    {"active": True, "code": "ACT", "tier": "silver", "title": "稳定出勤", "description": "赛季出场达到 6 局以上。", "metric": "games_played", "operator": ">=", "value": 6, "min_games": 0, "meta_template": "{games_played} 局", "sort_order": 50},
+    {"active": True, "code": "PERF", "tier": "legend", "title": "不败档案", "description": "至少出场 3 局，当前筛选口径下保持全胜。", "metric": "win_rate", "operator": ">=", "value": 1, "min_games": 3, "meta_template": "{win_rate_pct}", "sort_order": 60},
+    {"active": True, "code": "WIN", "tier": "gold", "title": "胜率在线", "description": "至少出场 5 局，综合胜率达到 60%。", "metric": "win_rate", "operator": ">=", "value": 0.6, "min_games": 5, "meta_template": "{win_rate_pct}", "sort_order": 70},
+    {"active": True, "code": "GOOD", "tier": "silver", "title": "好人专精", "description": "好人阵营至少 3 局，胜率达到 65%。", "metric": "villagers_win_rate", "operator": ">=", "value": 0.65, "min_games": 3, "meta_template": "{villagers_win_rate_pct}", "sort_order": 80},
+    {"active": True, "code": "WOLF", "tier": "silver", "title": "狼人专精", "description": "狼人阵营至少 3 局，胜率达到 65%。", "metric": "werewolves_win_rate", "operator": ">=", "value": 0.65, "min_games": 3, "meta_template": "{werewolves_win_rate_pct}", "sort_order": 90},
+    {"active": True, "code": "READ", "tier": "gold", "title": "站边雷达", "description": "有效站边判断至少 5 次，命中率达到 70%。", "metric": "stance_rate", "operator": ">=", "value": 0.7, "min_games": 0, "min_stance_calls": 5, "meta_template": "{stance_rate_pct}", "sort_order": 100},
+    {"active": True, "code": "MVP", "tier": "gold", "title": "MVP 时刻", "description": "当前筛选口径下拿到过 MVP。", "metric": "mvp_count", "operator": ">=", "value": 1, "min_games": 0, "meta_template": "{mvp_count} 次", "sort_order": 110},
+    {"active": True, "code": "SVP", "tier": "silver", "title": "惜败高光", "description": "当前筛选口径下拿到过 SVP。", "metric": "svp_count", "operator": ">=", "value": 1, "min_games": 0, "meta_template": "{svp_count} 次", "sort_order": 120},
+    {"active": True, "code": "STRK", "tier": "gold", "title": "连胜推进", "description": "当前筛选口径下曾连续赢下至少 3 局。", "metric": "best_win_streak", "operator": ">=", "value": 3, "min_games": 0, "meta_template": "{best_win_streak} 连胜", "sort_order": 130},
+    {"active": True, "code": "PTS", "tier": "gold", "title": "高效得分", "description": "至少出场 3 局，场均得分达到 5 分。", "metric": "average_points", "operator": ">=", "value": 5, "min_games": 3, "meta_template": "场均 {average_points}", "sort_order": 140},
+]
 
 DEFAULT_MATCH_DAY_SYSTEM_PROMPT = (
     "你是一名狼人杀赛事内容编辑。"
@@ -1601,6 +1645,7 @@ def is_management_path(path: str) -> bool:
         "/ai-conversations",
         "/ai-jobs",
         "/access-stats",
+        "/achievement-rules",
         "/permissions",
         "/profile",
         "/bindings",
@@ -1680,6 +1725,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             )
             admin_nav_links.append(
                 build_nav_link("访问统计", "/access-stats", ctx.path == "/access-stats")
+            )
+            admin_nav_links.append(
+                build_nav_link("成就规则", "/achievement-rules", ctx.path == "/achievement-rules")
             )
             admin_nav_links.append(
                 build_nav_link("账号管理", "/accounts", ctx.path == "/accounts")
@@ -3517,6 +3565,83 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         flex-wrap: wrap;
         gap: 0.45rem;
       }}
+      .player-achievement-grid {{
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 0.78rem;
+      }}
+      .player-achievement-card {{
+        display: grid;
+        gap: 0.55rem;
+        min-height: 9.4rem;
+        padding: 0.92rem;
+        border-radius: 8px;
+        border: 1px solid rgba(17, 24, 39, 0.08);
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 252, 0.94));
+        box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
+      }}
+      .player-achievement-card.is-legend {{
+        border-color: rgba(181, 121, 26, 0.35);
+        background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255, 255, 255, 0.95));
+      }}
+      .player-achievement-card.is-gold {{
+        border-color: rgba(202, 138, 4, 0.26);
+      }}
+      .player-achievement-card.is-silver {{
+        border-color: rgba(100, 116, 139, 0.2);
+      }}
+      .player-achievement-card.is-bronze {{
+        border-color: rgba(180, 83, 9, 0.22);
+      }}
+      .player-achievement-card.is-locked {{
+        opacity: 0.78;
+      }}
+      .player-achievement-top {{
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 0.7rem;
+      }}
+      .player-achievement-code {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 2.55rem;
+        height: 2.55rem;
+        border-radius: 8px;
+        background: #17324d;
+        color: #ffffff;
+        font-family: "Manrope", "Noto Sans SC", sans-serif;
+        font-size: 0.72rem;
+        font-weight: 900;
+      }}
+      .player-achievement-tier {{
+        color: #64748b;
+        font-size: 0.72rem;
+        font-weight: 800;
+      }}
+      .player-achievement-title {{
+        color: #17324d;
+        font-size: 1rem;
+        font-weight: 800;
+        line-height: 1.25;
+      }}
+      .player-achievement-desc {{
+        color: #64748b;
+        font-size: 0.78rem;
+        line-height: 1.45;
+      }}
+      .player-achievement-meta {{
+        align-self: end;
+        display: inline-flex;
+        width: fit-content;
+        padding: 0.24rem 0.52rem;
+        border-radius: 999px;
+        background: rgba(226, 239, 255, 0.72);
+        color: #356d9c;
+        font-size: 0.74rem;
+        font-weight: 800;
+      }}
       .team-showcase-grid {{
         display: grid;
         grid-template-columns: minmax(0, 1.26fr) minmax(320px, 0.94fr);
@@ -4019,6 +4144,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         .player-season-grid,
         .player-competition-grid,
         .player-match-grid,
+        .player-achievement-grid,
         .team-roster-grid,
         .team-match-grid {{
           grid-template-columns: 1fr;
@@ -4063,6 +4189,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           grid-template-columns: 1fr 1fr;
         }}
         .player-kpi-grid {{
+          grid-template-columns: 1fr 1fr;
+        }}
+        .player-achievement-grid {{
           grid-template-columns: 1fr 1fr;
         }}
         .team-kpi-grid,
@@ -4156,6 +4285,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           grid-template-columns: 1fr;
         }}
         .player-kpi-grid {{
+          grid-template-columns: 1fr;
+        }}
+        .player-achievement-grid {{
           grid-template-columns: 1fr;
         }}
         .team-kpi-grid,
@@ -7542,6 +7674,403 @@ def get_team_frontend_page(ctx: RequestContext, team_id: str) -> str:
     return impl(ctx, team_id)
 
 
+def normalize_player_achievement_rule(raw_rule: dict[str, Any], index: int = 0) -> dict[str, Any] | None:
+    if not isinstance(raw_rule, dict):
+        return None
+    title = str(raw_rule.get("title") or "").strip()
+    metric = str(raw_rule.get("metric") or "").strip()
+    if not title or metric not in PLAYER_ACHIEVEMENT_METRIC_OPTIONS:
+        return None
+    operator = str(raw_rule.get("operator") or ">=").strip()
+    if operator not in PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS:
+        operator = ">="
+    tier = str(raw_rule.get("tier") or "gold").strip()
+    if tier not in PLAYER_ACHIEVEMENT_TIER_OPTIONS:
+        tier = "gold"
+    try:
+        value = float(raw_rule.get("value") or 0)
+    except (TypeError, ValueError):
+        value = 0.0
+    try:
+        min_games = int(float(raw_rule.get("min_games") or 0))
+    except (TypeError, ValueError):
+        min_games = 0
+    try:
+        min_stance_calls = int(float(raw_rule.get("min_stance_calls") or 0))
+    except (TypeError, ValueError):
+        min_stance_calls = 0
+    try:
+        sort_order = int(float(raw_rule.get("sort_order") if raw_rule.get("sort_order") not in {None, ""} else index * 10))
+    except (TypeError, ValueError):
+        sort_order = index * 10
+    return {
+        "active": bool(raw_rule.get("active", True)),
+        "code": str(raw_rule.get("code") or metric[:4].upper()).strip()[:8] or "TAG",
+        "tier": tier,
+        "title": title[:40],
+        "description": str(raw_rule.get("description") or "").strip()[:160],
+        "metric": metric,
+        "operator": operator,
+        "value": value,
+        "min_games": max(0, min_games),
+        "min_stance_calls": max(0, min_stance_calls),
+        "meta_template": str(raw_rule.get("meta_template") or "{" + metric + "}").strip()[:80],
+        "sort_order": sort_order,
+    }
+
+
+def load_player_achievement_rules() -> list[dict[str, Any]]:
+    saved = load_meta_value(PLAYER_ACHIEVEMENT_RULES_KEY)
+    raw_rules: list[Any]
+    if saved:
+        try:
+            parsed = json.loads(saved)
+            raw_rules = parsed if isinstance(parsed, list) else []
+        except json.JSONDecodeError:
+            raw_rules = []
+    else:
+        raw_rules = DEFAULT_PLAYER_ACHIEVEMENT_RULES
+    rules = [
+        rule
+        for index, item in enumerate(raw_rules)
+        if (rule := normalize_player_achievement_rule(item, index)) is not None
+    ]
+    if not rules:
+        rules = [
+            rule
+            for index, item in enumerate(DEFAULT_PLAYER_ACHIEVEMENT_RULES)
+            if (rule := normalize_player_achievement_rule(item, index)) is not None
+        ]
+    return sorted(rules, key=lambda item: (item["sort_order"], item["title"]))
+
+
+def save_player_achievement_rules(rules: list[dict[str, Any]]) -> None:
+    normalized = [
+        rule
+        for index, item in enumerate(rules)
+        if (rule := normalize_player_achievement_rule(item, index)) is not None
+    ]
+    save_meta_value(PLAYER_ACHIEVEMENT_RULES_KEY, json.dumps(normalized, ensure_ascii=False))
+
+
+def reset_player_achievement_rules() -> None:
+    save_player_achievement_rules(DEFAULT_PLAYER_ACHIEVEMENT_RULES)
+
+
+def build_player_achievement_metrics(
+    detail: dict[str, Any],
+    player_row: dict[str, Any],
+) -> dict[str, Any]:
+    games_played = int(player_row.get("games_played") or detail.get("games_played") or 0)
+    rank = int(player_row.get("rank") or detail.get("rank") or 9999)
+    win_rate = float(player_row.get("win_rate") or 0.0)
+    villagers_games = int(player_row.get("villagers_games") or 0)
+    werewolves_games = int(player_row.get("werewolves_games") or 0)
+    villagers_win_rate = float(player_row.get("villagers_win_rate") or 0.0)
+    werewolves_win_rate = float(player_row.get("werewolves_win_rate") or 0.0)
+    stance_calls = int(player_row.get("stance_calls") or detail.get("stance_calls") or 0)
+    stance_rate = float(player_row.get("stance_rate") or 0.0)
+    average_points = float(player_row.get("average_points") or 0.0)
+    points_total = float(player_row.get("points_earned_total") or 0.0)
+    history = list(detail.get("history") or [])
+    role_rows = list(detail.get("roles") or [])
+    mvp_count = 0
+    svp_count = 0
+    scapegoat_count = 0
+    for item in history:
+        award_labels = {str(label or "").strip() for label in item.get("award_labels", [])}
+        if "MVP" in award_labels:
+            mvp_count += 1
+        if "SVP" in award_labels:
+            svp_count += 1
+        if "背锅" in award_labels:
+            scapegoat_count += 1
+
+    best_win_streak = 0
+    current_win_streak = 0
+    for item in reversed(history):
+        if str(item.get("result_label") or "") == "胜利":
+            current_win_streak += 1
+            best_win_streak = max(best_win_streak, current_win_streak)
+        else:
+            current_win_streak = 0
+    current_win_streak = 0
+    for item in history:
+        if str(item.get("result_label") or "") == "胜利":
+            current_win_streak += 1
+        else:
+            break
+
+    top_role = role_rows[0] if role_rows else {}
+    top_role_name = str(top_role.get("role") or "").strip()
+    top_role_games = int(top_role.get("games") or 0)
+
+    return {
+        "rank": rank,
+        "games_played": games_played,
+        "win_rate": win_rate,
+        "villagers_games": villagers_games,
+        "werewolves_games": werewolves_games,
+        "villagers_win_rate": villagers_win_rate,
+        "werewolves_win_rate": werewolves_win_rate,
+        "stance_calls": stance_calls,
+        "stance_rate": stance_rate,
+        "average_points": average_points,
+        "points_total": points_total,
+        "mvp_count": mvp_count,
+        "svp_count": svp_count,
+        "scapegoat_count": scapegoat_count,
+        "best_win_streak": best_win_streak,
+        "current_win_streak": current_win_streak,
+        "top_role_games": top_role_games,
+        "top_role_name": top_role_name,
+    }
+
+
+def format_player_achievement_meta(template: str, metrics: dict[str, Any]) -> str:
+    values = {
+        **metrics,
+        "win_rate_pct": format_pct(float(metrics.get("win_rate") or 0.0)),
+        "villagers_win_rate_pct": format_pct(float(metrics.get("villagers_win_rate") or 0.0)),
+        "werewolves_win_rate_pct": format_pct(float(metrics.get("werewolves_win_rate") or 0.0)),
+        "stance_rate_pct": format_pct(float(metrics.get("stance_rate") or 0.0)),
+        "average_points": f"{float(metrics.get('average_points') or 0.0):.2f}",
+        "points_total": f"{float(metrics.get('points_total') or 0.0):.2f}",
+    }
+    try:
+        return str(template or "").format(**values)
+    except (KeyError, ValueError):
+        return str(values.get(str(metrics.get("metric") or ""), "")).strip()
+
+
+def player_achievement_rule_matches(rule: dict[str, Any], metrics: dict[str, Any]) -> bool:
+    if not rule.get("active", True):
+        return False
+    if int(metrics.get("games_played") or 0) < int(rule.get("min_games") or 0):
+        return False
+    if int(metrics.get("stance_calls") or 0) < int(rule.get("min_stance_calls") or 0):
+        return False
+    metric = str(rule.get("metric") or "")
+    metric_value = float(metrics.get(metric) or 0.0)
+    target_value = float(rule.get("value") or 0.0)
+    operator = str(rule.get("operator") or ">=")
+    if operator == "<=":
+        return metric_value <= target_value
+    if operator == "==":
+        return metric_value == target_value
+    return metric_value >= target_value
+
+
+def build_player_achievement_tags(
+    detail: dict[str, Any],
+    player_row: dict[str, Any],
+) -> list[dict[str, str]]:
+    metrics = build_player_achievement_metrics(detail, player_row)
+    achievements = [
+        {
+            "tier": rule["tier"],
+            "code": rule["code"],
+            "title": rule["title"],
+            "description": rule["description"],
+            "meta": format_player_achievement_meta(rule.get("meta_template", ""), metrics),
+            "sort_order": rule.get("sort_order", 0),
+        }
+        for rule in load_player_achievement_rules()
+        if player_achievement_rule_matches(rule, metrics)
+    ]
+    if not achievements:
+        achievements.append(
+            {
+                "tier": "locked",
+                "code": "NEW",
+                "title": "成就待解锁",
+                "description": "继续录入比赛后会自动点亮个人成就标签。",
+                "meta": "待解锁",
+                "sort_order": 9999,
+            }
+        )
+    tier_order = {"legend": 0, "gold": 1, "silver": 2, "bronze": 3, "locked": 4}
+    achievements.sort(
+        key=lambda item: (
+            tier_order.get(item["tier"], 9),
+            int(item.get("sort_order") or 0),
+            item["title"],
+        )
+    )
+    return achievements[:12]
+
+
+def get_player_achievement_rules_page(ctx: RequestContext, alert: str = "") -> str:
+    rules = load_player_achievement_rules()
+    metric_options = "".join(
+        f'<option value="{escape(value)}">{{selected_{escape(value)}}}{escape(label)}</option>'
+        for value, label in PLAYER_ACHIEVEMENT_METRIC_OPTIONS.items()
+    )
+    operator_options = "".join(
+        f'<option value="{escape(value)}">{{selected_op_{escape(value)}}}{escape(label)}</option>'
+        for value, label in PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS.items()
+    )
+    tier_options = "".join(
+        f'<option value="{escape(value)}">{{selected_tier_{escape(value)}}}{escape(label)}</option>'
+        for value, label in PLAYER_ACHIEVEMENT_TIER_OPTIONS.items()
+    )
+
+    def render_rule_row(rule: dict[str, Any], index: int) -> str:
+        row_metric_options = metric_options
+        for value in PLAYER_ACHIEVEMENT_METRIC_OPTIONS:
+            row_metric_options = row_metric_options.replace(
+                "{selected_" + escape(value) + "}",
+                " selected" if rule.get("metric") == value else "",
+            )
+        row_operator_options = operator_options
+        for value in PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS:
+            row_operator_options = row_operator_options.replace(
+                "{selected_op_" + escape(value) + "}",
+                " selected" if rule.get("operator") == value else "",
+            )
+        row_tier_options = tier_options
+        for value in PLAYER_ACHIEVEMENT_TIER_OPTIONS:
+            row_tier_options = row_tier_options.replace(
+                "{selected_tier_" + escape(value) + "}",
+                " selected" if rule.get("tier") == value else "",
+            )
+        active_checked = " checked" if rule.get("active", True) else ""
+        return f"""
+        <article class="form-panel p-3 p-lg-4 mb-3">
+          <div class="row g-3 align-items-end">
+            <div class="col-12 col-lg-1">
+              <label class="form-label">启用</label>
+              <div class="form-check">
+                <input class="form-check-input" type="checkbox" name="active_{index}" value="1"{active_checked}>
+              </div>
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">标识</label>
+              <input class="form-control" name="code" value="{escape(rule.get('code') or '')}" maxlength="8">
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">标题</label>
+              <input class="form-control" name="title" value="{escape(rule.get('title') or '')}">
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">等级</label>
+              <select class="form-select" name="tier">{row_tier_options}</select>
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">指标</label>
+              <select class="form-select" name="metric">{row_metric_options}</select>
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">条件</label>
+              <select class="form-select" name="operator">{row_operator_options}</select>
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">阈值</label>
+              <input class="form-control" name="value" value="{escape(str(rule.get('value') if rule.get('value') is not None else ''))}">
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">局数</label>
+              <input class="form-control" name="min_games" value="{escape(str(rule.get('min_games') or 0))}">
+            </div>
+            <div class="col-6 col-lg-1">
+              <label class="form-label">排序</label>
+              <input class="form-control" name="sort_order" value="{escape(str(rule.get('sort_order') or 0))}">
+            </div>
+            <div class="col-12 col-lg-6">
+              <label class="form-label">描述</label>
+              <input class="form-control" name="description" value="{escape(rule.get('description') or '')}">
+            </div>
+            <div class="col-12 col-lg-4">
+              <label class="form-label">展示值模板</label>
+              <input class="form-control" name="meta_template" value="{escape(rule.get('meta_template') or '')}">
+            </div>
+            <div class="col-12 col-lg-2">
+              <label class="form-label">站边次数门槛</label>
+              <input class="form-control" name="min_stance_calls" value="{escape(str(rule.get('min_stance_calls') or 0))}">
+            </div>
+          </div>
+        </article>
+        """
+
+    blank_rule = {
+        "active": False,
+        "code": "",
+        "title": "",
+        "tier": "gold",
+        "metric": "games_played",
+        "operator": ">=",
+        "value": "",
+        "min_games": 0,
+        "min_stance_calls": 0,
+        "description": "",
+        "meta_template": "{games_played} 局",
+        "sort_order": (rules[-1]["sort_order"] + 10) if rules else 10,
+    }
+    editable_rules = [*rules, blank_rule, {**blank_rule, "sort_order": blank_rule["sort_order"] + 10}]
+    body = f"""
+    <section class="hero p-4 p-md-5 shadow-lg mb-4">
+      <div class="eyebrow mb-3">成就系统</div>
+      <h1 class="display-6 fw-semibold mb-3">自动成就规则</h1>
+      <p class="mb-0 opacity-75">这里配置个人页自动点亮标签的规则。胜率类阈值用小数填写，例如 60% 填 0.6。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">规则列表</h2>
+          <p class="section-copy mb-0">空标题的行会被忽略。展示值模板可使用指标占位符，例如 `{{rank}}`、`{{games_played}}`、`{{win_rate_pct}}`、`{{mvp_count}}`。</p>
+        </div>
+        <form method="post" action="/achievement-rules" class="m-0">
+          <input type="hidden" name="action" value="reset">
+          <button class="btn btn-outline-dark" type="submit">恢复默认规则</button>
+        </form>
+      </div>
+      <form method="post" action="/achievement-rules">
+        <input type="hidden" name="action" value="save">
+        {''.join(render_rule_row(rule, index) for index, rule in enumerate(editable_rules))}
+        <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-dark" type="submit">保存规则</button>
+          <a class="btn btn-outline-dark" href="/dashboard">返回首页</a>
+        </div>
+      </form>
+    </section>
+    """
+    return layout("自动成就规则", body, ctx, alert=alert)
+
+
+def handle_player_achievement_rules(ctx: RequestContext, start_response):
+    if ctx.method == "GET":
+        return start_response_html(start_response, "200 OK", get_player_achievement_rules_page(ctx))
+    action = form_value(ctx.form, "action").strip()
+    if action == "reset":
+        reset_player_achievement_rules()
+        return redirect(start_response, append_alert_query("/achievement-rules", "已恢复默认成就规则。"))
+    if action != "save":
+        return redirect(start_response, append_alert_query("/achievement-rules", "未识别的操作。"))
+    titles = ctx.form.get("title", [])
+    rules: list[dict[str, Any]] = []
+    for index, title in enumerate(titles):
+        if not str(title or "").strip():
+            continue
+        rules.append(
+            {
+                "active": form_value(ctx.form, f"active_{index}").strip() == "1",
+                "code": (ctx.form.get("code", [""])[index] if index < len(ctx.form.get("code", [])) else ""),
+                "title": title,
+                "tier": (ctx.form.get("tier", ["gold"])[index] if index < len(ctx.form.get("tier", [])) else "gold"),
+                "metric": (ctx.form.get("metric", ["games_played"])[index] if index < len(ctx.form.get("metric", [])) else "games_played"),
+                "operator": (ctx.form.get("operator", [">="])[index] if index < len(ctx.form.get("operator", [])) else ">="),
+                "value": (ctx.form.get("value", ["0"])[index] if index < len(ctx.form.get("value", [])) else "0"),
+                "min_games": (ctx.form.get("min_games", ["0"])[index] if index < len(ctx.form.get("min_games", [])) else "0"),
+                "min_stance_calls": (ctx.form.get("min_stance_calls", ["0"])[index] if index < len(ctx.form.get("min_stance_calls", [])) else "0"),
+                "description": (ctx.form.get("description", [""])[index] if index < len(ctx.form.get("description", [])) else ""),
+                "meta_template": (ctx.form.get("meta_template", [""])[index] if index < len(ctx.form.get("meta_template", [])) else ""),
+                "sort_order": (ctx.form.get("sort_order", ["0"])[index] if index < len(ctx.form.get("sort_order", [])) else "0"),
+            }
+        )
+    save_player_achievement_rules(rules)
+    return redirect(start_response, append_alert_query("/achievement-rules", "自动成就规则已保存。"))
+
+
 def get_team_legacy_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     from web.features.team_page import get_team_legacy_page as impl
 
@@ -10146,6 +10675,34 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
           <div class="player-match-meta mt-2">当前筛选范围内还没有可展示的对局记录。</div>
         </article>
     """
+    achievement_tier_labels = {
+        "legend": "传说",
+        "gold": "金色",
+        "silver": "银色",
+        "bronze": "铜色",
+        "locked": "未解锁",
+    }
+    achievement_cards_html = "".join(
+        f"""
+        <article class="player-achievement-card is-{escape(item['tier'])}">
+          <div class="player-achievement-top">
+            <span class="player-achievement-code">{escape(item['code'])}</span>
+            <span class="player-achievement-tier">{escape(achievement_tier_labels.get(item['tier'], item['tier']))}</span>
+          </div>
+          <div>
+            <div class="player-achievement-title">{escape(item['title'])}</div>
+            <div class="player-achievement-desc mt-2">{escape(item['description'])}</div>
+          </div>
+          <span class="player-achievement-meta">{escape(item['meta'])}</span>
+        </article>
+        """
+        for item in build_player_achievement_tags(detail, player_row)
+    )
+    achievement_rule_actions = (
+        '<a class="btn btn-outline-dark" href="/achievement-rules">编辑自动规则</a>'
+        if is_admin_user(ctx.current_user)
+        else ""
+    )
 
     history_rows = []
     for item in detail["history"]:
@@ -10331,6 +10888,16 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
     </section>
     {player_dimension_panel}
     {ai_player_summary_panel}
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">成就标签</h2>
+          <p class="section-copy mb-0">按当前赛事和赛季数据自动点亮，像游戏成就一样快速标记这名选手的高光属性。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">{achievement_rule_actions}</div>
+      </div>
+      <div class="player-achievement-grid">{achievement_cards_html}</div>
+    </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
@@ -12434,6 +13001,11 @@ def app(environ, start_response):
             if admin_guard is not None:
                 return admin_guard
             return handle_ai_conversations(ctx, start_response)
+        if path == "/achievement-rules":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_player_achievement_rules(ctx, start_response)
         if path == "/permissions":
             return handle_permission_control(ctx, start_response)
         if path == "/profile":

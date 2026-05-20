@@ -16,6 +16,7 @@ RequestContext = legacy.RequestContext
 build_competition_switcher = legacy.build_competition_switcher
 build_match_day_path = legacy.build_match_day_path
 build_player_details = legacy.build_player_details
+build_player_achievement_tags = legacy.build_player_achievement_tags
 build_player_dimension_panel = legacy.build_player_dimension_panel
 build_player_photo_html = legacy.build_player_photo_html
 build_player_rows = legacy.build_player_rows
@@ -253,6 +254,34 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
           <div class="player-match-meta mt-2">当前筛选范围内还没有可展示的对局记录。</div>
         </article>
     """
+    achievement_tier_labels = {
+        "legend": "传说",
+        "gold": "金色",
+        "silver": "银色",
+        "bronze": "铜色",
+        "locked": "未解锁",
+    }
+    achievement_cards_html = "".join(
+        f"""
+        <article class="player-achievement-card is-{escape(item['tier'])}">
+          <div class="player-achievement-top">
+            <span class="player-achievement-code">{escape(item['code'])}</span>
+            <span class="player-achievement-tier">{escape(achievement_tier_labels.get(item['tier'], item['tier']))}</span>
+          </div>
+          <div>
+            <div class="player-achievement-title">{escape(item['title'])}</div>
+            <div class="player-achievement-desc mt-2">{escape(item['description'])}</div>
+          </div>
+          <span class="player-achievement-meta">{escape(item['meta'])}</span>
+        </article>
+        """
+        for item in build_player_achievement_tags(detail, player_row)
+    )
+    achievement_rule_actions = (
+        '<a class="btn btn-outline-dark" href="/achievement-rules">编辑自动规则</a>'
+        if is_admin_user(ctx.current_user)
+        else ""
+    )
 
     history_rows = []
     for item in detail["history"]:
@@ -440,6 +469,16 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
     </section>
     {player_dimension_panel}
     {ai_player_summary_panel}
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">成就标签</h2>
+          <p class="section-copy mb-0">按当前赛事和赛季数据自动点亮，像游戏成就一样快速标记这名选手的高光属性。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">{achievement_rule_actions}</div>
+      </div>
+      <div class="player-achievement-grid">{achievement_cards_html}</div>
+    </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>

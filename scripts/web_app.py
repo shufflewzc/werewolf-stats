@@ -164,6 +164,7 @@ AI_TEAM_SEASON_SUMMARY_KEY_PREFIX = "ai_team_season_summary:"
 AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
 DASHBOARD_ACTIVITY_SETTINGS_KEY = "dashboard_activity_settings"
 PLAYER_ACHIEVEMENT_RULES_KEY = "player_achievement_rules"
+PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "player_manual_achievements:"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
@@ -200,10 +201,10 @@ PLAYER_ACHIEVEMENT_OPERATOR_OPTIONS = {
     "==": "等于",
 }
 PLAYER_ACHIEVEMENT_TIER_OPTIONS = {
-    "legend": "传说",
-    "gold": "金色",
-    "silver": "银色",
-    "bronze": "铜色",
+    "legend": "极难",
+    "gold": "困难",
+    "silver": "中等",
+    "bronze": "简单",
 }
 DEFAULT_PLAYER_ACHIEVEMENT_RULES: list[dict[str, Any]] = [
     {"active": True, "code": "R1", "tier": "legend", "title": "榜首席位", "description": "当前筛选口径下位列个人积分榜第一。", "metric": "rank", "operator": "<=", "value": 1, "min_games": 1, "meta_template": "第 {rank} 名", "sort_order": 10},
@@ -3576,24 +3577,29 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         min-height: 9.4rem;
         padding: 0.92rem;
         border-radius: 8px;
-        border: 1px solid rgba(17, 24, 39, 0.08);
-        background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 252, 0.94));
+        border: 2px solid rgba(17, 24, 39, 0.08);
+        background: linear-gradient(180deg, #ffffff, #f4f9fc);
         box-shadow: 0 14px 34px rgba(15, 23, 42, 0.07);
       }}
       .player-achievement-card.is-legend {{
-        border-color: rgba(181, 121, 26, 0.35);
-        background: linear-gradient(180deg, rgba(255, 251, 235, 0.98), rgba(255, 255, 255, 0.95));
+        border-color: #b45309;
+        background: linear-gradient(180deg, #fff7ed, #fffbeb);
       }}
       .player-achievement-card.is-gold {{
-        border-color: rgba(202, 138, 4, 0.26);
+        border-color: #f59e0b;
+        background: linear-gradient(180deg, #fffbeb, #ffffff);
       }}
       .player-achievement-card.is-silver {{
-        border-color: rgba(100, 116, 139, 0.2);
+        border-color: #94a3b8;
+        background: linear-gradient(180deg, #f8fafc, #ffffff);
       }}
       .player-achievement-card.is-bronze {{
-        border-color: rgba(180, 83, 9, 0.22);
+        border-color: #b7791f;
+        background: linear-gradient(180deg, #fff7ed, #ffffff);
       }}
       .player-achievement-card.is-locked {{
+        border-color: #cbd5e1;
+        background: linear-gradient(180deg, #f8fafc, #eef2f7);
         opacity: 0.78;
       }}
       .player-achievement-top {{
@@ -3615,10 +3621,41 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         font-size: 0.72rem;
         font-weight: 900;
       }}
+      .player-achievement-card.is-legend .player-achievement-code {{
+        background: #7c2d12;
+      }}
+      .player-achievement-card.is-gold .player-achievement-code {{
+        background: #b45309;
+      }}
+      .player-achievement-card.is-silver .player-achievement-code {{
+        background: #475569;
+      }}
+      .player-achievement-card.is-bronze .player-achievement-code {{
+        background: #92400e;
+      }}
+      .player-achievement-card.is-locked .player-achievement-code {{
+        background: #94a3b8;
+      }}
       .player-achievement-tier {{
         color: #64748b;
         font-size: 0.72rem;
         font-weight: 800;
+      }}
+      .player-achievement-card.is-legend .player-achievement-tier,
+      .player-achievement-card.is-legend .player-achievement-title {{
+        color: #7c2d12;
+      }}
+      .player-achievement-card.is-gold .player-achievement-tier,
+      .player-achievement-card.is-gold .player-achievement-title {{
+        color: #92400e;
+      }}
+      .player-achievement-card.is-silver .player-achievement-tier,
+      .player-achievement-card.is-silver .player-achievement-title {{
+        color: #334155;
+      }}
+      .player-achievement-card.is-bronze .player-achievement-tier,
+      .player-achievement-card.is-bronze .player-achievement-title {{
+        color: #78350f;
       }}
       .player-achievement-title {{
         color: #17324d;
@@ -3641,6 +3678,26 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         color: #356d9c;
         font-size: 0.74rem;
         font-weight: 800;
+      }}
+      .player-achievement-card.is-legend .player-achievement-meta {{
+        background: #fed7aa;
+        color: #7c2d12;
+      }}
+      .player-achievement-card.is-gold .player-achievement-meta {{
+        background: #fde68a;
+        color: #92400e;
+      }}
+      .player-achievement-card.is-silver .player-achievement-meta {{
+        background: #e2e8f0;
+        color: #334155;
+      }}
+      .player-achievement-card.is-bronze .player-achievement-meta {{
+        background: #fed7aa;
+        color: #78350f;
+      }}
+      .player-achievement-card.is-locked .player-achievement-meta {{
+        background: #e2e8f0;
+        color: #64748b;
       }}
       .team-showcase-grid {{
         display: grid;
@@ -7757,6 +7814,68 @@ def reset_player_achievement_rules() -> None:
     save_player_achievement_rules(DEFAULT_PLAYER_ACHIEVEMENT_RULES)
 
 
+def normalize_player_manual_achievement(raw_item: dict[str, Any], index: int = 0) -> dict[str, Any] | None:
+    if not isinstance(raw_item, dict):
+        return None
+    title = str(raw_item.get("title") or "").strip()
+    if not title:
+        return None
+    tier = str(raw_item.get("tier") or "gold").strip()
+    if tier not in PLAYER_ACHIEVEMENT_TIER_OPTIONS:
+        tier = "gold"
+    try:
+        sort_order = int(float(raw_item.get("sort_order") if raw_item.get("sort_order") not in {None, ""} else index * 10))
+    except (TypeError, ValueError):
+        sort_order = index * 10
+    return {
+        "active": bool(raw_item.get("active", True)),
+        "code": str(raw_item.get("code") or "MAN").strip()[:8] or "MAN",
+        "tier": tier,
+        "title": title[:40],
+        "description": str(raw_item.get("description") or "").strip()[:160],
+        "meta": str(raw_item.get("meta") or "手动").strip()[:40] or "手动",
+        "sort_order": sort_order,
+        "source": "manual",
+    }
+
+
+def load_player_manual_achievements(player_id: str, include_inactive: bool = False) -> list[dict[str, Any]]:
+    normalized_player_id = str(player_id or "").strip()
+    if not normalized_player_id:
+        return []
+    saved = load_meta_value(PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX + normalized_player_id)
+    if not saved:
+        return []
+    try:
+        parsed = json.loads(saved)
+    except json.JSONDecodeError:
+        return []
+    raw_items = parsed if isinstance(parsed, list) else []
+    items = [
+        item
+        for index, raw_item in enumerate(raw_items)
+        if (item := normalize_player_manual_achievement(raw_item, index)) is not None
+    ]
+    if not include_inactive:
+        items = [item for item in items if item.get("active", True)]
+    return sorted(items, key=lambda item: (int(item.get("sort_order") or 0), item.get("title") or ""))
+
+
+def save_player_manual_achievements(player_id: str, items: list[dict[str, Any]]) -> None:
+    normalized_player_id = str(player_id or "").strip()
+    if not normalized_player_id:
+        return
+    normalized = [
+        item
+        for index, raw_item in enumerate(items)
+        if (item := normalize_player_manual_achievement(raw_item, index)) is not None
+    ]
+    save_meta_value(
+        PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX + normalized_player_id,
+        json.dumps(normalized, ensure_ascii=False),
+    )
+
+
 def build_player_achievement_metrics(
     detail: dict[str, Any],
     player_row: dict[str, Any],
@@ -7864,6 +7983,7 @@ def player_achievement_rule_matches(rule: dict[str, Any], metrics: dict[str, Any
 def build_player_achievement_tags(
     detail: dict[str, Any],
     player_row: dict[str, Any],
+    player_id: str = "",
 ) -> list[dict[str, str]]:
     metrics = build_player_achievement_metrics(detail, player_row)
     achievements = [
@@ -7874,10 +7994,12 @@ def build_player_achievement_tags(
             "description": rule["description"],
             "meta": format_player_achievement_meta(rule.get("meta_template", ""), metrics),
             "sort_order": rule.get("sort_order", 0),
+            "source": "auto",
         }
         for rule in load_player_achievement_rules()
         if player_achievement_rule_matches(rule, metrics)
     ]
+    achievements.extend(load_player_manual_achievements(player_id or str(player_row.get("player_id") or "")))
     if not achievements:
         achievements.append(
             {
@@ -7887,6 +8009,7 @@ def build_player_achievement_tags(
                 "description": "继续录入比赛后会自动点亮个人成就标签。",
                 "meta": "待解锁",
                 "sort_order": 9999,
+                "source": "system",
             }
         )
     tier_order = {"legend": 0, "gold": 1, "silver": 2, "bronze": 3, "locked": 4}
@@ -7936,7 +8059,7 @@ def get_player_achievement_rules_page(ctx: RequestContext, alert: str = "") -> s
             )
         active_checked = " checked" if rule.get("active", True) else ""
         return f"""
-        <article class="form-panel p-3 p-lg-4 mb-3">
+        <article class="form-panel p-3 p-lg-4 mb-3" data-achievement-rule-row>
           <div class="row g-3 align-items-end">
             <div class="col-12 col-lg-1">
               <label class="form-label">启用</label>
@@ -8006,7 +8129,7 @@ def get_player_achievement_rules_page(ctx: RequestContext, alert: str = "") -> s
         "meta_template": "{games_played} 局",
         "sort_order": (rules[-1]["sort_order"] + 10) if rules else 10,
     }
-    editable_rules = [*rules, blank_rule, {**blank_rule, "sort_order": blank_rule["sort_order"] + 10}]
+    rule_template = render_rule_row(blank_rule, "__INDEX__")
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">成就系统</div>
@@ -8024,15 +8147,41 @@ def get_player_achievement_rules_page(ctx: RequestContext, alert: str = "") -> s
           <button class="btn btn-outline-dark" type="submit">恢复默认规则</button>
         </form>
       </div>
-      <form method="post" action="/achievement-rules">
+      <form method="post" action="/achievement-rules" id="achievement-rules-form">
         <input type="hidden" name="action" value="save">
-        {''.join(render_rule_row(rule, index) for index, rule in enumerate(editable_rules))}
+        <div id="achievement-rule-list">
+          {''.join(render_rule_row(rule, index) for index, rule in enumerate(rules))}
+        </div>
+        <template id="achievement-rule-template">{rule_template}</template>
         <div class="d-flex flex-wrap gap-2">
+          <button class="btn btn-outline-dark" type="button" data-add-achievement-rule>新增规则</button>
           <button class="btn btn-dark" type="submit">保存规则</button>
           <a class="btn btn-outline-dark" href="/dashboard">返回首页</a>
         </div>
       </form>
     </section>
+    <script>
+      (() => {{
+        const list = document.getElementById("achievement-rule-list");
+        const template = document.getElementById("achievement-rule-template");
+        const addButton = document.querySelector("[data-add-achievement-rule]");
+        const form = document.getElementById("achievement-rules-form");
+        function renumber() {{
+          list?.querySelectorAll("[data-achievement-rule-row]").forEach((row, index) => {{
+            const active = row.querySelector('input[type="checkbox"]');
+            if (active) active.name = `active_${{index}}`;
+          }});
+        }}
+        addButton?.addEventListener("click", () => {{
+          if (!list || !template) return;
+          const index = list.querySelectorAll("[data-achievement-rule-row]").length;
+          const html = template.innerHTML.replaceAll("__INDEX__", String(index));
+          list.insertAdjacentHTML("beforeend", html);
+          renumber();
+        }});
+        form?.addEventListener("submit", renumber);
+      }})();
+    </script>
     """
     return layout("自动成就规则", body, ctx, alert=alert)
 
@@ -10676,10 +10825,10 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
         </article>
     """
     achievement_tier_labels = {
-        "legend": "传说",
-        "gold": "金色",
-        "silver": "银色",
-        "bronze": "铜色",
+        "legend": "极难",
+        "gold": "困难",
+        "silver": "中等",
+        "bronze": "简单",
         "locked": "未解锁",
     }
     achievement_cards_html = "".join(
@@ -10696,13 +10845,118 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
           <span class="player-achievement-meta">{escape(item['meta'])}</span>
         </article>
         """
-        for item in build_player_achievement_tags(detail, player_row)
+        for item in build_player_achievement_tags(detail, player_row, player_id)
     )
     achievement_rule_actions = (
-        '<a class="btn btn-outline-dark" href="/achievement-rules">编辑自动规则</a>'
-        if is_admin_user(ctx.current_user)
+        f"""
+        <a class="btn btn-outline-dark" href="/achievement-rules">编辑自动规则</a>
+        <a class="btn btn-dark" href="#manual-achievements">编辑手动标签</a>
+        """
+        if can_manage_player(ctx, player_id)
         else ""
     )
+    manual_achievement_panel = ""
+    if can_manage_player(ctx, player_id):
+        manual_items = load_player_manual_achievements(player_id, include_inactive=True)
+        blank_manual = {
+            "active": True,
+            "code": "",
+            "title": "",
+            "tier": "gold",
+            "description": "",
+            "meta": "手动",
+            "sort_order": (manual_items[-1]["sort_order"] + 10) if manual_items else 10,
+        }
+
+        def render_manual_row(item: dict[str, Any], index: int) -> str:
+            tier_options_html = "".join(
+                f'<option value="{escape(value)}"{" selected" if item.get("tier") == value else ""}>{escape(label)}</option>'
+                for value, label in PLAYER_ACHIEVEMENT_TIER_OPTIONS.items()
+            )
+            return f"""
+            <article class="form-panel p-3 p-lg-4 mb-3" data-manual-achievement-row>
+              <div class="row g-3 align-items-end">
+                <div class="col-12 col-lg-1">
+                  <label class="form-label">显示</label>
+                  <div class="form-check">
+                    <input class="form-check-input" type="checkbox" name="manual_active_{index}" value="1"{" checked" if item.get("active", True) else ""}>
+                  </div>
+                </div>
+                <div class="col-6 col-lg-1">
+                  <label class="form-label">标识</label>
+                  <input class="form-control" name="manual_code" value="{escape(item.get('code') or '')}" maxlength="8">
+                </div>
+                <div class="col-12 col-lg-2">
+                  <label class="form-label">标题</label>
+                  <input class="form-control" name="manual_title" value="{escape(item.get('title') or '')}">
+                </div>
+                <div class="col-12 col-lg-2">
+                  <label class="form-label">等级</label>
+                  <select class="form-select" name="manual_tier">{tier_options_html}</select>
+                </div>
+                <div class="col-12 col-lg-2">
+                  <label class="form-label">展示值</label>
+                  <input class="form-control" name="manual_meta" value="{escape(item.get('meta') or '手动')}">
+                </div>
+                <div class="col-6 col-lg-1">
+                  <label class="form-label">排序</label>
+                  <input class="form-control" name="manual_sort_order" value="{escape(str(item.get('sort_order') or 0))}">
+                </div>
+                <div class="col-12 col-lg-3">
+                  <label class="form-label">描述</label>
+                  <input class="form-control" name="manual_description" value="{escape(item.get('description') or '')}">
+                </div>
+              </div>
+            </article>
+            """
+
+        manual_template = render_manual_row(blank_manual, "__INDEX__")
+        manual_achievement_panel = f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4" id="manual-achievements">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">手动成就标签</h2>
+              <p class="section-copy mb-0">这里配置只给这名选手展示的自定义标签；空标题行会被忽略。</p>
+            </div>
+          </div>
+          <form method="post" action="/players/{escape(player_id)}" id="manual-achievements-form">
+            <input type="hidden" name="action" value="save_manual_achievements">
+            <input type="hidden" name="competition_name" value="{escape(selected_competition or '')}">
+            <input type="hidden" name="season_name" value="{escape(selected_season or '')}">
+            <div id="manual-achievement-list">
+              {''.join(render_manual_row(item, index) for index, item in enumerate(manual_items))}
+            </div>
+            <template id="manual-achievement-template">{manual_template}</template>
+            <div class="d-flex flex-wrap gap-2">
+              <button class="btn btn-outline-dark" type="button" data-add-manual-achievement>新增手动标签</button>
+              <button class="btn btn-dark" type="submit">保存手动标签</button>
+            </div>
+          </form>
+        </section>
+        <script>
+          (() => {{
+            const list = document.getElementById("manual-achievement-list");
+            const template = document.getElementById("manual-achievement-template");
+            const addButton = document.querySelector("[data-add-manual-achievement]");
+            const form = document.getElementById("manual-achievements-form");
+            function renumber() {{
+              list?.querySelectorAll("[data-manual-achievement-row]").forEach((row, index) => {{
+                const active = row.querySelector('input[type="checkbox"]');
+                if (active) active.name = `manual_active_${{index}}`;
+              }});
+            }}
+            addButton?.addEventListener("click", () => {{
+              if (!list || !template) return;
+              const index = list.querySelectorAll("[data-manual-achievement-row]").length;
+              const html = template.innerHTML.replaceAll("__INDEX__", String(index));
+              list.insertAdjacentHTML("beforeend", html);
+              renumber();
+            }});
+            form?.addEventListener("submit", renumber);
+            if (list && !list.querySelector("[data-manual-achievement-row]")) addButton?.click();
+          }})();
+        </script>
+        """
 
     history_rows = []
     for item in detail["history"]:
@@ -10898,6 +11152,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
       </div>
       <div class="player-achievement-grid">{achievement_cards_html}</div>
     </section>
+    {manual_achievement_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
@@ -11081,6 +11336,32 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
         competition_name or None,
         season_name or None,
     )
+
+    if action == "save_manual_achievements":
+        if not can_manage_player(ctx, player_id):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">你没有权限编辑这位选手的手动成就标签。</div>', ctx),
+            )
+        titles = ctx.form.get("manual_title", [])
+        items: list[dict[str, Any]] = []
+        for index, title in enumerate(titles):
+            if not str(title or "").strip():
+                continue
+            items.append(
+                {
+                    "active": form_value(ctx.form, f"manual_active_{index}").strip() == "1",
+                    "code": (ctx.form.get("manual_code", [""])[index] if index < len(ctx.form.get("manual_code", [])) else ""),
+                    "title": title,
+                    "tier": (ctx.form.get("manual_tier", ["gold"])[index] if index < len(ctx.form.get("manual_tier", [])) else "gold"),
+                    "description": (ctx.form.get("manual_description", [""])[index] if index < len(ctx.form.get("manual_description", [])) else ""),
+                    "meta": (ctx.form.get("manual_meta", ["手动"])[index] if index < len(ctx.form.get("manual_meta", [])) else "手动"),
+                    "sort_order": (ctx.form.get("manual_sort_order", ["0"])[index] if index < len(ctx.form.get("manual_sort_order", [])) else "0"),
+                }
+            )
+        save_player_manual_achievements(player_id, items)
+        return redirect(start_response, append_alert_query(redirect_path, "手动成就标签已保存。"))
 
     if not competition_name or not season_name:
         return redirect(
@@ -12967,6 +13248,8 @@ def app(environ, start_response):
                 )
         if path.startswith("/players/"):
             player_id = path.split("/", 2)[2]
+            if ctx.method == "POST":
+                return handle_player_page(ctx, start_response, player_id)
             return start_response_html(start_response, "200 OK", get_player_legacy_page(ctx, player_id))
         if path.startswith("/teams/"):
             team_id = path.split("/", 2)[2]

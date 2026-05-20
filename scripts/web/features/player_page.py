@@ -255,10 +255,10 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         </article>
     """
     achievement_tier_labels = {
-        "legend": "传说",
-        "gold": "金色",
-        "silver": "银色",
-        "bronze": "铜色",
+        "legend": "极难",
+        "gold": "困难",
+        "silver": "中等",
+        "bronze": "简单",
         "locked": "未解锁",
     }
     achievement_cards_html = "".join(
@@ -275,11 +275,11 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
           <span class="player-achievement-meta">{escape(item['meta'])}</span>
         </article>
         """
-        for item in build_player_achievement_tags(detail, player_row)
+        for item in build_player_achievement_tags(detail, player_row, player_id)
     )
     achievement_rule_actions = (
         '<a class="btn btn-outline-dark" href="/achievement-rules">编辑自动规则</a>'
-        if is_admin_user(ctx.current_user)
+        if can_manage_player(ctx, player_id)
         else ""
     )
 

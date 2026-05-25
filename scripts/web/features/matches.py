@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timedelta
 from html import escape
 from io import BytesIO
@@ -2298,6 +2299,302 @@ def archive_photo_player_id(filename: str) -> str:
     return PurePosixPath(name).stem.strip()
 
 
+def photo_data_url(filename: str, image_bytes: bytes) -> str:
+    extension = PurePosixPath(filename).suffix.lower()
+    mime_type = {
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".webp": "image/webp",
+        ".gif": "image/gif",
+        ".svg": "image/svg+xml",
+    }.get(extension, "application/octet-stream")
+    return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+
+
+def build_match_record_player_context(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+) -> tuple[dict[str, dict[str, object]], dict[str, list[dict[str, object]]], dict[str, dict[str, object]]]:
+    match_record_player_ids = list_match_record_player_ids(data, competition_name, season_name)
+    team_lookup = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+    }
+    player_by_id = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip() in match_record_player_ids
+    }
+    players_by_name: dict[str, list[dict[str, object]]] = {}
+    for player in player_by_id.values():
+        name = str(player.get("display_name") or "").strip()
+        if name:
+            players_by_name.setdefault(name, []).append(player)
+    return player_by_id, players_by_name, team_lookup
+
+
+def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, object]] | None, str]:
+    try:
+        with ZipFile(BytesIO(upload.data)) as archive:
+            entries = [
+                info
+                for info in archive.infolist()
+                if not info.is_dir() and not info.filename.startswith("__MACOSX/")
+            ]
+            if not entries:
+                return None, "zip 压缩包中没有找到可导入的头像图片。"
+
+            items: list[dict[str, object]] = []
+            ignored_count = 0
+            for info in entries:
+                player_id = archive_photo_player_id(info.filename)
+                if not player_id:
+                    ignored_count += 1
+                    continue
+                if info.file_size > MAX_UPLOAD_BYTES:
+                    return None, f"{PurePosixPath(info.filename).name} 超过 5 MB，未导入。"
+                try:
+                    image_bytes = archive.read(info)
+                except Exception as exc:
+                    return None, f"读取 {PurePosixPath(info.filename).name} 失败：{exc}"
+                if not image_bytes:
+                    ignored_count += 1
+                    continue
+                filename = PurePosixPath(info.filename).name
+                items.append(
+                    {
+                        "token": str(len(items)),
+                        "filename": filename,
+                        "stem": player_id,
+                        "data": base64.b64encode(image_bytes).decode("ascii"),
+                        "data_url": photo_data_url(filename, image_bytes),
+                    }
+                )
+    except BadZipFile:
+        return None, "zip 压缩包无法解析，请确认文件没有损坏。"
+    except Exception as exc:
+        return None, f"解析 zip 压缩包失败：{exc}"
+
+    if not items:
+        return None, f"zip 压缩包中没有找到可导入的头像图片，已忽略 {ignored_count} 个文件。"
+    return items, (f"忽略 {ignored_count} 个非图片文件。" if ignored_count else "")
+
+
+def resolve_zip_photo_assignments(
+    items: list[dict[str, object]],
+    player_by_id: dict[str, dict[str, object]],
+    players_by_name: dict[str, list[dict[str, object]]],
+) -> tuple[list[dict[str, object]], list[dict[str, object]], int]:
+    matched_items: list[dict[str, object]] = []
+    conflicts: list[dict[str, object]] = []
+    unmatched_count = 0
+    for item in items:
+        stem = str(item.get("stem") or "").strip()
+        player = player_by_id.get(stem)
+        if player:
+            matched_items.append({**item, "player_id": str(player.get("player_id") or "")})
+            continue
+        name_candidates = players_by_name.get(stem, [])
+        if len(name_candidates) == 1:
+            matched_items.append(
+                {**item, "player_id": str(name_candidates[0].get("player_id") or "")}
+            )
+        elif len(name_candidates) > 1:
+            conflicts.append({**item, "kind": "ambiguous_player", "candidates": name_candidates})
+        else:
+            unmatched_count += 1
+
+    by_player_id: dict[str, list[dict[str, object]]] = {}
+    for item in matched_items:
+        by_player_id.setdefault(str(item["player_id"]), []).append(item)
+
+    auto_assignments: list[dict[str, object]] = []
+    for player_id, player_items in by_player_id.items():
+        if len(player_items) == 1:
+            auto_assignments.append(player_items[0])
+        else:
+            conflicts.append(
+                {
+                    "kind": "multiple_photos",
+                    "player_id": player_id,
+                    "items": player_items,
+                }
+            )
+    return auto_assignments, conflicts, unmatched_count
+
+
+def apply_player_photo_assignments(
+    data: dict[str, object],
+    assignments: list[dict[str, str]],
+) -> tuple[int, str]:
+    player_by_id = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip()
+    }
+    updated_count = 0
+    for assignment in assignments:
+        player_id = str(assignment.get("player_id") or "").strip()
+        filename = str(assignment.get("filename") or "").strip()
+        encoded_data = str(assignment.get("data") or "").strip()
+        player = player_by_id.get(player_id)
+        if not player or not filename or not encoded_data:
+            continue
+        try:
+            image_bytes = base64.b64decode(encoded_data)
+            player["photo"] = save_embedded_player_photo(player_id, filename, image_bytes)
+        except (ValueError, Exception) as exc:
+            return updated_count, f"{filename} 图片保存失败：{exc}"
+        updated_count += 1
+    return updated_count, ""
+
+
+def parse_manual_player_photo_assignments(
+    form: dict[str, list[str]],
+    player_by_id: dict[str, dict[str, object]],
+) -> list[dict[str, str]]:
+    try:
+        photo_count = int(form_value(form, "photo_count", "0") or "0")
+        auto_count = int(form_value(form, "auto_count", "0") or "0")
+    except ValueError:
+        return []
+    item_by_token: dict[str, dict[str, str]] = {}
+    for index in range(photo_count):
+        token = form_value(form, f"photo_token_{index}").strip()
+        if not token:
+            token = str(index)
+        filename = form_value(form, f"photo_filename_{token}").strip()
+        encoded_data = form_value(form, f"photo_data_{token}").strip()
+        if filename and encoded_data:
+            item_by_token[token] = {"filename": filename, "data": encoded_data}
+
+    assignments_by_player_id: dict[str, dict[str, str]] = {}
+    for index in range(auto_count):
+        token = form_value(form, f"auto_token_{index}").strip()
+        player_id = form_value(form, f"auto_player_id_{index}").strip()
+        item = item_by_token.get(token)
+        if item and player_id in player_by_id:
+            assignments_by_player_id[player_id] = {"player_id": player_id, **item}
+
+    for key, values in form.items():
+        if key.startswith("manual_player_photo_"):
+            player_id = key.removeprefix("manual_player_photo_").strip()
+            token = str(values[0] if values else "").strip()
+            item = item_by_token.get(token)
+            if item and player_id in player_by_id:
+                assignments_by_player_id[player_id] = {"player_id": player_id, **item}
+        elif key.startswith("manual_photo_player_"):
+            token = key.removeprefix("manual_photo_player_").strip()
+            player_id = str(values[0] if values else "").strip()
+            item = item_by_token.get(token)
+            if item and player_id in player_by_id:
+                assignments_by_player_id[player_id] = {"player_id": player_id, **item}
+    return list(assignments_by_player_id.values())
+
+
+def build_player_photo_manual_select_page(
+    ctx: RequestContext,
+    competition_name: str,
+    season_name: str,
+    items: list[dict[str, object]],
+    auto_assignments: list[dict[str, object]],
+    conflicts: list[dict[str, object]],
+    unmatched_count: int,
+    ignored_message: str,
+    player_by_id: dict[str, dict[str, object]],
+    team_lookup: dict[str, dict[str, object]],
+) -> str:
+    item_inputs = [f'<input type="hidden" name="photo_count" value="{len(items)}">']
+    for item in items:
+        token = escape(str(item["token"]))
+        item_inputs.append(
+            f'<input type="hidden" name="photo_token_{token}" value="{token}">'
+            f'<input type="hidden" name="photo_filename_{token}" value="{escape(str(item["filename"]))}">'
+            f'<input type="hidden" name="photo_data_{token}" value="{escape(str(item["data"]))}">'
+        )
+    auto_inputs = [f'<input type="hidden" name="auto_count" value="{len(auto_assignments)}">']
+    for index, item in enumerate(auto_assignments):
+        auto_inputs.append(
+            f'<input type="hidden" name="auto_token_{index}" value="{escape(str(item["token"]))}">'
+            f'<input type="hidden" name="auto_player_id_{index}" value="{escape(str(item["player_id"]))}">'
+        )
+
+    sections: list[str] = []
+    for index, conflict in enumerate(conflicts):
+        if conflict.get("kind") == "multiple_photos":
+            player_id = str(conflict.get("player_id") or "")
+            player = player_by_id.get(player_id, {})
+            team = team_lookup.get(str(player.get("team_id") or "").strip(), {})
+            player_label = (
+                f"{player.get('display_name') or player_id}"
+                f" · {team.get('name') or team.get('team_name') or '未分队'} · {player_id}"
+            )
+            radio_cards = []
+            for item in conflict.get("items", []):
+                token = str(item["token"])
+                radio_cards.append(
+                    f"""
+                    <label class="border rounded p-3 d-flex flex-column gap-2">
+                      <input class="form-check-input" type="radio" name="manual_player_photo_{escape(player_id)}" value="{escape(token)}" required>
+                      <img src="{escape(str(item['data_url']))}" alt="{escape(str(item['filename']))}" style="width:96px;height:96px;object-fit:cover;border-radius:8px;">
+                      <span class="small">{escape(str(item['filename']))}</span>
+                    </label>
+                    """
+                )
+            sections.append(
+                f"""
+                <div class="border rounded p-3 mb-3">
+                  <h3 class="h6 mb-3">{escape(player_label)} 匹配到多张图片，请选择一张</h3>
+                  <div class="d-flex flex-wrap gap-3">{''.join(radio_cards)}</div>
+                </div>
+                """
+            )
+        else:
+            item = conflict
+            token = str(item["token"])
+            option_html = ['<option value="">跳过这张图片</option>']
+            for player in item.get("candidates", []):
+                player_id = str(player.get("player_id") or "")
+                team = team_lookup.get(str(player.get("team_id") or "").strip(), {})
+                label = f"{player.get('display_name') or player_id} · {team.get('name') or team.get('team_name') or '未分队'} · {player_id}"
+                option_html.append(f'<option value="{escape(player_id)}">{escape(label)}</option>')
+            sections.append(
+                f"""
+                <div class="border rounded p-3 mb-3">
+                  <h3 class="h6 mb-3">`{escape(str(item['filename']))}` 匹配到多个同名队员，请选择目标队员</h3>
+                  <div class="d-flex flex-column flex-md-row gap-3 align-items-md-center">
+                    <img src="{escape(str(item['data_url']))}" alt="{escape(str(item['filename']))}" style="width:96px;height:96px;object-fit:cover;border-radius:8px;">
+                    <select class="form-select" name="manual_photo_player_{escape(token)}">
+                      {''.join(option_html)}
+                    </select>
+                  </div>
+                </div>
+                """
+            )
+
+    body = f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <h1 class="section-title mb-2">手动确认队员头像</h1>
+      <p class="section-copy mb-4">系统已自动识别 {len(auto_assignments)} 张图片，另有 {len(conflicts)} 处需要你确认；未匹配跳过 {unmatched_count} 个。{escape(ignored_message)}</p>
+      <form method="post" action="/matches/new">
+        <input type="hidden" name="action" value="confirm_player_photo_zip">
+        <input type="hidden" name="competition_name" value="{escape(competition_name)}">
+        <input type="hidden" name="season" value="{escape(season_name)}">
+        {''.join(item_inputs)}
+        {''.join(auto_inputs)}
+        {''.join(sections)}
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <button type="submit" class="btn btn-dark">确认并导入头像</button>
+          <a class="btn btn-outline-dark" href="{escape(build_match_management_path(ctx, competition_name, season_name))}">取消</a>
+        </div>
+      </form>
+    </section>
+    """
+    return layout("手动确认队员头像", body, ctx)
+
+
 def import_player_photos_from_zip(
     ctx: RequestContext,
     data: dict[str, object],
@@ -2319,74 +2616,39 @@ def import_player_photos_from_zip(
     if season_error:
         return None, season_error
 
-    match_record_player_ids = list_match_record_player_ids(data, competition_name, season_name)
-    if not match_record_player_ids:
+    player_by_id, players_by_name, _team_lookup = build_match_record_player_context(
+        data,
+        competition_name,
+        season_name,
+    )
+    if not player_by_id:
         return None, "当前赛事赛季还没有可匹配的比赛记录队员。"
-    player_by_id = {
-        str(player.get("player_id") or "").strip(): player
-        for player in data.get("players", [])
-        if str(player.get("player_id") or "").strip()
-    }
-
-    try:
-        with ZipFile(BytesIO(upload.data)) as archive:
-            entries = [
-                info
-                for info in archive.infolist()
-                if not info.is_dir() and not info.filename.startswith("__MACOSX/")
-            ]
-            if not entries:
-                return None, "zip 压缩包中没有找到可导入的头像图片。"
-
-            updated_count = 0
-            unmatched_count = 0
-            ignored_count = 0
-            duplicate_count = 0
-            seen_player_ids: set[str] = set()
-            for info in entries:
-                player_id = archive_photo_player_id(info.filename)
-                if not player_id:
-                    ignored_count += 1
-                    continue
-                player = player_by_id.get(player_id)
-                if player_id not in match_record_player_ids or player is None:
-                    unmatched_count += 1
-                    continue
-                if player_id in seen_player_ids:
-                    duplicate_count += 1
-                    continue
-                if info.file_size > MAX_UPLOAD_BYTES:
-                    return None, f"{PurePosixPath(info.filename).name} 超过 5 MB，未导入。"
-                try:
-                    image_bytes = archive.read(info)
-                except Exception as exc:
-                    return None, f"读取 {PurePosixPath(info.filename).name} 失败：{exc}"
-                if not image_bytes:
-                    ignored_count += 1
-                    continue
-                try:
-                    player["photo"] = save_embedded_player_photo(
-                        player_id,
-                        PurePosixPath(info.filename).name,
-                        image_bytes,
-                    )
-                except ValueError as exc:
-                    return None, f"{PurePosixPath(info.filename).name} 图片保存失败：{exc}"
-                seen_player_ids.add(player_id)
-                updated_count += 1
-    except BadZipFile:
-        return None, "zip 压缩包无法解析，请确认文件没有损坏。"
-    except Exception as exc:
-        return None, f"解析 zip 压缩包失败：{exc}"
-
+    items, ignored_message = read_player_photo_zip_items(upload)
+    if items is None:
+        return None, ignored_message
+    auto_assignments, conflicts, unmatched_count = resolve_zip_photo_assignments(
+        items,
+        player_by_id,
+        players_by_name,
+    )
+    if conflicts:
+        return None, "manual-selection-required"
+    updated_count, save_error = apply_player_photo_assignments(data, [
+        {
+            "player_id": str(item["player_id"]),
+            "filename": str(item["filename"]),
+            "data": str(item["data"]),
+        }
+        for item in auto_assignments
+    ])
+    if save_error:
+        return None, save_error
     return (
         data["players"],
-        (
-            f"队员头像导入完成：更新 {updated_count} 位，"
-            f"未匹配跳过 {unmatched_count} 个，忽略 {ignored_count} 个非图片文件"
-            f"{'，重复跳过 ' + str(duplicate_count) + ' 个' if duplicate_count else ''}。"
-        ),
+        f"队员头像导入完成：更新 {updated_count} 位，未匹配跳过 {unmatched_count} 个。{ignored_message}",
     )
+
+
 
 
 def import_player_photos_from_excel(
@@ -3573,32 +3835,54 @@ def handle_match_create(ctx: RequestContext, start_response):
             season_name,
         )
         return redirect(start_response, append_alert_query(next_path, import_message))
-    if action == "import_player_photo_zip":
+    if action == "confirm_player_photo_zip":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()
-        upload = file_value(ctx.files, "player_photo_zip_file")
-        upload_error = validate_zip_upload(upload)
-        if upload_error:
+        if not can_manage_matches(ctx.current_user, data, competition_name):
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=upload_error),
+                get_match_create_page(ctx, alert=f"你没有权限导入 {competition_name} 下的队员头像。"),
             )
-        next_players, import_message = import_player_photos_from_zip(
-            ctx,
+        competition_error = validate_match_competition_selection(data, competition_name)
+        if competition_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=competition_error),
+            )
+        season_error = validate_match_season_selection(
             data,
-            upload,
+            competition_name,
+            season_name,
+            include_non_ongoing=True,
+        )
+        if season_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=season_error),
+            )
+        player_by_id, _players_by_name, _team_lookup = build_match_record_player_context(
+            data,
             competition_name,
             season_name,
         )
-        if next_players is None:
+        assignments = parse_manual_player_photo_assignments(ctx.form, player_by_id)
+        if not assignments:
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=import_message),
+                get_match_create_page(ctx, alert="请至少选择一张要导入的队员头像。"),
+            )
+        updated_count, save_error = apply_player_photo_assignments(data, assignments)
+        if save_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=save_error),
             )
         users = load_users()
-        data["players"] = next_players
         errors = save_repository_state(data, users)
         if errors:
             return start_response_html(
@@ -3610,6 +3894,114 @@ def handle_match_create(ctx: RequestContext, start_response):
             ctx,
             competition_name,
             season_name,
+        )
+        return redirect(start_response, append_alert_query(next_path, f"队员头像导入完成：更新 {updated_count} 位。"))
+    if action == "import_player_photo_zip":
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season").strip()
+        upload = file_value(ctx.files, "player_photo_zip_file")
+        upload_error = validate_zip_upload(upload)
+        if upload_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=upload_error),
+            )
+        if not can_manage_matches(ctx.current_user, data, competition_name):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=f"你没有权限导入 {competition_name} 下的队员头像。"),
+            )
+        competition_error = validate_match_competition_selection(data, competition_name)
+        if competition_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=competition_error),
+            )
+        season_error = validate_match_season_selection(
+            data,
+            competition_name,
+            season_name,
+            include_non_ongoing=True,
+        )
+        if season_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=season_error),
+            )
+        player_by_id, players_by_name, team_lookup = build_match_record_player_context(
+            data,
+            competition_name,
+            season_name,
+        )
+        if not player_by_id:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert="当前赛事赛季还没有可匹配的比赛记录队员。"),
+            )
+        items, ignored_message = read_player_photo_zip_items(upload)
+        if items is None:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=ignored_message),
+            )
+        auto_assignments, conflicts, unmatched_count = resolve_zip_photo_assignments(
+            items,
+            player_by_id,
+            players_by_name,
+        )
+        if conflicts:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                build_player_photo_manual_select_page(
+                    ctx,
+                    competition_name,
+                    season_name,
+                    items,
+                    auto_assignments,
+                    conflicts,
+                    unmatched_count,
+                    ignored_message,
+                    player_by_id,
+                    team_lookup,
+                ),
+            )
+        updated_count, save_error = apply_player_photo_assignments(data, [
+            {
+                "player_id": str(item["player_id"]),
+                "filename": str(item["filename"]),
+                "data": str(item["data"]),
+            }
+            for item in auto_assignments
+        ])
+        if save_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=save_error),
+            )
+        users = load_users()
+        errors = save_repository_state(data, users)
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert="队员头像导入保存失败：" + "；".join(errors[:3])),
+            )
+        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
+            ctx,
+            competition_name,
+            season_name,
+        )
+        import_message = (
+            f"队员头像导入完成：更新 {updated_count} 位，"
+            f"未匹配跳过 {unmatched_count} 个。{ignored_message}"
         )
         return redirect(start_response, append_alert_query(next_path, import_message))
 

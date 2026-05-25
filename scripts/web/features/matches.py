@@ -926,13 +926,6 @@ def build_player_photo_import_panel(
         current["season"],
         include_non_ongoing=True,
     )
-    export_params = urlencode(
-        {
-            "action": "export_season_player_photo_roster",
-            "competition_name": current["competition_name"],
-            "season": current["season"],
-        }
-    )
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
@@ -940,12 +933,8 @@ def build_player_photo_import_panel(
           <h2 class="section-title mb-2">压缩包批量导入赛季队员头像</h2>
           <p class="section-copy mb-0">上传包含头像图片的 zip 压缩包。系统会按文件名里的参赛 ID 自动匹配当前赛事赛季中已有比赛记录的队员，未匹配到的文件会跳过。</p>
         </div>
-        <div class="d-flex flex-wrap gap-2">
-          <a class="btn btn-outline-dark" href="/matches/new?{escape(export_params)}">导出本赛季队员名单</a>
-        </div>
       </div>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="import_player_photo_zip">
         <div class="row g-3">
           <div class="col-12 col-xl-4">
             <label class="form-label">地区赛事页</label>
@@ -962,7 +951,8 @@ def build_player_photo_import_panel(
         </div>
         <div class="small text-secondary mt-3">压缩包内图片文件名一般为 `id.png`，例如 `player-001.png`。支持 PNG、JPG、JPEG、WEBP、GIF、SVG；同名目录不影响匹配，系统只取文件名去掉扩展名后的 ID。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
-          <button type="submit" class="btn btn-dark">上传并导入队员头像</button>
+          <button type="submit" class="btn btn-dark" name="action" value="import_player_photo_zip">上传并导入队员头像</button>
+          <button type="submit" class="btn btn-outline-dark" name="action" value="export_season_player_photo_roster" formaction="/matches/new" formmethod="get" formnovalidate>导出本赛季队员名单</button>
         </div>
       </form>
     </section>
@@ -3612,7 +3602,10 @@ def handle_match_create(ctx: RequestContext, start_response):
         action = form_value(ctx.query, "action").strip()
         if action == "export_season_player_photo_roster":
             data = load_validated_data()
-            competition_name = form_value(ctx.query, "competition_name").strip()
+            competition_name = (
+                form_value(ctx.query, "competition_name").strip()
+                or form_value(ctx.query, "competition").strip()
+            )
             season_name = form_value(ctx.query, "season").strip()
             if not can_manage_matches(ctx.current_user, data, competition_name):
                 return start_response_html(

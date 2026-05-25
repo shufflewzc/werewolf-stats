@@ -1,7 +1,10 @@
 from __future__ import annotations
+
+import csv
 from datetime import datetime, timedelta
 from html import escape
 from io import BytesIO
+from io import StringIO
 import json
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -923,12 +926,22 @@ def build_player_photo_import_panel(
         current["season"],
         include_non_ongoing=True,
     )
+    export_params = urlencode(
+        {
+            "action": "export_season_player_photo_roster",
+            "competition_name": current["competition_name"],
+            "season": current["season"],
+        }
+    )
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
           <h2 class="section-title mb-2">压缩包批量导入赛季队员头像</h2>
           <p class="section-copy mb-0">上传包含头像图片的 zip 压缩包。系统会按文件名里的参赛 ID 自动匹配当前赛事赛季中已有比赛记录的队员，未匹配到的文件会跳过。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/matches/new?{escape(export_params)}">导出本赛季队员名单</a>
         </div>
       </div>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
@@ -2288,6 +2301,74 @@ def list_match_record_player_ids(
     return player_ids
 
 
+def build_match_record_player_counts(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for match in data.get("matches", []):
+        if (
+            str(match.get("competition_name") or "").strip() != competition_name.strip()
+            or str(match.get("season") or "").strip() != season_name.strip()
+        ):
+            continue
+        for participant in match.get("players", []):
+            if not isinstance(participant, dict):
+                continue
+            player_id = str(participant.get("player_id") or "").strip()
+            if player_id:
+                counts[player_id] = counts.get(player_id, 0) + 1
+    return counts
+
+
+def build_season_player_photo_roster_csv(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+) -> bytes:
+    appearance_counts = build_match_record_player_counts(data, competition_name, season_name)
+    team_lookup = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+    }
+    output = StringIO()
+    writer = csv.DictWriter(
+        output,
+        fieldnames=[
+            "player_id",
+            "display_name",
+            "team_id",
+            "team_name",
+            "appearances",
+            "suggested_photo_filename",
+        ],
+    )
+    writer.writeheader()
+    for player in sorted(
+        data.get("players", []),
+        key=lambda item: (
+            str(item.get("display_name") or ""),
+            str(item.get("player_id") or ""),
+        ),
+    ):
+        player_id = str(player.get("player_id") or "").strip()
+        if player_id not in appearance_counts:
+            continue
+        team = team_lookup.get(str(player.get("team_id") or "").strip(), {})
+        writer.writerow(
+            {
+                "player_id": player_id,
+                "display_name": str(player.get("display_name") or "").strip(),
+                "team_id": str(player.get("team_id") or "").strip(),
+                "team_name": str(team.get("name") or "").strip(),
+                "appearances": appearance_counts[player_id],
+                "suggested_photo_filename": f"{player_id}.png",
+            }
+        )
+    return ("\ufeff" + output.getvalue()).encode("utf-8")
+
+
 def archive_photo_player_id(filename: str) -> str:
     name = PurePosixPath(filename).name.strip()
     if not name or name.startswith("."):
@@ -3528,6 +3609,48 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
 
 def handle_match_create(ctx: RequestContext, start_response):
     if ctx.method == "GET":
+        action = form_value(ctx.query, "action").strip()
+        if action == "export_season_player_photo_roster":
+            data = load_validated_data()
+            competition_name = form_value(ctx.query, "competition_name").strip()
+            season_name = form_value(ctx.query, "season").strip()
+            if not can_manage_matches(ctx.current_user, data, competition_name):
+                return start_response_html(
+                    start_response,
+                    "403 Forbidden",
+                    layout("没有权限", f'<div class="alert alert-danger">你没有权限导出 {escape(competition_name)} 下的队员名单。</div>', ctx),
+                )
+            competition_error = validate_match_competition_selection(data, competition_name)
+            if competition_error:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_create_page(ctx, alert=competition_error),
+                )
+            season_error = validate_match_season_selection(
+                data,
+                competition_name,
+                season_name,
+                include_non_ongoing=True,
+            )
+            if season_error:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_create_page(ctx, alert=season_error),
+                )
+            payload = build_season_player_photo_roster_csv(data, competition_name, season_name)
+            safe_name = re.sub(r"[^A-Za-z0-9_.-]+", "-", f"{competition_name}-{season_name}-players").strip("-")
+            filename = f"{safe_name or 'season-players'}.csv"
+            start_response(
+                "200 OK",
+                [
+                    ("Content-Type", "text/csv; charset=utf-8"),
+                    ("Content-Length", str(len(payload))),
+                    ("Content-Disposition", f'attachment; filename="{filename}"'),
+                ],
+            )
+            return [payload]
         return start_response_html(start_response, "200 OK", get_match_create_page(ctx))
 
     data = load_validated_data()

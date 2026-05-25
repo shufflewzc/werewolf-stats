@@ -1,6 +1,4 @@
 from __future__ import annotations
-
-import base64
 from datetime import datetime, timedelta
 from html import escape
 from io import BytesIO
@@ -68,6 +66,7 @@ TEAM_UPLOAD_DIR = legacy.TEAM_UPLOAD_DIR
 ROOT_DIR = legacy.ROOT
 ALLOWED_IMAGE_EXTENSIONS = legacy.ALLOWED_IMAGE_EXTENSIONS
 MAX_UPLOAD_BYTES = legacy.MAX_UPLOAD_BYTES
+PLAYER_PHOTO_PENDING_DIR = legacy.PLAYER_UPLOAD_DIR.parent / "import-pending"
 start_response_html = legacy.start_response_html
 uses_structured_score_model = legacy.uses_structured_score_model
 validate_match_awards = legacy.validate_match_awards
@@ -2299,17 +2298,32 @@ def archive_photo_player_id(filename: str) -> str:
     return PurePosixPath(name).stem.strip()
 
 
-def photo_data_url(filename: str, image_bytes: bytes) -> str:
+def save_pending_player_photo_import(filename: str, image_bytes: bytes, batch_id: str) -> str:
     extension = PurePosixPath(filename).suffix.lower()
-    mime_type = {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-        ".svg": "image/svg+xml",
-    }.get(extension, "application/octet-stream")
-    return f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode('ascii')}"
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        raise ValueError(f"不支持的图片格式：{filename}")
+    PLAYER_PHOTO_PENDING_DIR.mkdir(parents=True, exist_ok=True)
+    batch_dir = PLAYER_PHOTO_PENDING_DIR / batch_id
+    batch_dir.mkdir(parents=True, exist_ok=True)
+    target = batch_dir / f"{secrets.token_hex(8)}{extension}"
+    target.write_bytes(image_bytes)
+    return str(target.relative_to(ROOT_DIR)).replace("\\", "/")
+
+
+def resolve_pending_player_photo_path(relative_path: str) -> Path | None:
+    text = str(relative_path or "").strip().lstrip("/")
+    if not text:
+        return None
+    candidate = (ROOT_DIR / text).resolve()
+    try:
+        candidate.relative_to(PLAYER_PHOTO_PENDING_DIR.resolve())
+    except ValueError:
+        return None
+    return candidate if candidate.is_file() else None
+
+
+def pending_photo_asset_url(relative_path: str) -> str:
+    return "/" + str(relative_path or "").strip().lstrip("/")
 
 
 def build_match_record_player_context(
@@ -2336,6 +2350,7 @@ def build_match_record_player_context(
 
 
 def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, object]] | None, str]:
+    batch_id = secrets.token_hex(8)
     try:
         with ZipFile(BytesIO(upload.data)) as archive:
             entries = [
@@ -2363,13 +2378,14 @@ def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, ob
                     ignored_count += 1
                     continue
                 filename = PurePosixPath(info.filename).name
+                pending_path = save_pending_player_photo_import(filename, image_bytes, batch_id)
                 items.append(
                     {
                         "token": str(len(items)),
                         "filename": filename,
                         "stem": player_id,
-                        "data": base64.b64encode(image_bytes).decode("ascii"),
-                        "data_url": photo_data_url(filename, image_bytes),
+                        "pending_path": pending_path,
+                        "data_url": pending_photo_asset_url(pending_path),
                     }
                 )
     except BadZipFile:
@@ -2438,14 +2454,16 @@ def apply_player_photo_assignments(
     for assignment in assignments:
         player_id = str(assignment.get("player_id") or "").strip()
         filename = str(assignment.get("filename") or "").strip()
-        encoded_data = str(assignment.get("data") or "").strip()
+        pending_path = str(assignment.get("pending_path") or "").strip()
         player = player_by_id.get(player_id)
-        if not player or not filename or not encoded_data:
+        source_path = resolve_pending_player_photo_path(pending_path)
+        if not player or not filename or source_path is None:
             continue
         try:
-            image_bytes = base64.b64decode(encoded_data)
+            image_bytes = source_path.read_bytes()
             player["photo"] = save_embedded_player_photo(player_id, filename, image_bytes)
-        except (ValueError, Exception) as exc:
+            source_path.unlink(missing_ok=True)
+        except Exception as exc:
             return updated_count, f"{filename} 图片保存失败：{exc}"
         updated_count += 1
     return updated_count, ""
@@ -2466,9 +2484,9 @@ def parse_manual_player_photo_assignments(
         if not token:
             token = str(index)
         filename = form_value(form, f"photo_filename_{token}").strip()
-        encoded_data = form_value(form, f"photo_data_{token}").strip()
-        if filename and encoded_data:
-            item_by_token[token] = {"filename": filename, "data": encoded_data}
+        pending_path = form_value(form, f"photo_pending_path_{token}").strip()
+        if filename and pending_path:
+            item_by_token[token] = {"filename": filename, "pending_path": pending_path}
 
     assignments_by_player_id: dict[str, dict[str, str]] = {}
     for index in range(auto_count):
@@ -2512,7 +2530,7 @@ def build_player_photo_manual_select_page(
         item_inputs.append(
             f'<input type="hidden" name="photo_token_{token}" value="{token}">'
             f'<input type="hidden" name="photo_filename_{token}" value="{escape(str(item["filename"]))}">'
-            f'<input type="hidden" name="photo_data_{token}" value="{escape(str(item["data"]))}">'
+            f'<input type="hidden" name="photo_pending_path_{token}" value="{escape(str(item["pending_path"]))}">'
         )
     auto_inputs = [f'<input type="hidden" name="auto_count" value="{len(auto_assignments)}">']
     for index, item in enumerate(auto_assignments):
@@ -2637,7 +2655,7 @@ def import_player_photos_from_zip(
         {
             "player_id": str(item["player_id"]),
             "filename": str(item["filename"]),
-            "data": str(item["data"]),
+            "pending_path": str(item["pending_path"]),
         }
         for item in auto_assignments
     ])
@@ -3976,7 +3994,7 @@ def handle_match_create(ctx: RequestContext, start_response):
             {
                 "player_id": str(item["player_id"]),
                 "filename": str(item["filename"]),
-                "data": str(item["data"]),
+                "pending_path": str(item["pending_path"]),
             }
             for item in auto_assignments
         ])

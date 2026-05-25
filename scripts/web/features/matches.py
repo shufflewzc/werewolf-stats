@@ -10,7 +10,7 @@ import re
 import secrets
 from urllib.parse import quote, urlencode
 from xml.etree import ElementTree as ET
-from zipfile import ZipFile
+from zipfile import BadZipFile, ZipFile
 
 import web_app as legacy
 from sqlite_store import (
@@ -66,6 +66,7 @@ ensure_team_asset_dirs = legacy.ensure_team_asset_dirs
 TEAM_UPLOAD_DIR = legacy.TEAM_UPLOAD_DIR
 ROOT_DIR = legacy.ROOT
 ALLOWED_IMAGE_EXTENSIONS = legacy.ALLOWED_IMAGE_EXTENSIONS
+MAX_UPLOAD_BYTES = legacy.MAX_UPLOAD_BYTES
 start_response_html = legacy.start_response_html
 uses_structured_score_model = legacy.uses_structured_score_model
 validate_match_awards = legacy.validate_match_awards
@@ -926,15 +927,12 @@ def build_player_photo_import_panel(
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
-          <h2 class="section-title mb-2">Excel 批量导入赛季队员头像</h2>
-          <p class="section-copy mb-0">只识别 `选手姓名`、`选手头像` 两列。会按你当前选择的赛事和赛季批量更新队员头像，必须精确匹配到已有的赛季队员档案。</p>
-        </div>
-        <div class="d-flex flex-wrap gap-2">
-          <a class="btn btn-outline-dark" href="/assets/templates/player-photo-upload-template.xlsx">下载队员头像模板</a>
+          <h2 class="section-title mb-2">压缩包批量导入赛季队员头像</h2>
+          <p class="section-copy mb-0">上传包含头像图片的 zip 压缩包。系统会按文件名里的参赛 ID 自动匹配当前赛事赛季中已有比赛记录的队员，未匹配到的文件会跳过。</p>
         </div>
       </div>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="import_player_photo_excel">
+        <input type="hidden" name="action" value="import_player_photo_zip">
         <div class="row g-3">
           <div class="col-12 col-xl-4">
             <label class="form-label">地区赛事页</label>
@@ -945,11 +943,11 @@ def build_player_photo_import_panel(
             {season_field_html}
           </div>
           <div class="col-12 col-xl-5">
-            <label class="form-label">选择 Excel 文件</label>
-            <input class="form-control" type="file" name="player_photo_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+            <label class="form-label">选择 zip 压缩包</label>
+            <input class="form-control" type="file" name="player_photo_zip_file" accept=".zip,application/zip,application/x-zip-compressed">
           </div>
         </div>
-        <div class="small text-secondary mt-3">`选手头像` 列优先识别你直接插入到 Excel 单元格里的图片；如果这一格没有嵌图，也支持填写站内资源路径，例如 `assets/players/xx.png`，或 `https://...` 外链地址。系统只会更新已存在的赛季队员档案；如果同一赛季里有重名队员，会直接报错，避免误覆盖。</div>
+        <div class="small text-secondary mt-3">压缩包内图片文件名一般为 `id.png`，例如 `player-001.png`。支持 PNG、JPG、JPEG、WEBP、GIF、SVG；同名目录不影响匹配，系统只取文件名去掉扩展名后的 ID。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入队员头像</button>
         </div>
@@ -1454,6 +1452,16 @@ def validate_excel_upload(upload: UploadedFile | None) -> str:
         return "目前只支持上传 .xlsx 格式的比赛模板。"
     if not upload.data:
         return "上传的 Excel 文件为空，请重新选择。"
+    return ""
+
+
+def validate_zip_upload(upload: UploadedFile | None) -> str:
+    if upload is None or not upload.filename:
+        return "请先选择要上传的 zip 压缩包。"
+    if Path(upload.filename).suffix.lower() != ".zip":
+        return "目前只支持上传 .zip 格式的头像压缩包。"
+    if not upload.data:
+        return "上传的 zip 压缩包为空，请重新选择。"
     return ""
 
 
@@ -2257,6 +2265,128 @@ def find_players_by_name_in_scope(
             continue
         matched_players.append(player)
     return matched_players
+
+
+def list_match_record_player_ids(
+    data: dict[str, object],
+    competition_name: str,
+    season_name: str,
+) -> set[str]:
+    player_ids: set[str] = set()
+    for match in data.get("matches", []):
+        if (
+            str(match.get("competition_name") or "").strip() != competition_name.strip()
+            or str(match.get("season") or "").strip() != season_name.strip()
+        ):
+            continue
+        for participant in match.get("players", []):
+            if not isinstance(participant, dict):
+                continue
+            player_id = str(participant.get("player_id") or "").strip()
+            if player_id:
+                player_ids.add(player_id)
+    return player_ids
+
+
+def archive_photo_player_id(filename: str) -> str:
+    name = PurePosixPath(filename).name.strip()
+    if not name or name.startswith("."):
+        return ""
+    extension = PurePosixPath(name).suffix.lower()
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        return ""
+    return PurePosixPath(name).stem.strip()
+
+
+def import_player_photos_from_zip(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[list[dict[str, object]] | None, str]:
+    if not can_manage_matches(ctx.current_user, data, competition_name):
+        return None, f"你没有权限导入 {competition_name} 下的队员头像。"
+    competition_error = validate_match_competition_selection(data, competition_name)
+    if competition_error:
+        return None, competition_error
+    season_error = validate_match_season_selection(
+        data,
+        competition_name,
+        season_name,
+        include_non_ongoing=True,
+    )
+    if season_error:
+        return None, season_error
+
+    match_record_player_ids = list_match_record_player_ids(data, competition_name, season_name)
+    if not match_record_player_ids:
+        return None, "当前赛事赛季还没有可匹配的比赛记录队员。"
+    player_by_id = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip()
+    }
+
+    try:
+        with ZipFile(BytesIO(upload.data)) as archive:
+            entries = [
+                info
+                for info in archive.infolist()
+                if not info.is_dir() and not info.filename.startswith("__MACOSX/")
+            ]
+            if not entries:
+                return None, "zip 压缩包中没有找到可导入的头像图片。"
+
+            updated_count = 0
+            unmatched_count = 0
+            ignored_count = 0
+            duplicate_count = 0
+            seen_player_ids: set[str] = set()
+            for info in entries:
+                player_id = archive_photo_player_id(info.filename)
+                if not player_id:
+                    ignored_count += 1
+                    continue
+                player = player_by_id.get(player_id)
+                if player_id not in match_record_player_ids or player is None:
+                    unmatched_count += 1
+                    continue
+                if player_id in seen_player_ids:
+                    duplicate_count += 1
+                    continue
+                if info.file_size > MAX_UPLOAD_BYTES:
+                    return None, f"{PurePosixPath(info.filename).name} 超过 5 MB，未导入。"
+                try:
+                    image_bytes = archive.read(info)
+                except Exception as exc:
+                    return None, f"读取 {PurePosixPath(info.filename).name} 失败：{exc}"
+                if not image_bytes:
+                    ignored_count += 1
+                    continue
+                try:
+                    player["photo"] = save_embedded_player_photo(
+                        player_id,
+                        PurePosixPath(info.filename).name,
+                        image_bytes,
+                    )
+                except ValueError as exc:
+                    return None, f"{PurePosixPath(info.filename).name} 图片保存失败：{exc}"
+                seen_player_ids.add(player_id)
+                updated_count += 1
+    except BadZipFile:
+        return None, "zip 压缩包无法解析，请确认文件没有损坏。"
+    except Exception as exc:
+        return None, f"解析 zip 压缩包失败：{exc}"
+
+    return (
+        data["players"],
+        (
+            f"队员头像导入完成：更新 {updated_count} 位，"
+            f"未匹配跳过 {unmatched_count} 个，忽略 {ignored_count} 个非图片文件"
+            f"{'，重复跳过 ' + str(duplicate_count) + ' 个' if duplicate_count else ''}。"
+        ),
+    )
 
 
 def import_player_photos_from_excel(
@@ -3443,18 +3573,18 @@ def handle_match_create(ctx: RequestContext, start_response):
             season_name,
         )
         return redirect(start_response, append_alert_query(next_path, import_message))
-    if action == "import_player_photo_excel":
+    if action == "import_player_photo_zip":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()
-        upload = file_value(ctx.files, "player_photo_excel_file")
-        upload_error = validate_excel_upload(upload)
+        upload = file_value(ctx.files, "player_photo_zip_file")
+        upload_error = validate_zip_upload(upload)
         if upload_error:
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error),
             )
-        next_players, import_message = import_player_photos_from_excel(
+        next_players, import_message = import_player_photos_from_zip(
             ctx,
             data,
             upload,

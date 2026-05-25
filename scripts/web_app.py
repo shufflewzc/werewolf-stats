@@ -3574,6 +3574,22 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: grid;
         gap: 0.72rem;
       }}
+      .player-match-card.is-win,
+      .team-match-card.is-win {{
+        border-color: rgba(34, 197, 94, 0.34);
+        background: linear-gradient(180deg, rgba(240, 253, 244, 0.88), rgba(255, 255, 255, 0.96));
+        box-shadow: 0 16px 34px rgba(22, 101, 52, 0.08);
+      }}
+      .player-match-card.is-loss,
+      .team-match-card.is-loss {{
+        border-color: rgba(239, 68, 68, 0.32);
+        background: linear-gradient(180deg, rgba(254, 242, 242, 0.9), rgba(255, 255, 255, 0.96));
+        box-shadow: 0 16px 34px rgba(153, 27, 27, 0.08);
+      }}
+      .team-match-card.is-draw {{
+        border-color: rgba(234, 179, 8, 0.3);
+        background: linear-gradient(180deg, rgba(254, 252, 232, 0.86), rgba(255, 255, 255, 0.96));
+      }}
       .player-match-result {{
         display: inline-flex;
         align-items: center;
@@ -3593,6 +3609,31 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       .player-match-result.is-loss {{
         background: rgba(239, 68, 68, 0.1);
         color: #b91c1c;
+      }}
+      .team-match-result {{
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 3.4rem;
+        padding: 0.26rem 0.58rem;
+        border-radius: 999px;
+        background: rgba(234, 179, 8, 0.12);
+        color: #a16207;
+        font-size: 0.74rem;
+        font-weight: 800;
+      }}
+      .team-match-result.is-win {{
+        background: rgba(34, 197, 94, 0.14);
+        color: #15803d;
+      }}
+      .team-match-result.is-loss {{
+        background: rgba(239, 68, 68, 0.12);
+        color: #b91c1c;
+      }}
+      .team-match-result-stack {{
+        display: grid;
+        justify-items: end;
+        gap: 0.44rem;
       }}
       .player-match-actions {{
         display: flex;
@@ -10319,6 +10360,13 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                 else ("失利" if item["team_score"] < item["opponent_score"] else "战平")
             )
         )
+        team_result_class = ""
+        if team_result_value == "win" or team_result_label == "胜利":
+            team_result_class = " is-win"
+        elif team_result_value == "loss" or team_result_label == "失利":
+            team_result_class = " is-loss"
+        elif team_result_label == "战平":
+            team_result_class = " is-draw"
         team_award_labels = [
             label
             for label, award_player_id in [
@@ -10353,13 +10401,16 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         ) or '<span class="player-stat-pill">暂无队员得分</span>'
         recent_match_cards.append(
             f"""
-            <article class="team-match-card">
+            <article class="team-match-card{team_result_class}">
               <div class="team-match-top">
                 <div>
                   <div class="team-match-name">第 {item["round"]} 轮 · {escape(item["played_on"])}</div>
                   <div class="team-match-meta">{escape(selected_season or item["season"])} · {escape(team_result_label)}</div>
                 </div>
-                <div class="team-match-value">{item["team_score"]:.2f}</div>
+                <div class="team-match-result-stack">
+                  <span class="team-match-result{team_result_class}">{escape(team_result_label)}</span>
+                  <div class="team-match-value">{item["team_score"]:.2f}</div>
+                </div>
               </div>
               <div class="team-scoreboard">
                 <strong>{item["team_score"]:.2f}</strong>
@@ -10369,7 +10420,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                 {team_player_score_pills}
               </div>
               <div class="team-insight-tags">
-                <span class="player-stat-pill">{escape(team_result_label)}</span>
+                <span class="team-match-result{team_result_class}">{escape(team_result_label)}</span>
                 {team_award_pills}
               </div>
               <div class="team-match-actions">
@@ -11492,7 +11543,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
         ) or '<span class="player-stat-pill">无特殊奖励</span>'
         recent_match_cards.append(
             f"""
-            <article class="player-match-card">
+            <article class="player-match-card{result_class}">
               <div class="player-match-top">
                 <div>
                   <div class="player-match-name">{escape(item["competition_name"])}</div>

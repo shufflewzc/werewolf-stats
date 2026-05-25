@@ -229,7 +229,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         ) or '<span class="player-stat-pill">无特殊奖励</span>'
         recent_match_cards.append(
             f"""
-            <article class="player-match-card">
+            <article class="player-match-card{result_class}">
               <div class="player-match-top">
                 <div>
                   <div class="player-match-name">{escape(item["competition_name"])}</div>

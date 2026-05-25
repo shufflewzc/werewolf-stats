@@ -535,6 +535,13 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
                 else ("失利" if item["team_score"] < item["opponent_score"] else "战平")
             )
         )
+        team_result_class = ""
+        if team_result_value == "win" or team_result_label == "胜利":
+            team_result_class = " is-win"
+        elif team_result_value == "loss" or team_result_label == "失利":
+            team_result_class = " is-loss"
+        elif team_result_label == "战平":
+            team_result_class = " is-draw"
         team_award_labels = [
             label
             for label, award_player_id in [
@@ -569,13 +576,16 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
         ) or '<span class="player-stat-pill">暂无队员得分</span>'
         recent_match_cards.append(
             f"""
-            <article class="team-match-card">
+            <article class="team-match-card{team_result_class}">
               <div class="team-match-top">
                 <div>
                   <div class="team-match-name">第 {item["round"]} 轮 · {escape(item["played_on"])}</div>
                   <div class="team-match-meta">{escape(selected_season or item["season"])} · {escape(team_result_label)}</div>
                 </div>
-                <div class="team-match-value">{item["team_score"]:.2f}</div>
+                <div class="team-match-result-stack">
+                  <span class="team-match-result{team_result_class}">{escape(team_result_label)}</span>
+                  <div class="team-match-value">{item["team_score"]:.2f}</div>
+                </div>
               </div>
               <div class="team-scoreboard">
                 <strong>{item["team_score"]:.2f}</strong>
@@ -585,7 +595,7 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
                 {team_player_score_pills}
               </div>
               <div class="team-insight-tags">
-                <span class="player-stat-pill">{escape(team_result_label)}</span>
+                <span class="team-match-result{team_result_class}">{escape(team_result_label)}</span>
                 {team_award_pills}
               </div>
               <div class="team-match-actions">

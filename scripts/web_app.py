@@ -6068,6 +6068,20 @@ def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _serialize_dashboard_finalist_row(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "rank_label": str(row.get("rank_label") or ""),
+        "team_id": str(row.get("team_id") or ""),
+        "team_name": str(row.get("team_name") or "未知战队"),
+        "logo": str(row.get("logo") or DEFAULT_TEAM_LOGO),
+        "source_label": str(row.get("source_label") or "决赛名单"),
+        "final_points_total": f'{float(row.get("final_points_total") or 0.0):.2f}',
+        "final_points_per_match": f'{float(row.get("final_points_per_match") or 0.0):.2f}',
+        "final_matches_represented": int(row.get("final_matches_represented") or 0),
+        "href": str(row.get("href") or "/teams"),
+    }
+
+
 def _build_dashboard_activity_feed(
     data: dict[str, Any],
     selected_competition: str | None,
@@ -6413,6 +6427,30 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
 
     top_team = _serialize_dashboard_team_row(displayed_team_rows[0]) if displayed_team_rows else None
     top_player = _serialize_dashboard_player_row(displayed_player_rows[0]) if displayed_player_rows else None
+    scoped_played_matches = [
+        match
+        for match in stats_data["matches"]
+        if is_match_counted_as_played(match)
+        and (
+            match_in_scope(match, selected_competition, selected_season)
+            if selected_competition
+            else (
+                get_match_competition_name(match) in scoped_competition_names
+                and (
+                    not selected_season
+                    or (match.get("season") or "").strip() == selected_season
+                )
+            )
+        )
+    ]
+    promotion_context = build_dashboard_promotion_context(
+        data,
+        scoped_played_matches,
+        selected_competition,
+        selected_season,
+        selected_region,
+        selected_series_slug,
+    )
 
     competition_source_rows = filtered_rows or region_rows or competition_catalog
     region_options = [
@@ -6675,6 +6713,10 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
             },
         ],
         "series_cards": series_cards,
+        "finalists": [
+            _serialize_dashboard_finalist_row(row)
+            for row in promotion_context["final_rows"]
+        ],
         "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
         "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
         "match_days": match_days,
@@ -6951,6 +6993,42 @@ def build_dashboard_promotion_context(
             row.get("name") or "",
         )
     )
+    final_stage_matches = [
+        match
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip() == "finals"
+    ]
+    final_stage_data = {
+        "teams": data["teams"],
+        "players": data["players"],
+        "matches": final_stage_matches,
+    }
+    final_score_rows = [
+        row
+        for row in build_team_rows(final_stage_data, selected_competition, selected_season)
+        if int(row.get("matches_represented") or 0) > 0
+    ]
+    final_score_rows.sort(
+        key=lambda row: (
+            row.get("points_rank", 9999),
+            -float(row.get("points_earned_total") or 0.0),
+            row.get("name") or "",
+        )
+    )
+    final_score_by_team_id = {
+        str(row.get("team_id") or ""): row
+        for row in final_score_rows
+        if str(row.get("team_id") or "")
+    }
+
+    def attach_final_score(row: dict[str, Any]) -> dict[str, Any]:
+        score_row = final_score_by_team_id.get(str(row.get("team_id") or ""))
+        row["final_points_total"] = float((score_row or {}).get("points_earned_total") or 0.0)
+        row["final_points_per_match"] = float((score_row or {}).get("points_per_match") or 0.0)
+        row["final_matches_represented"] = int((score_row or {}).get("matches_represented") or 0)
+        row["final_rank"] = int((score_row or {}).get("points_rank") or 0)
+        return row
+
     final_rows: list[dict[str, Any]] = []
     seen_final_team_ids: set[str] = set()
     for group_label, row in direct_rows:
@@ -6963,7 +7041,7 @@ def build_dashboard_promotion_context(
             selected_region,
             selected_series_slug,
         )
-        final_rows.append(normalized)
+        final_rows.append(attach_final_score(normalized))
         if normalized["team_id"]:
             seen_final_team_ids.add(normalized["team_id"])
     for row in playoff_stage_rows[:9]:
@@ -6979,9 +7057,33 @@ def build_dashboard_promotion_context(
             selected_region,
             selected_series_slug,
         )
-        final_rows.append(normalized)
+        final_rows.append(attach_final_score(normalized))
         if team_id:
             seen_final_team_ids.add(team_id)
+    for row in final_score_rows:
+        team_id = str(row.get("team_id") or "")
+        if team_id and team_id in seen_final_team_ids:
+            continue
+        normalized = normalize_dashboard_promotion_row(
+            "总决赛",
+            row,
+            f"决赛-{int(row.get('points_rank') or len(final_rows) + 1)}",
+            selected_competition,
+            selected_season,
+            selected_region,
+            selected_series_slug,
+        )
+        final_rows.append(attach_final_score(normalized))
+        if team_id:
+            seen_final_team_ids.add(team_id)
+    if final_score_rows:
+        final_rows.sort(
+            key=lambda row: (
+                int(row.get("final_rank") or 9999),
+                -float(row.get("final_points_total") or 0.0),
+                row.get("team_name") or "",
+            )
+        )
     playoff_promotion_rows = [
         normalize_dashboard_promotion_row(
             "常规赛晋级",
@@ -7005,6 +7107,7 @@ def build_dashboard_promotion_context(
         "regular_s_rows": regular_s_rows,
         "regular_f_rows": regular_f_rows,
         "playoff_stage_rows": playoff_stage_rows,
+        "final_stage_rows": final_score_rows,
     }
 
 
@@ -7468,16 +7571,18 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         for row in displayed_player_rows
     )
     board_stage_group_attrs = ' data-dashboard-board-filter="stage-group"' + (" hidden" if selected_board == "player" else "")
+    group_board_empty_html = f'<tr><td colspan="{group_empty_colspan}" class="text-secondary">当前赛段分组还没有积分数据。</td></tr>'
+    player_total_empty_html = '<tr><td colspan="8" class="text-secondary">当前口径下没有个人积分数据。</td></tr>'
     group_board_table_html = (
         '<div class="table-responsive"><table class="table align-middle mb-0">'
         f"<thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均</th><th>胜率</th>{progress_header_html}</tr></thead>"
-        f"<tbody>{group_board_table_rows or f'<tr><td colspan=\"{group_empty_colspan}\" class=\"text-secondary\">当前赛段分组还没有积分数据。</td></tr>'}</tbody>"
+        f"<tbody>{group_board_table_rows or group_board_empty_html}</tbody>"
         "</table></div>"
     )
     player_total_table_html = (
         '<div class="table-responsive"><table class="table align-middle mb-0">'
         "<thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>总积分</th><th>场均</th><th>胜率</th></tr></thead>"
-        f"<tbody>{player_total_table_rows or '<tr><td colspan=\"8\" class=\"text-secondary\">当前口径下没有个人积分数据。</td></tr>'}</tbody>"
+        f"<tbody>{player_total_table_rows or player_total_empty_html}</tbody>"
         "</table></div>"
     )
     dashboard_board_table_html = group_board_table_html if selected_board == "group" else player_total_table_html
@@ -7511,9 +7616,9 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               </span>
               <div>
                 <div class="dashboard-ranking-name">{escape(row['team_name'])}</div>
-                <div class="dashboard-ranking-meta">{escape(row['source_label'])} · 总积分 {row['points_total']:.2f} · 场均 {row['points_per_match']:.2f} · 对局 {row['matches_represented']} 场</div>
+                <div class="dashboard-ranking-meta">{escape(row['source_label'])} · 决赛分数 {row.get('final_points_total', 0.0):.2f} · 决赛场均 {row.get('final_points_per_match', 0.0):.2f} · 决赛对局 {row.get('final_matches_represented', 0)} 场</div>
               </div>
-              <div class="dashboard-ranking-score">{row['points_total']:.2f}<small>积分</small></div>
+              <div class="dashboard-ranking-score">{row.get('final_points_total', 0.0):.2f}<small>决赛分</small></div>
             </a>
             """
             for row in rows
@@ -7523,23 +7628,12 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     <section class="panel dashboard-section-panel shadow-sm">
       <div class="dashboard-section-head">
         <div>
-          <h2 class="section-title mb-2">晋级名单</h2>
-          <p class="dashboard-section-copy mb-0">决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成；季后赛区按常规赛 S组第3-9名、F组第2-6名计算。</p>
+          <h2 class="section-title mb-2">决赛名单</h2>
+          <p class="dashboard-section-copy mb-0">按总决赛赛段成绩展示决赛分数；未录入总决赛对局的队伍会暂时显示 0.00 分。</p>
         </div>
       </div>
-      <div class="row g-3">
-        <div class="col-12 col-xl-5">
-          <div class="dashboard-panel-kicker mb-3">决赛区</div>
-          <div class="dashboard-ranking-list">
-            {render_promotion_rows(final_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的决赛队伍。</div>'}
-          </div>
-        </div>
-        <div class="col-12 col-xl-7">
-          <div class="dashboard-panel-kicker mb-3">季后赛区</div>
-          <div class="dashboard-ranking-list">
-            {render_promotion_rows(playoff_promotion_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的季后赛队伍。</div>'}
-          </div>
-        </div>
+      <div class="dashboard-ranking-list">
+        {render_promotion_rows(final_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的决赛队伍。</div>'}
       </div>
     </section>
     """
@@ -7644,11 +7738,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
                   <span>对局规模</span>
                   <strong>{active_match_count} 场</strong>
                   <small>{escape(scope_label)}</small>
-                </div>
-                <div class="dashboard-spotlight-metric">
-                  <span>头名战队</span>
-                  <strong>{escape(top_team['name']) if top_team else '等待录入'}</strong>
-                  <small>{f"{top_team['points_earned_total']:.2f} 分" if top_team else '暂无战绩'}</small>
                 </div>
                 <div class="dashboard-spotlight-metric">
                   <span>头名选手</span>

@@ -107,6 +107,7 @@
       knockout: "淘汰赛",
       semifinal: "半决赛",
       final: "决赛",
+      finals: "总决赛",
     };
     const scheduleItems = Array.isArray(payload.schedule_matches) ? payload.schedule_matches : [];
     const rows = (scheduleItems.length ? scheduleItems : [0, 1, 2]).slice(0, 3).map((item, index) => {
@@ -232,6 +233,47 @@
           })
           .join("")}
       </div>
+    `;
+  }
+
+  function renderFinalists(items) {
+    if (!Array.isArray(items) || items.length === 0) {
+      return `
+        <section class="dashboard-panel dashboard-section dashboard-ranking-panel">
+          <div class="dashboard-section-head">
+            <div><div class="dashboard-section-kicker">Finalists</div><h2 class="dashboard-section-title">决赛名单</h2></div>
+            <a class="dashboard-section-action" href="/competitions">更多</a>
+          </div>
+          <div class="dashboard-select-note">当前还没有可计算的决赛队伍。</div>
+        </section>
+      `;
+    }
+    return `
+      <section class="dashboard-panel dashboard-section dashboard-ranking-panel">
+        <div class="dashboard-section-head">
+          <div><div class="dashboard-section-kicker">Finalists</div><h2 class="dashboard-section-title">决赛名单</h2></div>
+          <a class="dashboard-section-action" href="/competitions">更多</a>
+        </div>
+        <div class="dashboard-ranking-list dashboard-finalist-list">
+          ${items
+            .map(
+              (item) => `
+                <a class="dashboard-ranking-item" href="${escapeHtml(item.href)}">
+                  <span class="dashboard-ranking-rank">${escapeHtml(item.rank_label || "-")}</span>
+                  <div class="dashboard-ranking-main">
+                    <img class="dashboard-ranking-avatar" src="${escapeHtml(item.logo)}" alt="${escapeHtml(item.team_name)}">
+                    <div class="dashboard-ranking-copy">
+                      <div class="dashboard-ranking-name">${escapeHtml(item.team_name)}</div>
+                      <div class="dashboard-ranking-meta">${escapeHtml(item.source_label)} · 决赛对局 ${escapeHtml(item.final_matches_represented)} 场 · 场均 ${escapeHtml(item.final_points_per_match)}</div>
+                    </div>
+                  </div>
+                  <div class="dashboard-ranking-value">${escapeHtml(item.final_points_total)}<small>决赛分</small></div>
+                </a>
+              `
+            )
+            .join("")}
+        </div>
+      </section>
     `;
   }
 
@@ -363,6 +405,8 @@
         </section>
 
         ${renderMetrics(payload.metrics)}
+
+        ${renderFinalists(payload.finalists)}
 
         <section class="dashboard-board-grid">
           <section class="dashboard-panel dashboard-section dashboard-ranking-panel">

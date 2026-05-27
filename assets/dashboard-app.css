@@ -597,6 +597,13 @@ select {
   font-weight: 700;
 }
 
+.dashboard-finalist-list .dashboard-ranking-rank {
+  width: auto;
+  min-width: 54px;
+  padding: 0 10px;
+  border-radius: 999px;
+}
+
 .dashboard-days-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

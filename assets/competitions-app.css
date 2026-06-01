@@ -2666,6 +2666,17 @@ body.player-detail-app-shell .player-detail-radar-grid {
 body.player-detail-app-shell .player-detail-dimension-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
+body.player-detail-app-shell .player-detail-dimension-notice {
+  background: rgba(255, 202, 97, 0.16);
+  border: 1px solid rgba(255, 214, 128, 0.52);
+  border-radius: 16px;
+  color: #ffe7a3;
+  font-size: 0.95rem;
+  font-weight: 900;
+  line-height: 1.45;
+  margin-bottom: 18px;
+  padding: 12px 14px;
+}
 body.player-detail-app-shell .player-detail-radar-grid {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }

@@ -1136,13 +1136,15 @@ def _serialize_player_dimension_payload(
     competition_name: str | None,
     season_name: str | None,
 ) -> dict[str, Any]:
+    notice = "总决赛维度按照当日第一天上场的队员计算"
     if not competition_name:
-        return {"available": False, "reason": "请先选择赛事。"}
+        return {"available": False, "reason": "请先选择赛事。", "notice": notice}
     all_rows = get_player_dimension_history(data, player_id, competition_name, None)
     if not all_rows:
         return {
             "available": False,
             "reason": "当前还没有导入对应选手的赛季维度补充数据。",
+            "notice": notice,
         }
     available_seasons = []
     for row in all_rows:
@@ -1161,7 +1163,7 @@ def _serialize_player_dimension_payload(
         if str(row.get("season_name") or "").strip() == selected_dimension_season
     ]
     if not selected_dimension_season or not history:
-        return {"available": False, "reason": "当前赛季暂无维度数据。"}
+        return {"available": False, "reason": "当前赛季暂无维度数据。", "notice": notice}
     season_summaries = {
         item: summarize_dimension_rows(
             [row for row in all_rows if str(row.get("season_name") or "").strip() == item]
@@ -1219,6 +1221,7 @@ def _serialize_player_dimension_payload(
     ]
     return {
         "available": True,
+        "notice": notice,
         "selected_season": selected_dimension_season,
         "available_seasons": available_seasons,
         "current_team_name": current_team_name,

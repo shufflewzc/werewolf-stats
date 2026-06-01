@@ -9577,14 +9577,23 @@ def build_player_dimension_panel(
     competition_name: str | None,
     season_name: str | None,
 ) -> str:
+    dimension_notice = "总决赛维度按照当日第一天上场的队员计算"
     if not competition_name:
         return ""
     all_rows = get_player_dimension_history(data, player_id, competition_name, None)
     if not all_rows:
-        return build_empty_dimension_panel(
-            "赛季维度补充数据",
-            "这部分来自比赛日报 Excel 的赛季维度补充数据。导入后，这里会显示分赛季汇总和六边形画像。",
-        )
+        return f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">赛季维度补充数据</h2>
+              <p class="section-copy mb-0">这部分来自比赛日报 Excel 的赛季维度补充数据。导入后，这里会显示分赛季汇总和六边形画像。</p>
+            </div>
+          </div>
+          <div class="alert alert-warning fw-semibold mb-3">{escape(dimension_notice)}</div>
+          <div class="alert alert-secondary mb-0">当前还没有导入对应赛季的维度数据。</div>
+        </section>
+        """
     available_seasons = build_dimension_season_options(all_rows)
     requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
     selected_dimension_season = (
@@ -9692,6 +9701,7 @@ def build_player_dimension_panel(
         </div>
         <span class="chip">{escape(selected_dimension_season)}</span>
       </div>
+      <div class="alert alert-warning fw-semibold mb-3">{escape(dimension_notice)}</div>
       {season_switcher_html}
       <div class="row g-3 mb-4">
         <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">当前战队</div><div class="stat-value mt-2">{escape(current_team_name)}</div></div></div>

@@ -1,0 +1,3 @@
+.player-row {
+  align-items: center;
+}

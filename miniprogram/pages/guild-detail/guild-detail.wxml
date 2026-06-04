@@ -1,0 +1,89 @@
+<view class="page">
+  <view class="hero">
+    <text class="eyebrow">{{guild.short_name || "Guild"}}</text>
+    <text class="title">{{guild.name || "门派详情"}}</text>
+    <text class="copy">{{guild.notes || "查看门派赛季战队、比赛覆盖和荣誉归档。"}}</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="section">
+    <view class="empty-card">
+      <text class="empty-title">正在加载</text>
+      <text class="empty-copy">正在读取门派详情。</text>
+    </view>
+  </view>
+
+  <view wx:elif="{{error}}" class="section">
+    <view class="error-card">
+      <text>{{error}}</text>
+    </view>
+  </view>
+
+  <block wx:else>
+    <view class="section">
+      <view class="metrics">
+        <view class="metric-card" wx:for="{{metrics}}" wx:key="label">
+          <text class="metric-label">{{item.label}}</text>
+          <text class="metric-value">{{item.value}}</text>
+          <text class="metric-copy">{{item.copy}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <text class="section-title">进行中赛季战队</text>
+        <text class="section-note">{{ongoingTeams.length}} 支</text>
+      </view>
+      <view class="stack" wx:if="{{ongoingTeams.length}}">
+        <view class="list-card" wx:for="{{ongoingTeams}}" wx:key="team_id">
+          <view class="list-main">
+            <text class="list-title">{{item.team_name}}</text>
+            <text class="list-meta">{{item.competition_name}} · {{item.season_name}} · {{item.player_count}} 人</text>
+          </view>
+          <view class="list-score">
+            <text class="score-value">{{item.points_total}}</text>
+            <text class="score-label">积分</text>
+          </view>
+        </view>
+      </view>
+      <view class="empty-card" wx:else>
+        <text class="empty-title">暂无进行中战队</text>
+      </view>
+    </view>
+
+    <view class="section" wx:if="{{honors.length}}">
+      <view class="section-head">
+        <text class="section-title">历届荣誉</text>
+        <text class="section-note">{{honors.length}} 条</text>
+      </view>
+      <view class="stack">
+        <view class="honor-card" wx:for="{{honors}}" wx:key="title">
+          <text class="honor-title">{{item.title}}</text>
+          <text class="honor-meta">{{item.team_name}} · {{item.scope}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section" wx:if="{{historySections.length}}">
+      <view class="section-head">
+        <text class="section-title">历史赛季</text>
+      </view>
+      <view class="history-section" wx:for="{{historySections}}" wx:key="competition_name">
+        <view class="history-head">
+          <text class="history-title">{{item.competition_name}}</text>
+          <text class="history-note">{{item.team_count}} 支 · {{item.points_total}} 分</text>
+        </view>
+        <view class="history-row" wx:for="{{item.rows}}" wx:for-item="team" wx:key="team_id">
+          <view class="list-main">
+            <text class="list-title">{{team.team_name}}</text>
+            <text class="list-meta">{{team.season_name}} · {{team.status_label}} · {{team.matches}} 场</text>
+          </view>
+          <view class="list-score">
+            <text class="score-value">{{team.points_total}}</text>
+            <text class="score-label">积分</text>
+          </view>
+        </view>
+      </view>
+    </view>
+  </block>
+</view>

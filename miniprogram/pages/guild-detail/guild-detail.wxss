@@ -1,0 +1,37 @@
+.honor-card,
+.history-section {
+  padding: 24rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.honor-title,
+.history-title {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.honor-meta,
+.history-note {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.history-head {
+  margin-bottom: 8rpx;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  min-height: 92rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid #e2e8f0;
+}

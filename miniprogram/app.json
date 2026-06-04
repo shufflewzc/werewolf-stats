@@ -1,0 +1,48 @@
+{
+  "pages": [
+    "pages/dashboard/dashboard",
+    "pages/competitions/competitions",
+    "pages/guilds/guilds",
+    "pages/players/players",
+    "pages/player-detail/player-detail",
+    "pages/guild-detail/guild-detail",
+    "pages/mine/mine"
+  ],
+  "window": {
+    "navigationBarTitleText": "狼人杀赛事",
+    "navigationBarBackgroundColor": "#111827",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#f4f7fb",
+    "backgroundTextStyle": "dark"
+  },
+  "tabBar": {
+    "color": "#64748b",
+    "selectedColor": "#111827",
+    "backgroundColor": "#ffffff",
+    "borderStyle": "black",
+    "list": [
+      {
+        "pagePath": "pages/dashboard/dashboard",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/competitions/competitions",
+        "text": "赛事"
+      },
+      {
+        "pagePath": "pages/guilds/guilds",
+        "text": "门派"
+      },
+      {
+        "pagePath": "pages/players/players",
+        "text": "选手"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "text": "我的"
+      }
+    ]
+  },
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents"
+}

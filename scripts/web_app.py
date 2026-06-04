@@ -24,6 +24,7 @@ from http import cookies
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode
+from urllib.request import urlopen
 
 from wsgiref.simple_server import make_server
 
@@ -6744,11 +6745,14 @@ def get_dashboard_stage_status(window: dict[str, Any], now: datetime | None = No
     current = now or china_now()
     start_at = parse_china_datetime(str(window.get("start_at") or ""))
     end_at = parse_china_datetime(str(window.get("end_at") or ""))
-    if start_at and current < start_at:
+    current_day = current.date()
+    start_day = start_at.date() if start_at else None
+    end_day = end_at.date() if end_at else None
+    if start_day and current_day < start_day:
         return "upcoming"
-    if end_at and current > end_at:
+    if end_day and current_day > end_day:
         return "ended"
-    if start_at or end_at:
+    if start_day or end_day:
         return "ongoing"
     return "draft"
 
@@ -6791,7 +6795,12 @@ def select_dashboard_stage_key(
                 "end_at": end_at,
             }
         )
-    active_window = next((window for window in windows if window["status"] == "ongoing"), None)
+    active_windows = [window for window in windows if window["status"] == "ongoing"]
+    active_window = min(
+        active_windows,
+        key=lambda item: (item["start_at"] or datetime.min, item["end_at"] or datetime.max),
+        default=None,
+    )
     if active_window:
         return str(active_window["stage"])
     upcoming = [window for window in windows if window["status"] == "upcoming" and window["start_at"]]
@@ -13603,6 +13612,163 @@ def handle_login(ctx: RequestContext, start_response):
     return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
 
 
+def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "username": user["username"],
+        "display_name": user.get("display_name") or user["username"],
+        "role": user.get("role") or "member",
+        "player_id": user.get("player_id") or "",
+        "linked_player_ids": user.get("linked_player_ids") or [],
+        "photo": user.get("photo") or DEFAULT_PLAYER_PHOTO,
+        "wechat_bound": bool(user.get("wechat_openid")),
+    }
+
+
+def request_wechat_session(code: str) -> dict[str, str]:
+    dev_openid = os.getenv("WECHAT_MINIPROGRAM_DEV_OPENID", "").strip()
+    if dev_openid:
+        return {
+            "openid": dev_openid,
+            "unionid": os.getenv("WECHAT_MINIPROGRAM_DEV_UNIONID", "").strip(),
+        }
+    appid = os.getenv("WECHAT_MINIPROGRAM_APPID", "").strip()
+    secret = os.getenv("WECHAT_MINIPROGRAM_SECRET", "").strip()
+    if not appid or not secret:
+        raise RuntimeError("未配置 WECHAT_MINIPROGRAM_APPID / WECHAT_MINIPROGRAM_SECRET。")
+    query = urlencode({"appid": appid, "secret": secret, "js_code": code, "grant_type": "authorization_code"})
+    with urlopen(f"https://api.weixin.qq.com/sns/jscode2session?{query}", timeout=10) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("errcode"):
+        raise RuntimeError(str(payload.get("errmsg") or "微信登录凭证校验失败。"))
+    openid = str(payload.get("openid") or "").strip()
+    if not openid:
+        raise RuntimeError("微信未返回 openid。")
+    return {"openid": openid, "unionid": str(payload.get("unionid") or "").strip()}
+
+
+def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str:
+    digest = hashlib.sha1(openid.encode("utf-8")).hexdigest()[:12]
+    base = f"wx_{digest}"
+    username = base
+    index = 2
+    while username in existing_usernames:
+        username = f"{base}_{index}"
+        index += 1
+    return username
+
+
+def handle_miniprogram_login(ctx: RequestContext, start_response):
+    if ctx.method != "POST":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram login only supports POST"},
+            headers=[("Allow", "POST")],
+        )
+    code = form_value(ctx.form, "code").strip()
+    nickname = form_value(ctx.form, "nickname").strip()
+    if not code and not os.getenv("WECHAT_MINIPROGRAM_DEV_OPENID", "").strip():
+        return start_response_json(start_response, "400 Bad Request", {"error": "缺少微信登录 code。"})
+    try:
+        wechat_session = request_wechat_session(code)
+    except Exception as exc:
+        return start_response_json(start_response, "502 Bad Gateway", {"error": str(exc)})
+
+    openid = wechat_session["openid"]
+    unionid = wechat_session.get("unionid") or ""
+    users = load_users()
+    user = next((item for item in users if item.get("wechat_openid") == openid), None)
+    created = False
+    if not user:
+        username = build_miniprogram_username(openid, {item["username"] for item in users})
+        password_salt, password_hash = hash_password(secrets.token_urlsafe(24))
+        user = {
+            "username": username,
+            "display_name": nickname or "微信用户",
+            "password_salt": password_salt,
+            "password_hash": password_hash,
+            "active": True,
+            "player_id": None,
+            "linked_player_ids": [],
+            "manager_scope_keys": [],
+            "permissions": [],
+            "role": "member",
+            "province_name": DEFAULT_PROVINCE_NAME,
+            "region_name": "广州市",
+            "gender": "prefer_not_to_say",
+            "bio": "",
+            "photo": DEFAULT_PLAYER_PHOTO,
+            "wechat_openid": openid,
+            "wechat_unionid": unionid,
+        }
+        users.append(user)
+        save_users(users)
+        created = True
+    elif unionid and not user.get("wechat_unionid"):
+        for item in users:
+            if item["username"] == user["username"]:
+                item["wechat_unionid"] = unionid
+                user = item
+                break
+        save_users(users)
+
+    token = secrets.token_urlsafe(24)
+    save_session(token, user["username"])
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "created": created,
+            "session_token": token,
+            "user": serialize_miniprogram_user(user),
+        },
+    )
+
+
+def handle_miniprogram_bind_account(ctx: RequestContext, start_response):
+    if ctx.method != "POST":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram bind only supports POST"},
+            headers=[("Allow", "POST")],
+        )
+    session_token = form_value(ctx.form, "session_token").strip()
+    current_username = load_session_username(session_token)
+    if not current_username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先微信登录。"})
+    target_username = form_value(ctx.form, "username").strip()
+    password = form_value(ctx.form, "password")
+    users = load_users()
+    current_user = next((item for item in users if item["username"] == current_username), None)
+    target_user = next((item for item in users if item["username"] == target_username), None)
+    if not current_user or not target_user or not target_user.get("active") or not verify_password(password, target_user):
+        return start_response_json(start_response, "403 Forbidden", {"error": "账号或密码不正确。"})
+    openid = str(current_user.get("wechat_openid") or "").strip()
+    unionid = str(current_user.get("wechat_unionid") or "").strip()
+    if not openid:
+        return start_response_json(start_response, "400 Bad Request", {"error": "当前微信身份还没有 openid。"})
+    for item in users:
+        if item["username"] != target_username and item.get("wechat_openid") == openid:
+            item["wechat_openid"] = ""
+            item["wechat_unionid"] = ""
+        if item["username"] == target_username:
+            item["wechat_openid"] = openid
+            item["wechat_unionid"] = unionid
+            target_user = item
+    save_users(users)
+    token = secrets.token_urlsafe(24)
+    save_session(token, target_username)
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "session_token": token,
+            "user": serialize_miniprogram_user(target_user),
+        },
+    )
+
+
 def handle_logout(start_response, environ: dict[str, Any]):
     jar = parse_cookies(environ)
     token = jar.get(SESSION_COOKIE)
@@ -13913,6 +14079,10 @@ def app(environ, start_response):
             return redirect(start_response, "/dashboard")
         if path.startswith("/assets/"):
             return serve_asset(start_response, path)
+        if path == "/api/miniprogram/login":
+            return handle_miniprogram_login(ctx, start_response)
+        if path == "/api/miniprogram/bind-account":
+            return handle_miniprogram_bind_account(ctx, start_response)
         if path == "/api/dashboard":
             return handle_dashboard_api(ctx, start_response)
         if path == "/api/competitions":

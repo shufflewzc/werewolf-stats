@@ -805,11 +805,14 @@ def get_stage_window_status(window: dict[str, Any], now: datetime | None = None)
     current = now or legacy.china_now()
     start_at = parse_china_datetime(str(window.get("start_at") or ""))
     end_at = parse_china_datetime(str(window.get("end_at") or ""))
-    if start_at and current < start_at:
+    current_day = current.date()
+    start_day = start_at.date() if start_at else None
+    end_day = end_at.date() if end_at else None
+    if start_day and current_day < start_day:
         return "upcoming"
-    if end_at and current > end_at:
+    if end_day and current_day > end_day:
         return "ended"
-    if start_at or end_at:
+    if start_day or end_day:
         return "ongoing"
     return "draft"
 
@@ -847,7 +850,12 @@ def select_progress_stage(
             }
         )
 
-    active_window = next((window for window in enriched_windows if window["status"] == "ongoing"), None)
+    active_windows = [window for window in enriched_windows if window["status"] == "ongoing"]
+    active_window = min(
+        active_windows,
+        key=lambda item: (item["start_at_value"] or datetime.min, item["end_at_value"] or datetime.max),
+        default=None,
+    )
     if active_window:
         selected_window = active_window
     else:
@@ -893,17 +901,17 @@ def build_playoff_progress_overview(
     season_entry: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     selected_stage = select_progress_stage(season_entry, match_rows)
-    playoff_matches = [
+    selected_stage_matches = [
         match
         for match in match_rows
-        if str(match.get("stage") or "").strip() == "playoffs"
+        if str(match.get("stage") or "").strip() == selected_stage["stage_key"]
     ]
-    latest_playoff_day = (
+    latest_stage_day = (
         get_scheduled_match_day_label(
-            playoff_matches,
+            selected_stage_matches,
             legacy.china_today_label(),
         )
-        if playoff_matches
+        if selected_stage_matches
         else ""
     )
     latest_match_day = get_scheduled_match_day_label(
@@ -914,8 +922,8 @@ def build_playoff_progress_overview(
         "stage_key": selected_stage["stage_key"],
         "stage_label": selected_stage["stage_label"],
         "status_label": stage_status_label(str(selected_stage["status"])),
-        "summary": "当前比赛进程按赛季管理中的赛段时间自动判断，时间口径为北京时间。",
-        "latest_played_on": latest_playoff_day or latest_match_day or "待更新",
+        "summary": "当前比赛进程按赛季管理中的赛段时间匹配今天日期，时间口径为北京时间。",
+        "latest_played_on": latest_stage_day or latest_match_day or "待更新",
         "period": (
             f"{format_datetime_local_label(selected_stage['start_at'])} - "
             f"{format_datetime_local_label(selected_stage['end_at'])}"

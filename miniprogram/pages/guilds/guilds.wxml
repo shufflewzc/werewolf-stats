@@ -1,0 +1,65 @@
+<view class="page">
+  <view class="hero">
+    <text class="eyebrow">Guilds</text>
+    <text class="title">{{hero.title || "全部门派"}}</text>
+    <text class="copy">{{hero.copy || "查看长期战队组织、赛季身份和荣誉归档。"}}</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="section">
+    <view class="empty-card">
+      <text class="empty-title">正在加载</text>
+      <text class="empty-copy">正在读取门派列表。</text>
+    </view>
+  </view>
+
+  <view wx:elif="{{error}}" class="section">
+    <view class="error-card">
+      <text>{{error}}</text>
+    </view>
+  </view>
+
+  <block wx:else>
+    <view class="section">
+      <view class="metrics">
+        <view class="metric-card" wx:for="{{metrics}}" wx:key="label">
+          <text class="metric-label">{{item.label}}</text>
+          <text class="metric-value">{{item.value}}</text>
+          <text class="metric-copy">{{item.copy}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <text class="section-title">门派列表</text>
+        <text class="section-note">{{guilds.length}} 个</text>
+      </view>
+      <view class="stack" wx:if="{{guilds.length}}">
+        <view class="guild-card" wx:for="{{guilds}}" wx:key="guild_id" data-guild-id="{{item.guild_id}}" bindtap="openGuildDetail">
+          <text class="guild-kicker">{{item.short_name || "门派"}}</text>
+          <text class="guild-title">{{item.name}}</text>
+          <text class="guild-copy">{{item.notes}}</text>
+          <view class="guild-stats">
+            <view>
+              <text class="guild-stat-value">{{item.ongoing_team_count}}</text>
+              <text class="guild-stat-label">进行中战队</text>
+            </view>
+            <view>
+              <text class="guild-stat-value">{{item.match_count}}</text>
+              <text class="guild-stat-label">覆盖比赛</text>
+            </view>
+            <view>
+              <text class="guild-stat-value">{{item.honor_count}}</text>
+              <text class="guild-stat-label">荣誉</text>
+            </view>
+          </view>
+          <text class="enter-label">查看详情</text>
+        </view>
+      </view>
+      <view class="empty-card" wx:else>
+        <text class="empty-title">暂无门派</text>
+        <text class="empty-copy">网站后台登记门派后，这里会显示公开入口。</text>
+      </view>
+    </view>
+  </block>
+</view>

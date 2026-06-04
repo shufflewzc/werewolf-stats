@@ -1,0 +1,3 @@
+.team-row {
+  align-items: center;
+}

@@ -1,0 +1,123 @@
+.detail-hero {
+  display: flex;
+  align-items: center;
+  gap: 24rpx;
+  padding: 32rpx;
+  border-radius: 16rpx;
+  color: #ffffff;
+  background: linear-gradient(135deg, #111827 0%, #1e3a5f 62%, #be7c25 100%);
+}
+
+.detail-avatar {
+  flex: 0 0 128rpx;
+  width: 128rpx;
+  height: 128rpx;
+  border: 4rpx solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: #e2e8f0;
+}
+
+.detail-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.detail-eyebrow,
+.detail-copy {
+  display: block;
+  font-size: 23rpx;
+  color: rgba(255, 255, 255, 0.74);
+}
+
+.detail-name {
+  display: block;
+  margin-top: 8rpx;
+  overflow: hidden;
+  font-size: 42rpx;
+  font-weight: 800;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-copy {
+  margin-top: 10rpx;
+}
+
+.insight-card,
+.dimension-card,
+.role-card {
+  padding: 24rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.role-card + .role-card {
+  margin-top: 14rpx;
+}
+
+.insight-row,
+.radar-head,
+.dimension-history {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+}
+
+.insight-row,
+.radar-head {
+  margin-top: 18rpx;
+  font-size: 24rpx;
+  color: #334155;
+}
+
+.insight-row:first-child,
+.radar-row:first-of-type .radar-head {
+  margin-top: 0;
+}
+
+.bar {
+  height: 14rpx;
+  margin-top: 12rpx;
+  overflow: hidden;
+  border-radius: 999rpx;
+  background: #e2e8f0;
+}
+
+.bar-fill {
+  height: 100%;
+  border-radius: 999rpx;
+  background: #111827;
+}
+
+.bar-fill.alt {
+  background: #0f766e;
+}
+
+.bar-fill.warm {
+  background: #b45309;
+}
+
+.dimension-title {
+  display: block;
+  margin-bottom: 18rpx;
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.dimension-card {
+  margin-top: 18rpx;
+}
+
+.dimension-history {
+  min-height: 92rpx;
+  padding: 18rpx 0;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.dimension-history:first-of-type {
+  border-top: 0;
+}

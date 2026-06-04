@@ -144,7 +144,9 @@ def create_schema(connection: sqlite3.Connection) -> None:
             region_name TEXT NOT NULL DEFAULT '',
             gender TEXT NOT NULL DEFAULT '',
             bio TEXT NOT NULL DEFAULT '',
-            photo TEXT NOT NULL DEFAULT 'assets/players/default-player.svg'
+            photo TEXT NOT NULL DEFAULT 'assets/players/default-player.svg',
+            wechat_openid TEXT NOT NULL DEFAULT '',
+            wechat_unionid TEXT NOT NULL DEFAULT ''
         );
 
         CREATE TABLE IF NOT EXISTS app_meta (
@@ -440,6 +442,17 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE users ADD COLUMN photo TEXT NOT NULL DEFAULT 'assets/players/default-player.svg'"
         )
+    if "wechat_openid" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN wechat_openid TEXT NOT NULL DEFAULT ''")
+    if "wechat_unionid" not in user_columns:
+        connection.execute("ALTER TABLE users ADD COLUMN wechat_unionid TEXT NOT NULL DEFAULT ''")
+    connection.execute(
+        """
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_openid
+        ON users(wechat_openid)
+        WHERE wechat_openid != ''
+        """
+    )
     guild_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(guilds)").fetchall()
     }
@@ -813,9 +826,9 @@ def replace_repository_data(
                 INSERT INTO users (
                     username, display_name, password_salt, password_hash, active, player_id,
                     linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
-                    province_name, region_name, gender, bio, photo
+                    province_name, region_name, gender, bio, photo, wechat_openid, wechat_unionid
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     user["username"],
@@ -833,6 +846,8 @@ def replace_repository_data(
                     user.get("gender") or "",
                     user.get("bio") or "",
                     user.get("photo") or DEFAULT_USER_PHOTO,
+                    user.get("wechat_openid") or "",
+                    user.get("wechat_unionid") or "",
                 ),
             )
 
@@ -1051,7 +1066,7 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
             """
             SELECT username, display_name, password_salt, password_hash, active, player_id,
                    linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
-                   province_name, region_name, gender, bio, photo
+                   province_name, region_name, gender, bio, photo, wechat_openid, wechat_unionid
             FROM users
             ORDER BY username
             """
@@ -1073,6 +1088,8 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
                 "gender": row["gender"] or "",
                 "bio": row["bio"] or "",
                 "photo": row["photo"] or DEFAULT_USER_PHOTO,
+                "wechat_openid": row["wechat_openid"] or "",
+                "wechat_unionid": row["wechat_unionid"] or "",
             }
             for row in rows
         ]

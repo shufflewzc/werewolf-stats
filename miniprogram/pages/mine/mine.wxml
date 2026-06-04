@@ -1,0 +1,43 @@
+<view class="page">
+  <view class="hero">
+    <text class="eyebrow">Account</text>
+    <text class="title">我的账号</text>
+    <text class="copy">使用微信登录后，会自动创建站内账号；已有网站账号也可以绑定到当前微信。</text>
+  </view>
+
+  <view class="section" wx:if="{{error}}">
+    <view class="error-card">
+      <text>{{error}}</text>
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{user}}">
+    <view class="account-card">
+      <text class="account-label">当前账号</text>
+      <text class="account-name">{{user.display_name}}</text>
+      <text class="account-meta">@{{user.username}} · {{user.role}}</text>
+      <text class="account-meta">绑定状态：{{user.wechat_bound ? "已绑定微信" : "未绑定微信"}}</text>
+      <button class="ghost-button single-button" bindtap="logout">退出本地登录</button>
+    </view>
+  </view>
+
+  <view class="section" wx:else>
+    <view class="empty-card">
+      <text class="empty-title">尚未登录</text>
+      <text class="empty-copy">点击后会使用微信身份登录；如果没有对应账号，系统会自动创建一个普通账号。</text>
+      <view class="button-row">
+        <button class="primary-button" loading="{{loading}}" bindtap="login">微信登录</button>
+      </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="form-card">
+      <text class="form-title">绑定已有网站账号</text>
+      <text class="form-copy">如果你已经有网站账号，先微信登录，再在这里输入网站账号密码完成绑定。</text>
+      <input class="input" value="{{username}}" placeholder="网站用户名" bindinput="updateUsername" />
+      <input class="input" value="{{password}}" password placeholder="网站密码" bindinput="updatePassword" />
+      <button class="primary-button single-button" loading="{{loading}}" bindtap="bindAccount">绑定账号</button>
+    </view>
+  </view>
+</view>

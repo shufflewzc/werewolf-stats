@@ -1,0 +1,63 @@
+const { request, assetUrl } = require("../../utils/api");
+const { take } = require("../../utils/format");
+const { getSelectedScope, scopeParams } = require("../../utils/scope");
+
+Page({
+  data: {
+    loading: true,
+    error: "",
+    selectedScope: null,
+    needsCompetition: false,
+    scope: {},
+    metrics: [],
+    teams: []
+  },
+
+  onShow() {
+    this.loadData();
+  },
+
+  onPullDownRefresh() {
+    this.loadData().finally(() => wx.stopPullDownRefresh());
+  },
+
+  async loadData() {
+    this.setData({ loading: true, error: "" });
+    try {
+      const selectedScope = getSelectedScope();
+      if (!selectedScope || !selectedScope.competition) {
+        this.setData({
+          loading: false,
+          selectedScope: null,
+          needsCompetition: true,
+          scope: {},
+          metrics: [],
+          teams: []
+        });
+        return;
+      }
+
+      const payload = await request("/api/teams", scopeParams(selectedScope));
+      this.setData({
+        loading: false,
+        selectedScope,
+        needsCompetition: false,
+        scope: payload.scope || {},
+        metrics: take(payload.metrics, 4),
+        teams: (payload.teams || []).map((team) => ({
+          ...team,
+          logoUrl: assetUrl(team.logo)
+        }))
+      });
+    } catch (error) {
+      this.setData({
+        loading: false,
+        error: error.message || "战队数据加载失败"
+      });
+    }
+  },
+
+  goCompetitions() {
+    wx.switchTab({ url: "/pages/dashboard/dashboard" });
+  }
+});

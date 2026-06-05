@@ -169,6 +169,8 @@ PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "player_manual_achievements:"
 TEAM_ACHIEVEMENT_RULES_KEY = "team_achievement_rules"
 TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "team_manual_achievements:"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
+WECHAT_MINIPROGRAM_APPID = os.getenv("WECHAT_MINIPROGRAM_APPID", "")
+WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
 SLUG_SANITIZE_PATTERN = re.compile(r"[^a-z0-9_-]+")
@@ -13631,8 +13633,8 @@ def request_wechat_session(code: str) -> dict[str, str]:
             "openid": dev_openid,
             "unionid": os.getenv("WECHAT_MINIPROGRAM_DEV_UNIONID", "").strip(),
         }
-    appid = os.getenv("WECHAT_MINIPROGRAM_APPID", "").strip()
-    secret = os.getenv("WECHAT_MINIPROGRAM_SECRET", "").strip()
+    appid = WECHAT_MINIPROGRAM_APPID.strip()
+    secret = WECHAT_MINIPROGRAM_SECRET.strip()
     if not appid or not secret:
         raise RuntimeError("未配置 WECHAT_MINIPROGRAM_APPID / WECHAT_MINIPROGRAM_SECRET。")
     query = urlencode({"appid": appid, "secret": secret, "js_code": code, "grant_type": "authorization_code"})

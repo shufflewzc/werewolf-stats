@@ -106,6 +106,8 @@ def build_group_team_rows(
     represented_players: dict[tuple[str, str], set[str]] = {}
 
     for match in played_matches:
+        if match.get("exclude_from_team_scores"):
+            continue
         group_label = str(match.get("group_label") or "").strip() or "未分组"
         team_ids_in_match = {
             entry["team_id"]
@@ -1681,9 +1683,6 @@ def _resolve_ai_analysis_selection(ctx: RequestContext, data: dict[str, Any]) ->
             selected_series_slug = featured_row["series_slug"]
             selected_entry = featured_row
 
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
-    selected_season = get_selected_season(ctx, season_names) or (season_names[0] if season_names else None)
-
     if selected_competition and not selected_entry:
         selected_entry = next(
             (
@@ -1696,6 +1695,20 @@ def _resolve_ai_analysis_selection(ctx: RequestContext, data: dict[str, Any]) ->
         if selected_entry:
             selected_region = selected_region or selected_entry["region_name"]
             selected_series_slug = selected_series_slug or selected_entry["series_slug"]
+
+    requested_season = form_value(ctx.query, "season").strip()
+    season_names = (
+        list_seasons(
+            data,
+            selected_competition,
+            selected_series_slug,
+            include_non_ongoing=True,
+            selected_season=requested_season or None,
+        )
+        if selected_competition
+        else []
+    )
+    selected_season = get_selected_season(ctx, season_names) or (season_names[0] if season_names else None)
 
     return {
         "scope": scope,
@@ -1754,6 +1767,10 @@ def get_ai_analysis_page(
         tone="light",
         region_name=selected_region,
         series_slug=selected_series_slug,
+    )
+    season_data_options = "".join(
+        f'<option value="{escape(season_name)}"{" selected" if selected_season == season_name else ""}>{escape(season_name)}</option>'
+        for season_name in season_names
     )
 
     match_rows = [
@@ -1840,6 +1857,39 @@ def get_ai_analysis_page(
     reset_link = (
         f'<a class="btn btn-outline-dark" href="{escape(question_action)}">重新开始</a>'
         if conversation_items
+        else ""
+    )
+    season_data_selector = (
+        f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+            <div>
+              <h2 class="section-title mb-2">数据范围</h2>
+              <p class="section-copy mb-0">选择赛季后会重新加载该赛季下已录入的比赛、战队、选手、赛段榜和 MVP 数据，AI 问答也会按这个赛季重新开始。</p>
+            </div>
+            <form method="get" action="/ai-analysis" class="d-flex flex-wrap align-items-end gap-2">
+              {f'<input type="hidden" name="region" value="{escape(selected_region)}">' if selected_region else ''}
+              {f'<input type="hidden" name="series" value="{escape(selected_series_slug)}">' if selected_series_slug else ''}
+              {f'<input type="hidden" name="competition" value="{escape(selected_competition)}">' if selected_competition else ''}
+              <div>
+                <label class="form-label">赛季</label>
+                <select class="form-select" name="season" onchange="this.form.submit()" style="min-width: 240px;">
+                  {season_data_options}
+                </select>
+              </div>
+              <noscript><button class="btn btn-dark" type="submit">加载赛季数据</button></noscript>
+            </form>
+          </div>
+          <div class="d-flex flex-wrap gap-2 mt-3">
+            <span class="chip">当前赛季 {escape(selected_season or '未选择')}</span>
+            <span class="chip">比赛 {len(match_rows)} 场</span>
+            <span class="chip">已录入 {len(played_match_rows)} 场</span>
+            <span class="chip">战队 {len(team_rows)} 支</span>
+            <span class="chip">队员 {len(player_rows)} 名</span>
+          </div>
+        </section>
+        """
+        if selected_competition and season_names
         else ""
     )
 
@@ -1935,6 +1985,7 @@ def get_ai_analysis_page(
       </div>
     </section>
     {empty_selection_alert}
+    {season_data_selector}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>

@@ -96,6 +96,10 @@ def normalize_stance_result(entry: dict[str, Any]) -> str:
     return "correct" if entry.get("stance_correct") else "incorrect"
 
 
+def is_team_score_excluded(match: dict[str, Any]) -> bool:
+    return bool(match.get("exclude_from_team_scores"))
+
+
 def china_timestamp() -> str:
     return datetime.now(CHINA_TZ).replace(microsecond=0).isoformat()
 
@@ -334,25 +338,27 @@ def build_team_rows(
         }
 
     for match in matches:
+        exclude_from_team_scores = is_team_score_excluded(match)
         teams_in_match = set()
         for entry in match["players"]:
             if entry["team_id"] not in aggregates:
                 continue
             row = aggregates[entry["team_id"]]
             stance_result = normalize_stance_result(entry)
-            row["player_appearances"] += 1
-            if not is_non_profile_player_id(entry.get("player_id")):
-                represented_players[entry["team_id"]].add(entry["player_id"])
-            row["wins"] += 1 if entry["result"] == "win" else 0
-            row["losses"] += 1 if entry["result"] == "loss" else 0
-            row["points_earned_total"] += float(entry["points_earned"])
-            if stance_result != "none":
-                row["stance_calls"] += 1
-                if stance_result == "correct":
-                    row["correct_stance_calls"] += 1
-                elif stance_result == "incorrect":
-                    row["incorrect_stance_calls"] += 1
-            teams_in_match.add(entry["team_id"])
+            if not exclude_from_team_scores:
+                row["player_appearances"] += 1
+                if not is_non_profile_player_id(entry.get("player_id")):
+                    represented_players[entry["team_id"]].add(entry["player_id"])
+                row["wins"] += 1 if entry["result"] == "win" else 0
+                row["losses"] += 1 if entry["result"] == "loss" else 0
+                row["points_earned_total"] += float(entry["points_earned"])
+                if stance_result != "none":
+                    row["stance_calls"] += 1
+                    if stance_result == "correct":
+                        row["correct_stance_calls"] += 1
+                    elif stance_result == "incorrect":
+                        row["incorrect_stance_calls"] += 1
+                teams_in_match.add(entry["team_id"])
 
         for team_id in teams_in_match:
             if team_id in aggregates:
@@ -440,6 +446,7 @@ def build_match_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "format": match["format"],
                 "duration_minutes": match["duration_minutes"],
                 "winning_camp_label": to_chinese_camp(match["winning_camp"]),
+                "exclude_from_team_scores": is_team_score_excluded(match),
                 "team_scores": [
                     {
                         "team_id": team_id,

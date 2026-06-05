@@ -271,6 +271,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             round INTEGER NOT NULL,
             game_no INTEGER NOT NULL,
             score_model TEXT NOT NULL DEFAULT 'standard',
+            exclude_from_team_scores INTEGER NOT NULL DEFAULT 0,
             played_on TEXT NOT NULL,
             group_label TEXT NOT NULL DEFAULT '',
             table_label TEXT NOT NULL,
@@ -514,6 +515,10 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
     if "score_model" not in match_columns:
         connection.execute(
             "ALTER TABLE matches ADD COLUMN score_model TEXT NOT NULL DEFAULT 'standard'"
+        )
+    if "exclude_from_team_scores" not in match_columns:
+        connection.execute(
+            "ALTER TABLE matches ADD COLUMN exclude_from_team_scores INTEGER NOT NULL DEFAULT 0"
         )
     match_player_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(match_players)").fetchall()
@@ -959,10 +964,10 @@ def replace_repository_data(
             connection.execute(
                 """
                 INSERT INTO matches (
-                    match_id, competition_name, season, stage, round, game_no, score_model, played_on, group_label, table_label, format,
+                    match_id, competition_name, season, stage, round, game_no, score_model, exclude_from_team_scores, played_on, group_label, table_label, format,
                     duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     match["match_id"],
@@ -972,6 +977,7 @@ def replace_repository_data(
                     match["round"],
                     match["game_no"],
                     normalize_match_score_model(match.get("score_model")),
+                    1 if match.get("exclude_from_team_scores") else 0,
                     match["played_on"],
                     match.get("group_label", ""),
                     match["table_label"],
@@ -1241,7 +1247,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
         require_initialized_database(connection)
         match_rows = connection.execute(
             """
-            SELECT match_id, competition_name, season, stage, round, game_no, score_model, played_on, group_label, table_label, format,
+            SELECT match_id, competition_name, season, stage, round, game_no, score_model, exclude_from_team_scores, played_on, group_label, table_label, format,
                    duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
             FROM matches
             ORDER BY played_on, round, game_no, match_id
@@ -1292,6 +1298,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
                 "round": row["round"],
                 "game_no": row["game_no"],
                 "score_model": normalize_match_score_model(row["score_model"]),
+                "exclude_from_team_scores": bool(row["exclude_from_team_scores"]),
                 "played_on": row["played_on"],
                 "group_label": row["group_label"] or "",
                 "table_label": row["table_label"],

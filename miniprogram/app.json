@@ -23,23 +23,33 @@
     "list": [
       {
         "pagePath": "pages/dashboard/dashboard",
-        "text": "首页"
+        "text": "首页",
+        "iconPath": "assets/tab/home-normal.png",
+        "selectedIconPath": "assets/tab/home-active.png"
       },
       {
         "pagePath": "pages/competitions/competitions",
-        "text": "赛事"
+        "text": "赛事",
+        "iconPath": "assets/tab/competitions-normal.png",
+        "selectedIconPath": "assets/tab/competitions-active.png"
       },
       {
         "pagePath": "pages/guilds/guilds",
-        "text": "门派"
+        "text": "门派",
+        "iconPath": "assets/tab/guilds-normal.png",
+        "selectedIconPath": "assets/tab/guilds-active.png"
       },
       {
         "pagePath": "pages/players/players",
-        "text": "选手"
+        "text": "选手",
+        "iconPath": "assets/tab/players-normal.png",
+        "selectedIconPath": "assets/tab/players-active.png"
       },
       {
         "pagePath": "pages/mine/mine",
-        "text": "我的"
+        "text": "我的",
+        "iconPath": "assets/tab/mine-normal.png",
+        "selectedIconPath": "assets/tab/mine-active.png"
       }
     ]
   },

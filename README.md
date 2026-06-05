@@ -225,6 +225,7 @@ python3 scripts/migrate_json_to_sqlite.py
 | `stage` | 比赛阶段，如 `regular_season` |
 | `round` | 轮次 |
 | `game_no` | 该轮第几局 |
+| `exclude_from_team_scores` | 是否抽局；为 `true` 时比赛保留、个人得分照常计算，但不计入战队总分 |
 | `played_on` | 日期 |
 | `table_label` | 台次或房间号 |
 | `format` | 板型，如 `classic-12` |

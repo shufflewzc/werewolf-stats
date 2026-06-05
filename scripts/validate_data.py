@@ -397,6 +397,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "round",
         "game_no",
         "score_model",
+        "exclude_from_team_scores",
         "played_on",
         "group_label",
         "table_label",
@@ -470,6 +471,9 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             errors.append(
                 f"{label}.score_model: expected one of {sorted(VALID_SCORE_MODELS)}"
             )
+
+        if not isinstance(match.get("exclude_from_team_scores"), bool):
+            errors.append(f"{label}.exclude_from_team_scores: expected boolean")
 
         errors.extend(validate_iso_date(match.get("played_on"), f"{label}.played_on"))
         errors.extend(validate_string(match.get("group_label"), f"{label}.group_label"))

@@ -11,6 +11,7 @@
     "stage",
     "round",
     "game_no",
+    "exclude_from_team_scores",
     "played_on",
     "table_label",
     "format",
@@ -52,6 +53,11 @@
     "game_no": {
       "type": "integer",
       "minimum": 1
+    },
+    "exclude_from_team_scores": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this match is excluded from team aggregate scores while player scores still count."
     },
     "played_on": {
       "type": "string",

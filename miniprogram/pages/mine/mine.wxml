@@ -17,6 +17,7 @@
       <text class="account-name">{{user.display_name}}</text>
       <text class="account-meta">@{{user.username}} · {{user.role}}</text>
       <text class="account-meta">绑定状态：{{user.wechat_bound ? "已绑定微信" : "未绑定微信"}}</text>
+      <text class="account-meta">选手 ID：{{user.player_id || "未填写"}}</text>
       <button class="ghost-button single-button" bindtap="logout">退出本地登录</button>
     </view>
   </view>
@@ -28,6 +29,24 @@
       <view class="button-row">
         <button class="primary-button" loading="{{loading}}" bindtap="login">微信登录</button>
       </view>
+    </view>
+  </view>
+
+  <view class="section">
+    <view class="form-card" wx:if="{{user}}">
+      <text class="form-title">完善资料</text>
+      <text class="form-copy">用于绑定选手身份、展示个人资料和后续认领流程。</text>
+      <input class="input" value="{{profile.display_name}}" data-field="display_name" placeholder="显示名称" bindinput="updateProfileField" />
+      <input class="input" value="{{profile.player_id}}" data-field="player_id" placeholder="选手 ID，例如 player-player-20" bindinput="updateProfileField" />
+      <view class="grid-inputs">
+        <input class="input" value="{{profile.province_name}}" data-field="province_name" placeholder="省份，例如 广东省" bindinput="updateProfileField" />
+        <input class="input" value="{{profile.region_name}}" data-field="region_name" placeholder="城市，例如 广州市" bindinput="updateProfileField" />
+      </view>
+      <picker mode="selector" range="{{['prefer_not_to_say', 'male', 'female', 'other']}}" bindchange="updateGender">
+        <view class="picker-field">性别：{{profile.gender}}</view>
+      </picker>
+      <textarea class="textarea" value="{{profile.bio}}" data-field="bio" placeholder="个人简介" bindinput="updateProfileField"></textarea>
+      <button class="primary-button single-button" loading="{{loading}}" bindtap="saveProfile">保存资料</button>
     </view>
   </view>
 

@@ -55,10 +55,25 @@ async function bindExistingAccount(username, password) {
   return payload;
 }
 
+async function saveProfile(profile) {
+  const payload = await post("/api/miniprogram/profile", {
+    session_token: getSessionToken(),
+    display_name: profile.display_name,
+    province_name: profile.province_name,
+    region_name: profile.region_name,
+    gender: profile.gender,
+    bio: profile.bio,
+    player_id: profile.player_id
+  });
+  wx.setStorageSync(USER_KEY, payload.user || null);
+  return payload;
+}
+
 module.exports = {
   bindExistingAccount,
   clearAuth,
   getCurrentUser,
   getSessionToken,
-  loginWithWechat
+  loginWithWechat,
+  saveProfile
 };

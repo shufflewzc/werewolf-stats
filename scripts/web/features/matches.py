@@ -93,6 +93,7 @@ REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
 PKG_REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
 MATCH_SEQUENCE_PATTERN = re.compile(r"-(\d{2})$")
 WPS_DISPIMG_PATTERN = re.compile(r'DISPIMG\("(?P<image_id>ID_[A-F0-9]+)"', re.IGNORECASE)
+TRUTHY_EXCEL_VALUES = {"1", "true", "yes", "y", "是", "对", "抽局", "不计", "不计战队总分"}
 EXCEL_HEADER_ALIASES = {
     "比赛编号": "match_id",
     "局号": "match_id",
@@ -135,6 +136,8 @@ EXCEL_HEADER_ALIASES = {
     "当日总分": "daily_total",
     "站边": "stance_result",
     "积分模型": "score_model",
+    "不计战队总分": "exclude_from_team_scores",
+    "抽局": "exclude_from_team_scores",
     "备注": "notes",
 }
 PLAYER_DIMENSION_SHEET_NAMES = ["单日选手个人维度数据"]
@@ -192,6 +195,10 @@ TEAM_DIMENSION_FIELD_MAP = {
     "开毒次数": "poison_used_count",
     "毒狼次数": "poisoned_werewolf_count",
 }
+
+
+def parse_truthy_excel_value(value: object) -> bool:
+    return str(value or "").strip().lower() in TRUTHY_EXCEL_VALUES
 
 
 def parse_date_input(value: str) -> datetime | None:
@@ -1071,6 +1078,7 @@ def build_match_management_panel(
           <td>{escape(str(match.get('table_label') or '未设置'))}</td>
           <td>{escape(match['format'])}</td>
           <td>{'待补录' if match['format'] == '待补录' else '已录入'}</td>
+          <td>{'<span class="badge text-bg-warning">抽局</span>' if match.get('exclude_from_team_scores') else '<span class="badge text-bg-light text-dark border">计入战队</span>'}</td>
           <td>
             <div class="d-flex flex-wrap gap-2">
               <a class="btn btn-sm btn-outline-dark" href="/matches/{escape(match['match_id'])}">详情</a>
@@ -1121,7 +1129,6 @@ def build_match_management_panel(
         </div>
       </form>
       <form method="post" action="/matches/new">
-        <input type="hidden" name="action" value="batch_delete_matches">
         <input type="hidden" name="competition_name" value="{escape(competition_name)}">
         <input type="hidden" name="season" value="{escape(season_name)}">
         <input type="hidden" name="stage" value="{escape(stage_value)}">
@@ -1142,14 +1149,17 @@ def build_match_management_panel(
                 <th>房间</th>
                 <th>板型</th>
                 <th>状态</th>
+                <th>战队计分</th>
                 <th>操作</th>
               </tr>
             </thead>
-            <tbody>{rows_html or '<tr><td colspan="12" class="text-secondary">当前筛选下没有比赛。</td></tr>'}</tbody>
+            <tbody>{rows_html or '<tr><td colspan="13" class="text-secondary">当前筛选下没有比赛。</td></tr>'}</tbody>
           </table>
         </div>
         <div class="d-flex flex-wrap gap-2 mt-3">
-          <button type="submit" class="btn btn-outline-danger">批量删除选中比赛</button>
+          <button type="submit" class="btn btn-outline-dark" name="action" value="batch_mark_team_score_excluded">设为抽局</button>
+          <button type="submit" class="btn btn-outline-dark" name="action" value="batch_unmark_team_score_excluded">取消抽局</button>
+          <button type="submit" class="btn btn-outline-danger" name="action" value="batch_delete_matches">批量删除选中比赛</button>
         </div>
       </form>
       <script>
@@ -1590,6 +1600,9 @@ def build_match_from_excel_rows(
     match["game_no"] = resolve_excel_game_no(match_row)
     raw_score_model = match_row.get("score_model", "").strip()
     match["score_model"] = normalize_match_score_model(raw_score_model) if raw_score_model else ""
+    match["exclude_from_team_scores"] = parse_truthy_excel_value(
+        match_row.get("exclude_from_team_scores", "")
+    )
     match["played_on"] = match_row.get("played_on", "").strip()
     match["group_label"] = match_row.get("group_label", "").strip()
     match["table_label"] = (
@@ -1736,6 +1749,9 @@ def build_match_from_wide_excel_row(
     match["game_no"] = resolve_excel_game_no(row)
     raw_score_model = row.get("score_model", "").strip()
     match["score_model"] = normalize_match_score_model(raw_score_model) if raw_score_model else ""
+    match["exclude_from_team_scores"] = parse_truthy_excel_value(
+        row.get("exclude_from_team_scores", "")
+    )
     match["played_on"] = row.get("played_on", "").strip()
     match["group_label"] = row.get("group_label", "").strip()
     match["table_label"] = row.get("room_label", "").strip() or row.get("table_label", "").strip()
@@ -1871,6 +1887,7 @@ def merge_excel_import_match(
     for field in (
         "group_label",
         "score_model",
+        "exclude_from_team_scores",
         "table_label",
         "format",
         "winning_camp",
@@ -1879,6 +1896,12 @@ def merge_excel_import_match(
         "scapegoat_player_name",
         "notes",
     ):
+        if field == "exclude_from_team_scores":
+            if imported_match.get(field):
+                merged_match[field] = True
+            else:
+                merged_match.setdefault(field, False)
+            continue
         value = str(imported_match.get(field) or "").strip()
         if value:
             merged_match[field] = value
@@ -3180,6 +3203,13 @@ def render_match_form_page(
             </select>
             <div class="small text-secondary mt-2">当前模型：{escape(score_model_label)}。京城日报模型会按固定分项自动汇总单局积分。</div>
           </div>
+          <div class="col-12 col-md-6 col-xl-3 d-flex align-items-end">
+            <div class="form-check mb-2">
+              <input class="form-check-input" id="exclude_from_team_scores" name="exclude_from_team_scores" type="checkbox" value="1"{' checked' if current.get('exclude_from_team_scores') else ''}>
+              <label class="form-check-label" for="exclude_from_team_scores">抽局，不计战队总分</label>
+              <div class="small text-secondary mt-1">个人得分仍会正常计入选手数据。</div>
+            </div>
+          </div>
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">阶段</label>
             <select class="form-select" name="stage">
@@ -3648,7 +3678,11 @@ def handle_match_create(ctx: RequestContext, start_response):
 
     data = load_validated_data()
     action = form_value(ctx.form, "action").strip()
-    if action == "batch_delete_matches":
+    if action in {
+        "batch_delete_matches",
+        "batch_mark_team_score_excluded",
+        "batch_unmark_team_score_excluded",
+    }:
         selected_match_ids = [
             value.strip()
             for value in ctx.form.get("match_ids", [])
@@ -3662,10 +3696,19 @@ def handle_match_create(ctx: RequestContext, start_response):
             "keyword": form_value(ctx.form, "keyword").strip(),
         }
         if not selected_match_ids:
+            action_labels = {
+                "batch_delete_matches": "删除",
+                "batch_mark_team_score_excluded": "设为抽局",
+                "batch_unmark_team_score_excluded": "取消抽局",
+            }
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert="请先勾选要删除的比赛。", batch_form_values=None),
+                get_match_create_page(
+                    ctx,
+                    alert=f"请先勾选要{action_labels.get(action, '管理')}的比赛。",
+                    batch_form_values=None,
+                ),
             )
         selected_matches = [
             match for match in data["matches"] if match["match_id"] in set(selected_match_ids)
@@ -3682,10 +3725,40 @@ def handle_match_create(ctx: RequestContext, start_response):
                 start_response,
                 data,
                 get_match_competition_name(match),
-                "你不能删除未授权地区系列赛下的比赛。",
+                "你不能管理未授权地区系列赛下的比赛。",
             )
             if permission_guard is not None:
                 return permission_guard
+        if action in {
+            "batch_mark_team_score_excluded",
+            "batch_unmark_team_score_excluded",
+        }:
+            should_exclude = action == "batch_mark_team_score_excluded"
+            selected_match_id_set = set(selected_match_ids)
+            updated_count = 0
+            for match in data["matches"]:
+                if match["match_id"] not in selected_match_id_set:
+                    continue
+                if bool(match.get("exclude_from_team_scores")) == should_exclude:
+                    continue
+                match["exclude_from_team_scores"] = should_exclude
+                updated_count += 1
+            users = load_users()
+            errors = save_repository_state(data, users)
+            if errors:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_create_page(ctx, alert="抽局状态保存失败：" + "；".join(errors[:3])),
+                )
+            action_message = "设为抽局" if should_exclude else "取消抽局"
+            return redirect(
+                start_response,
+                append_alert_query(
+                    build_match_management_path(ctx, values=management_form_values),
+                    f"已{action_message} {updated_count} 场比赛。",
+                ),
+            )
         remaining_matches = [
             match for match in data["matches"] if match["match_id"] not in set(selected_match_ids)
         ]

@@ -6827,6 +6827,8 @@ def build_dashboard_group_team_rows(
     rows: dict[str, dict[str, Any]] = {}
     represented_players: dict[str, set[str]] = {}
     for match in matches:
+        if match.get("exclude_from_team_scores"):
+            continue
         normalized_group_label = str(match.get("group_label") or "").strip() or "未分组"
         if normalized_group_label != group_label:
             continue
@@ -13198,6 +13200,8 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
         "round": int(form_value(form, "round", "0") or "0"),
         "game_no": int(form_value(form, "game_no", "0") or "0"),
         "score_model": score_model,
+        "exclude_from_team_scores": form_value(form, "exclude_from_team_scores").strip()
+        in {"1", "true", "on", "yes"},
         "played_on": form_value(form, "played_on").strip(),
         "group_label": form_value(form, "group_label").strip(),
         "table_label": form_value(form, "table_label").strip(),
@@ -13272,6 +13276,7 @@ def build_empty_match(competition_name: str = "", season_name: str = "") -> dict
         "round": 1,
         "game_no": 1,
         "score_model": MATCH_SCORE_MODEL_STANDARD,
+        "exclude_from_team_scores": False,
         "played_on": china_today_label(),
         "group_label": "A组",
         "table_label": "1号房",
@@ -13621,6 +13626,10 @@ def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
         "role": user.get("role") or "member",
         "player_id": user.get("player_id") or "",
         "linked_player_ids": user.get("linked_player_ids") or [],
+        "province_name": user.get("province_name") or "",
+        "region_name": user.get("region_name") or "",
+        "gender": user.get("gender") or "",
+        "bio": user.get("bio") or "",
         "photo": user.get("photo") or DEFAULT_PLAYER_PHOTO,
         "wechat_bound": bool(user.get("wechat_openid")),
     }
@@ -13767,6 +13776,82 @@ def handle_miniprogram_bind_account(ctx: RequestContext, start_response):
         {
             "session_token": token,
             "user": serialize_miniprogram_user(target_user),
+        },
+    )
+
+
+def handle_miniprogram_profile(ctx: RequestContext, start_response):
+    if ctx.method != "POST":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram profile only supports POST"},
+            headers=[("Allow", "POST")],
+        )
+    session_token = form_value(ctx.form, "session_token").strip()
+    username = load_session_username(session_token)
+    if not username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+
+    users = load_users()
+    data = load_validated_data()
+    user = next((item for item in users if item["username"] == username), None)
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+
+    display_name = form_value(ctx.form, "display_name").strip()
+    province_name = form_value(ctx.form, "province_name", DEFAULT_PROVINCE_NAME).strip()
+    region_name = form_value(ctx.form, "region_name", "广州市").strip()
+    gender = form_value(ctx.form, "gender", "prefer_not_to_say").strip()
+    bio = form_value(ctx.form, "bio").strip()
+    player_id = form_value(ctx.form, "player_id").strip()
+    if not display_name:
+        return start_response_json(start_response, "400 Bad Request", {"error": "显示名称不能为空。"})
+    normalized_province, normalized_region = normalize_user_location(province_name, region_name)
+    if not normalized_province or not normalized_region:
+        return start_response_json(start_response, "400 Bad Request", {"error": "请填写有效地区，例如 广东省 / 广州市。"})
+    normalized_gender = normalize_user_gender(gender)
+    if not normalized_gender:
+        return start_response_json(start_response, "400 Bad Request", {"error": "请选择有效性别。"})
+    if not bio:
+        return start_response_json(start_response, "400 Bad Request", {"error": "请填写个人简介。"})
+
+    if player_id:
+        player_exists = any(player["player_id"] == player_id for player in data.get("players", []))
+        if not player_exists:
+            return start_response_json(start_response, "400 Bad Request", {"error": "没有找到这个选手 ID。"})
+        owner = get_user_by_player_id(users, player_id)
+        if owner and owner["username"] != username:
+            return start_response_json(start_response, "409 Conflict", {"error": "这个选手 ID 已绑定其他账号。"})
+
+    updated_user = user
+    updated_users: list[dict[str, Any]] = []
+    for item in users:
+        if item["username"] != username:
+            updated_users.append(item)
+            continue
+        next_user = {
+            **item,
+            "display_name": display_name,
+            "province_name": normalized_province,
+            "region_name": normalized_region,
+            "gender": normalized_gender,
+            "bio": bio,
+            "player_id": player_id or None,
+            "linked_player_ids": [
+                linked_id
+                for linked_id in (item.get("linked_player_ids") or [])
+                if linked_id and linked_id != player_id
+            ],
+        }
+        updated_user = next_user
+        updated_users.append(next_user)
+    save_users(updated_users)
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "user": serialize_miniprogram_user(updated_user),
         },
     )
 
@@ -14085,6 +14170,8 @@ def app(environ, start_response):
             return handle_miniprogram_login(ctx, start_response)
         if path == "/api/miniprogram/bind-account":
             return handle_miniprogram_bind_account(ctx, start_response)
+        if path == "/api/miniprogram/profile":
+            return handle_miniprogram_profile(ctx, start_response)
         if path == "/api/dashboard":
             return handle_dashboard_api(ctx, start_response)
         if path == "/api/competitions":

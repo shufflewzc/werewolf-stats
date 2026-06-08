@@ -13453,14 +13453,31 @@ def login_page(ctx: RequestContext, alert: str = "") -> str:
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">中国时间登录入口</div>
-      <h1 class="display-6 fw-semibold mb-3">小程序扫码登录管理台</h1>
-      <p class="mb-0 opacity-75">打开狼人杀赛事小程序，在“我的”页面扫码确认，网页会自动进入。</p>
+      <h1 class="display-6 fw-semibold mb-3">登录狼人杀联赛管理台</h1>
+      <p class="mb-0 opacity-75">可以使用账号密码登录，也可以打开小程序扫码确认。</p>
     </section>
-    <section class="form-panel shadow-sm p-3 p-lg-4 mx-auto" style="max-width: 560px;">
-      <div class="text-center">
-        <img src="{escape(qr_url)}" alt="小程序扫码登录二维码" width="240" height="240" class="rounded border bg-white p-2" />
-        <div id="web-login-status" class="section-copy mt-3">等待小程序扫码确认...</div>
-        <a class="btn btn-outline-dark mt-3" href="/login?{escape(urlencode({'next': next_path}))}">刷新二维码</a>
+    <section class="form-panel shadow-sm p-3 p-lg-4 mx-auto" style="max-width: 880px;">
+      <div class="row g-4 align-items-start">
+        <div class="col-12 col-lg-6">
+          <h2 class="h5 mb-3">账号密码登录</h2>
+          <form method="post" action="/login?next={quote(next_path)}">
+            <div class="mb-3">
+              <label class="form-label">用户名</label>
+              <input class="form-control" name="username" autocomplete="username">
+            </div>
+            <div class="mb-4">
+              <label class="form-label">密码</label>
+              <input class="form-control" name="password" type="password" autocomplete="current-password">
+            </div>
+            <button class="btn btn-dark w-100" type="submit">登录</button>
+          </form>
+        </div>
+        <div class="col-12 col-lg-6 text-center">
+          <h2 class="h5 mb-3">小程序扫码登录</h2>
+          <img src="{escape(qr_url)}" alt="小程序扫码登录二维码" width="240" height="240" class="rounded border bg-white p-2" />
+          <div id="web-login-status" class="section-copy mt-3">等待小程序扫码确认...</div>
+          <a class="btn btn-outline-dark mt-3" href="/login?{escape(urlencode({'next': next_path}))}">刷新二维码</a>
+        </div>
       </div>
       <p class="section-copy mt-3 mb-0">首次在小程序微信登录时会自动创建站内账号；账号资料、选手绑定和权限仍在登录后的个人中心维护。</p>
       <script>
@@ -13664,7 +13681,18 @@ def handle_login(ctx: RequestContext, start_response):
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", login_page(ctx))
     next_path = form_value(ctx.query, "next", "/dashboard")
-    return redirect(start_response, "/login?" + urlencode({"next": normalize_next_path(next_path)}))
+    username = form_value(ctx.form, "username").strip()
+    password = form_value(ctx.form, "password")
+    for user in load_users():
+        if user["username"] == username and user.get("active") and verify_password(password, user):
+            token = secrets.token_urlsafe(24)
+            save_session(token, username)
+            return redirect(
+                start_response,
+                normalize_next_path(next_path),
+                headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax")],
+            )
+    return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
 
 
 def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:

@@ -966,7 +966,6 @@ def _build_team_account_html(ctx: RequestContext) -> str:
     return """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 

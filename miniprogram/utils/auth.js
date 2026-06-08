@@ -1,4 +1,4 @@
-const { post } = require("./api");
+const { post, request } = require("./api");
 
 const SESSION_KEY = "werewolf:miniprogramSession";
 const USER_KEY = "werewolf:miniprogramUser";
@@ -45,16 +45,6 @@ async function loginWithWechat(nickname = "") {
   return payload;
 }
 
-async function bindExistingAccount(username, password) {
-  const payload = await post("/api/miniprogram/bind-account", {
-    session_token: getSessionToken(),
-    username,
-    password
-  });
-  saveAuth(payload);
-  return payload;
-}
-
 async function saveProfile(profile) {
   const payload = await post("/api/miniprogram/profile", {
     session_token: getSessionToken(),
@@ -62,18 +52,54 @@ async function saveProfile(profile) {
     province_name: profile.province_name,
     region_name: profile.region_name,
     gender: profile.gender,
-    bio: profile.bio,
-    player_id: profile.player_id
+    bio: profile.bio
   });
   wx.setStorageSync(USER_KEY, payload.user || null);
   return payload;
 }
 
+function searchPlayers(keyword) {
+  return request("/api/miniprogram/player-search", {
+    session_token: getSessionToken(),
+    q: keyword
+  });
+}
+
+async function bindPlayer(playerId) {
+  const payload = await post("/api/miniprogram/bind-player", {
+    session_token: getSessionToken(),
+    player_id: playerId
+  });
+  wx.setStorageSync(USER_KEY, payload.user || null);
+  return payload;
+}
+
+function extractWebLoginToken(scannedValue) {
+  const value = String(scannedValue || "").trim();
+  if (!value) {
+    return "";
+  }
+  const match = value.match(/[?&]token=([^&#]+)/);
+  if (match) {
+    return decodeURIComponent(match[1]);
+  }
+  return value;
+}
+
+function confirmWebLogin(scannedValue) {
+  return post("/api/miniprogram/web-login-confirm", {
+    session_token: getSessionToken(),
+    token: extractWebLoginToken(scannedValue)
+  });
+}
+
 module.exports = {
-  bindExistingAccount,
+  bindPlayer,
   clearAuth,
+  confirmWebLogin,
   getCurrentUser,
   getSessionToken,
   loginWithWechat,
-  saveProfile
+  saveProfile,
+  searchPlayers
 };

@@ -1,28 +1,29 @@
 const {
-  bindExistingAccount,
   clearAuth,
+  confirmWebLogin,
   getCurrentUser,
   loginWithWechat,
   saveProfile: saveProfileRequest
 } = require("../../utils/auth");
+const { getSelectedScope } = require("../../utils/scope");
 
 const GENDER_VALUES = ["prefer_not_to_say", "male", "female", "other"];
+const GENDER_LABELS = ["不便透露", "男", "女", "其他"];
 
 Page({
   data: {
     loading: false,
     error: "",
     user: null,
-    username: "",
-    password: "",
     profile: {
       display_name: "",
       province_name: "广东省",
       region_name: "广州市",
       gender: "prefer_not_to_say",
-      bio: "",
-      player_id: ""
-    }
+      bio: ""
+    },
+    genderLabels: GENDER_LABELS,
+    genderLabel: "不便透露"
   },
 
   onShow() {
@@ -30,16 +31,17 @@ Page({
   },
 
   refreshUser(user) {
+    const gender = (user && user.gender) || "prefer_not_to_say";
     this.setData({
       user,
       profile: {
         display_name: (user && user.display_name) || "",
         province_name: (user && user.province_name) || "广东省",
         region_name: (user && user.region_name) || "广州市",
-        gender: (user && user.gender) || "prefer_not_to_say",
-        bio: (user && user.bio) || "",
-        player_id: (user && user.player_id) || ""
-      }
+        gender,
+        bio: (user && user.bio) || ""
+      },
+      genderLabel: GENDER_LABELS[Math.max(0, GENDER_VALUES.indexOf(gender))] || "不便透露"
     });
   },
 
@@ -55,33 +57,9 @@ Page({
     }
   },
 
-  updateUsername(event) {
-    this.setData({ username: event.detail.value });
-  },
-
-  updatePassword(event) {
-    this.setData({ password: event.detail.value });
-  },
-
-  async bindAccount() {
-    if (!this.data.username || !this.data.password) {
-      this.setData({ error: "请输入网站账号和密码。" });
-      return;
-    }
-    this.setData({ loading: true, error: "" });
-    try {
-      const payload = await bindExistingAccount(this.data.username, this.data.password);
-      this.setData({ loading: false, password: "" });
-      this.refreshUser(payload.user);
-      wx.showToast({ title: "绑定成功", icon: "success" });
-    } catch (error) {
-      this.setData({ loading: false, error: error.message || "绑定失败" });
-    }
-  },
-
   logout() {
     clearAuth();
-    this.setData({ user: null, username: "", password: "", error: "" });
+    this.setData({ user: null, error: "" });
   },
 
   updateProfileField(event) {
@@ -94,7 +72,8 @@ Page({
   updateGender(event) {
     const index = Number(event.detail.value);
     this.setData({
-      "profile.gender": GENDER_VALUES[index] || "prefer_not_to_say"
+      "profile.gender": GENDER_VALUES[index] || "prefer_not_to_say",
+      genderLabel: GENDER_LABELS[index] || "不便透露"
     });
   },
 
@@ -108,5 +87,68 @@ Page({
     } catch (error) {
       this.setData({ loading: false, error: error.message || "资料保存失败" });
     }
+  },
+
+  scanWebLogin() {
+    if (!this.data.user) {
+      this.setData({ error: "请先微信登录。" });
+      return;
+    }
+    wx.scanCode({
+      onlyFromCamera: true,
+      scanType: ["qrCode"],
+      success: async (result) => {
+        this.setData({ loading: true, error: "" });
+        try {
+          const payload = await confirmWebLogin(result.result);
+          this.setData({ loading: false });
+          wx.showToast({
+            title: payload.display_name ? "网页登录已确认" : "确认成功",
+            icon: "success"
+          });
+        } catch (error) {
+          this.setData({ loading: false, error: error.message || "网页登录确认失败" });
+        }
+      },
+      fail: (error) => {
+        if (error.errMsg && error.errMsg.indexOf("cancel") >= 0) {
+          return;
+        }
+        this.setData({ error: error.errMsg || "扫码失败" });
+      }
+    });
+  },
+
+  goBindPlayer() {
+    if (!this.data.user) {
+      this.setData({ error: "请先微信登录。" });
+      return;
+    }
+    wx.navigateTo({ url: "/pages/player-bind/player-bind" });
+  },
+
+  openMyPlayerPage() {
+    const user = this.data.user;
+    if (!user || !user.player_id) {
+      this.setData({ error: "请先绑定选手。" });
+      return;
+    }
+    const selectedScope = getSelectedScope();
+    if (!selectedScope || !selectedScope.competition) {
+      wx.showModal({
+        title: "先选择赛事",
+        content: "需要先进入一个赛事，才能查看该赛事范围下的选手页面。",
+        confirmText: "去选择",
+        success(result) {
+          if (result.confirm) {
+            wx.switchTab({ url: "/pages/dashboard/dashboard" });
+          }
+        }
+      });
+      return;
+    }
+    wx.navigateTo({
+      url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(user.player_id)}`
+    });
   }
 });

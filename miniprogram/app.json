@@ -6,7 +6,8 @@
     "pages/players/players",
     "pages/player-detail/player-detail",
     "pages/guild-detail/guild-detail",
-    "pages/mine/mine"
+    "pages/mine/mine",
+    "pages/player-bind/player-bind"
   ],
   "window": {
     "navigationBarTitleText": "狼人杀赛事",

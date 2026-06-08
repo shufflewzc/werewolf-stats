@@ -23,4 +23,5 @@
 - 把 `project.config.json` 里的 `appid` 换成你的小程序 AppID。
 - 后端服务需要配置 `WECHAT_MINIPROGRAM_APPID` 和 `WECHAT_MINIPROGRAM_SECRET`，用于把 `wx.login` 的 code 换成 openid。
 - 本地联调如果暂时不想请求微信接口，可以设置 `WECHAT_MINIPROGRAM_DEV_OPENID` 模拟 openid。
-- 当前小程序支持微信登录自动创建账号，也支持在“我的”页绑定已有网站账号。
+- 当前小程序支持微信登录自动创建账号；选手身份在“我的”页通过中文名搜索绑定。
+- 网页端登录已改为“小程序扫码确认登录”：网页显示二维码，小程序“我的”页扫码确认后网页自动登录；服务器不需要配置网页开放平台参数。

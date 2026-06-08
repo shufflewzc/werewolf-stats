@@ -2,7 +2,7 @@
   <view class="hero">
     <text class="eyebrow">Account</text>
     <text class="title">我的账号</text>
-    <text class="copy">使用微信登录后，会自动创建站内账号；已有网站账号也可以绑定到当前微信。</text>
+    <text class="copy">使用微信登录后，会自动创建站内账号；网页端可通过本页扫码确认登录。</text>
   </view>
 
   <view class="section" wx:if="{{error}}">
@@ -17,7 +17,10 @@
       <text class="account-name">{{user.display_name}}</text>
       <text class="account-meta">@{{user.username}} · {{user.role}}</text>
       <text class="account-meta">绑定状态：{{user.wechat_bound ? "已绑定微信" : "未绑定微信"}}</text>
-      <text class="account-meta">选手 ID：{{user.player_id || "未填写"}}</text>
+      <text class="account-meta">绑定选手：{{user.player_id || "未绑定"}}</text>
+      <button class="primary-button single-button" wx:if="{{user.player_id}}" bindtap="openMyPlayerPage">查看我的赛事选手页</button>
+      <button class="primary-button single-button" loading="{{loading}}" bindtap="scanWebLogin">扫码登录网页端</button>
+      <button class="primary-button single-button" bindtap="goBindPlayer">搜索中文名绑定选手</button>
       <button class="ghost-button single-button" bindtap="logout">退出本地登录</button>
     </view>
   </view>
@@ -35,28 +38,18 @@
   <view class="section">
     <view class="form-card" wx:if="{{user}}">
       <text class="form-title">完善资料</text>
-      <text class="form-copy">用于绑定选手身份、展示个人资料和后续认领流程。</text>
+      <text class="form-copy">用于展示个人资料和后续认领流程。绑定选手请进入单独搜索页。</text>
       <input class="input" value="{{profile.display_name}}" data-field="display_name" placeholder="显示名称" bindinput="updateProfileField" />
-      <input class="input" value="{{profile.player_id}}" data-field="player_id" placeholder="选手 ID，例如 player-player-20" bindinput="updateProfileField" />
       <view class="grid-inputs">
         <input class="input" value="{{profile.province_name}}" data-field="province_name" placeholder="省份，例如 广东省" bindinput="updateProfileField" />
         <input class="input" value="{{profile.region_name}}" data-field="region_name" placeholder="城市，例如 广州市" bindinput="updateProfileField" />
       </view>
-      <picker mode="selector" range="{{['prefer_not_to_say', 'male', 'female', 'other']}}" bindchange="updateGender">
-        <view class="picker-field">性别：{{profile.gender}}</view>
+      <picker mode="selector" range="{{genderLabels}}" bindchange="updateGender">
+        <view class="picker-field">性别：{{genderLabel}}</view>
       </picker>
       <textarea class="textarea" value="{{profile.bio}}" data-field="bio" placeholder="个人简介" bindinput="updateProfileField"></textarea>
       <button class="primary-button single-button" loading="{{loading}}" bindtap="saveProfile">保存资料</button>
     </view>
   </view>
 
-  <view class="section">
-    <view class="form-card">
-      <text class="form-title">绑定已有网站账号</text>
-      <text class="form-copy">如果你已经有网站账号，先微信登录，再在这里输入网站账号密码完成绑定。</text>
-      <input class="input" value="{{username}}" placeholder="网站用户名" bindinput="updateUsername" />
-      <input class="input" value="{{password}}" password placeholder="网站密码" bindinput="updatePassword" />
-      <button class="primary-button single-button" loading="{{loading}}" bindtap="bindAccount">绑定账号</button>
-    </view>
-  </view>
 </view>

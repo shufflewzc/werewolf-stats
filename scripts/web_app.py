@@ -171,6 +171,9 @@ TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "team_manual_achievements:"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 WECHAT_MINIPROGRAM_APPID = os.getenv("WECHAT_MINIPROGRAM_APPID", "")
 WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
+WEB_LOGIN_BASE_URL = os.getenv("WEB_LOGIN_BASE_URL", "https://wolf.fakerclaw.indevs.in").rstrip("/")
+WEB_LOGIN_TTL_SECONDS = int(os.getenv("WEB_LOGIN_TTL_SECONDS", "600"))
+WEB_LOGIN_META_PREFIX = "web_login:"
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
 SLUG_SANITIZE_PATTERN = re.compile(r"[^a-z0-9_-]+")
@@ -1787,7 +1790,6 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         user_html = """
         <div class="account-actions d-flex flex-wrap align-items-center gap-2">
           <a class="btn btn-outline-dark btn-sm" href="/login">登录</a>
-          <a class="btn btn-dark btn-sm" href="/register">注册</a>
         </div>
         """
 
@@ -5984,7 +5986,6 @@ def build_dashboard_frontend_page(ctx: RequestContext) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 
@@ -13380,29 +13381,117 @@ def get_match_create_page(
     return impl(ctx, alert, field_values)
 
 
+def normalize_next_path(next_path: str) -> str:
+    normalized = str(next_path or "").strip() or "/dashboard"
+    if not normalized.startswith("/") or normalized.startswith("//"):
+        return "/dashboard"
+    return normalized
+
+
+def web_login_meta_key(token: str) -> str:
+    return f"{WEB_LOGIN_META_PREFIX}{token}"
+
+
+def load_web_login_challenge(token: str) -> dict[str, Any] | None:
+    normalized_token = str(token or "").strip()
+    if not normalized_token:
+        return None
+    raw_value = load_meta_value(web_login_meta_key(normalized_token))
+    if not raw_value:
+        return None
+    try:
+        payload = json.loads(raw_value)
+    except Exception:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    return payload
+
+
+def save_web_login_challenge(token: str, payload: dict[str, Any]) -> None:
+    save_meta_value(
+        web_login_meta_key(token),
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+    )
+
+
+def web_login_is_expired(payload: dict[str, Any]) -> bool:
+    created_at = int(payload.get("created_at") or 0)
+    return not created_at or int(time.time()) - created_at > WEB_LOGIN_TTL_SECONDS
+
+
+def create_web_login_challenge(next_path: str) -> tuple[str, dict[str, Any]]:
+    token = secrets.token_urlsafe(24)
+    payload = {
+        "status": "pending",
+        "username": "",
+        "next": normalize_next_path(next_path),
+        "created_at": int(time.time()),
+        "confirmed_at": 0,
+        "used_at": 0,
+    }
+    save_web_login_challenge(token, payload)
+    return token, payload
+
+
+def build_web_login_scan_url(token: str) -> str:
+    return f"{WEB_LOGIN_BASE_URL}/mini-web-login?{urlencode({'token': token})}"
+
+
 def login_page(ctx: RequestContext, alert: str = "") -> str:
-    next_path = form_value(ctx.query, "next", "/dashboard")
+    next_path = normalize_next_path(form_value(ctx.query, "next", "/dashboard"))
+    token, _payload = create_web_login_challenge(next_path)
+    scan_url = build_web_login_scan_url(token)
+    qr_url = "https://api.qrserver.com/v1/create-qr-code/?" + urlencode(
+        {
+            "size": "240x240",
+            "margin": "12",
+            "data": scan_url,
+        }
+    )
+    escaped_token_json = json.dumps(token)
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">中国时间登录入口</div>
-      <h1 class="display-6 fw-semibold mb-3">登录狼人杀联赛管理台</h1>
-      <p class="mb-0 opacity-75">登录后可以进入比赛页面选择战队，并编辑赛季比赛表格。</p>
+      <h1 class="display-6 fw-semibold mb-3">小程序扫码登录管理台</h1>
+      <p class="mb-0 opacity-75">打开狼人杀赛事小程序，在“我的”页面扫码确认，网页会自动进入。</p>
     </section>
     <section class="form-panel shadow-sm p-3 p-lg-4 mx-auto" style="max-width: 560px;">
-      <form method="post" action="/login?next={quote(next_path)}">
-        <div class="mb-3">
-          <label class="form-label">用户名</label>
-          <input class="form-control" name="username" autocomplete="username">
-        </div>
-        <div class="mb-4">
-          <label class="form-label">密码</label>
-          <input class="form-control" name="password" type="password" autocomplete="current-password">
-        </div>
-        <div class="d-flex flex-wrap gap-2 align-items-center">
-          <button class="btn btn-dark" type="submit">登录</button>
-          <a class="btn btn-outline-dark" href="/register">注册新账号</a>
-        </div>
-      </form>
+      <div class="text-center">
+        <img src="{escape(qr_url)}" alt="小程序扫码登录二维码" width="240" height="240" class="rounded border bg-white p-2" />
+        <div id="web-login-status" class="section-copy mt-3">等待小程序扫码确认...</div>
+        <a class="btn btn-outline-dark mt-3" href="/login?{escape(urlencode({'next': next_path}))}">刷新二维码</a>
+      </div>
+      <p class="section-copy mt-3 mb-0">首次在小程序微信登录时会自动创建站内账号；账号资料、选手绑定和权限仍在登录后的个人中心维护。</p>
+      <script>
+      (() => {{
+        const token = {escaped_token_json};
+        const statusEl = document.getElementById("web-login-status");
+        let stopped = false;
+        async function poll() {{
+          if (stopped) return;
+          try {{
+            const response = await fetch(`/api/web-login/status?token=${{encodeURIComponent(token)}}`, {{ cache: "no-store" }});
+            const payload = await response.json();
+            if (payload.status === "confirmed" && payload.redirect) {{
+              stopped = true;
+              statusEl.textContent = "已确认，正在进入...";
+              window.location.href = payload.redirect;
+              return;
+            }}
+            if (payload.status === "expired") {{
+              stopped = true;
+              statusEl.textContent = "二维码已过期，请刷新后重新扫码。";
+              return;
+            }}
+          }} catch (error) {{
+            statusEl.textContent = "正在等待确认...";
+          }}
+          window.setTimeout(poll, 1800);
+        }}
+        poll();
+      }})();
+      </script>
     </section>
     """
     return layout("登录", body, ctx, alert=alert)
@@ -13419,6 +13508,63 @@ def build_context(environ: dict[str, Any]) -> RequestContext:
         current_user=get_current_user(environ),
         now_label=china_now_label(),
     )
+
+
+def handle_web_login_status(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "web login status only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    token = form_value(ctx.query, "token").strip()
+    payload = load_web_login_challenge(token)
+    if not payload:
+        return start_response_json(start_response, "404 Not Found", {"status": "expired"})
+    if web_login_is_expired(payload):
+        payload["status"] = "expired"
+        save_web_login_challenge(token, payload)
+        return start_response_json(start_response, "200 OK", {"status": "expired"})
+    status = str(payload.get("status") or "pending")
+    result: dict[str, Any] = {"status": status}
+    if status == "confirmed":
+        result["redirect"] = "/web-login-complete?" + urlencode({"token": token})
+    return start_response_json(start_response, "200 OK", result)
+
+
+def handle_web_login_complete(ctx: RequestContext, start_response):
+    token = form_value(ctx.query, "token").strip()
+    payload = load_web_login_challenge(token)
+    if not payload or web_login_is_expired(payload):
+        return start_response_html(start_response, "200 OK", login_page(ctx, alert="二维码已过期，请重新扫码。"))
+    if payload.get("status") != "confirmed" or payload.get("used_at"):
+        return start_response_html(start_response, "200 OK", login_page(ctx, alert="登录二维码还没有确认，请重新扫码。"))
+    username = str(payload.get("username") or "").strip()
+    users = load_users()
+    user = next((item for item in users if item["username"] == username and item.get("active", True)), None)
+    if not user:
+        return start_response_html(start_response, "200 OK", login_page(ctx, alert="确认登录的账号不可用，请重新登录。"))
+    session_token = secrets.token_urlsafe(24)
+    save_session(session_token, username)
+    payload["status"] = "used"
+    payload["used_at"] = int(time.time())
+    save_web_login_challenge(token, payload)
+    return redirect(
+        start_response,
+        normalize_next_path(str(payload.get("next") or "/dashboard")),
+        headers=[("Set-Cookie", f"{SESSION_COOKIE}={session_token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax")],
+    )
+
+
+def handle_mini_web_login_info(ctx: RequestContext, start_response):
+    body = """
+    <section class="form-panel shadow-sm p-3 p-lg-4 mx-auto" style="max-width: 560px;">
+      <h1 class="h4 mb-3">小程序网页登录确认</h1>
+      <p class="section-copy mb-0">请回到狼人杀赛事小程序，在“我的”页面使用“扫码登录网页端”完成确认。</p>
+    </section>
+    """
+    return start_response_html(start_response, "200 OK", layout("小程序网页登录确认", body, ctx))
 
 
 def require_login(ctx: RequestContext, start_response):
@@ -13511,112 +13657,14 @@ def require_competition_season_manager(
 
 
 def handle_register(ctx: RequestContext, start_response):
-    if ctx.current_user:
-        return redirect(start_response, "/dashboard")
-
-    if ctx.method == "GET":
-        captcha_token, captcha_prompt = build_captcha()
-        return start_response_html(
-            start_response,
-            "200 OK",
-            register_page(ctx, captcha_token=captcha_token, captcha_prompt=captcha_prompt),
-        )
-
-    users = load_users()
-    username = form_value(ctx.form, "username").strip()
-    display_name = form_value(ctx.form, "display_name").strip()
-    province_name = form_value(ctx.form, "province_name").strip()
-    region_name = form_value(ctx.form, "region_name").strip()
-    gender = form_value(ctx.form, "gender").strip()
-    bio = form_value(ctx.form, "bio").strip()
-    password = form_value(ctx.form, "password")
-    password_confirm = form_value(ctx.form, "password_confirm")
-    captcha_token = form_value(ctx.form, "captcha_token")
-    captcha_answer = form_value(ctx.form, "captcha_answer")
-    error = validate_registration_form(
-        username,
-        display_name,
-        province_name,
-        region_name,
-        gender,
-        bio,
-        password,
-        password_confirm,
-        captcha_token,
-        captcha_answer,
-        users,
-    )
-    if error:
-        next_token, next_prompt = build_captcha()
-        return start_response_html(
-            start_response,
-            "200 OK",
-            register_page(
-                ctx,
-                alert=error,
-                form_values={
-                    "username": username,
-                    "display_name": display_name,
-                    "province_name": province_name or DEFAULT_PROVINCE_NAME,
-                    "region_name": region_name or "广州市",
-                    "gender": gender or "prefer_not_to_say",
-                    "bio": bio,
-                },
-                captcha_token=next_token,
-                captcha_prompt=next_prompt,
-            ),
-        )
-
-    password_salt, password_hash = hash_password(password)
-    normalized_province, normalized_region = normalize_user_location(
-        province_name,
-        region_name,
-    )
-    new_user = {
-        "username": username,
-        "display_name": display_name,
-        "password_salt": password_salt,
-        "password_hash": password_hash,
-        "active": True,
-        "player_id": None,
-        "linked_player_ids": [],
-        "manager_scope_keys": [],
-        "permissions": [],
-        "role": "member",
-        "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
-        "region_name": normalized_region or "广州市",
-        "gender": normalize_user_gender(gender) or "prefer_not_to_say",
-        "bio": bio,
-        "photo": DEFAULT_PLAYER_PHOTO,
-    }
-    users, merged_player_ids = merge_placeholder_users_for_registration(users, display_name, new_user)
-    save_users(users)
-    success_message = "注册成功，请使用新账号登录。"
-    return start_response_html(
-        start_response,
-        "200 OK",
-        login_page(ctx, alert=success_message),
-    )
+    return redirect(start_response, "/login")
 
 
 def handle_login(ctx: RequestContext, start_response):
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", login_page(ctx))
-
-    username = form_value(ctx.form, "username").strip()
-    password = form_value(ctx.form, "password")
-    for user in load_users():
-        if user["username"] == username and user.get("active") and verify_password(password, user):
-            token = secrets.token_urlsafe(24)
-            save_session(token, username)
-            next_path = form_value(ctx.query, "next", "/dashboard")
-            return redirect(
-                start_response,
-                next_path,
-                headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax")],
-            )
-
-    return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
+    next_path = form_value(ctx.query, "next", "/dashboard")
+    return redirect(start_response, "/login?" + urlencode({"next": normalize_next_path(next_path)}))
 
 
 def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
@@ -13736,50 +13784,6 @@ def handle_miniprogram_login(ctx: RequestContext, start_response):
     )
 
 
-def handle_miniprogram_bind_account(ctx: RequestContext, start_response):
-    if ctx.method != "POST":
-        return start_response_json(
-            start_response,
-            "405 Method Not Allowed",
-            {"error": "miniprogram bind only supports POST"},
-            headers=[("Allow", "POST")],
-        )
-    session_token = form_value(ctx.form, "session_token").strip()
-    current_username = load_session_username(session_token)
-    if not current_username:
-        return start_response_json(start_response, "401 Unauthorized", {"error": "请先微信登录。"})
-    target_username = form_value(ctx.form, "username").strip()
-    password = form_value(ctx.form, "password")
-    users = load_users()
-    current_user = next((item for item in users if item["username"] == current_username), None)
-    target_user = next((item for item in users if item["username"] == target_username), None)
-    if not current_user or not target_user or not target_user.get("active") or not verify_password(password, target_user):
-        return start_response_json(start_response, "403 Forbidden", {"error": "账号或密码不正确。"})
-    openid = str(current_user.get("wechat_openid") or "").strip()
-    unionid = str(current_user.get("wechat_unionid") or "").strip()
-    if not openid:
-        return start_response_json(start_response, "400 Bad Request", {"error": "当前微信身份还没有 openid。"})
-    for item in users:
-        if item["username"] != target_username and item.get("wechat_openid") == openid:
-            item["wechat_openid"] = ""
-            item["wechat_unionid"] = ""
-        if item["username"] == target_username:
-            item["wechat_openid"] = openid
-            item["wechat_unionid"] = unionid
-            target_user = item
-    save_users(users)
-    token = secrets.token_urlsafe(24)
-    save_session(token, target_username)
-    return start_response_json(
-        start_response,
-        "200 OK",
-        {
-            "session_token": token,
-            "user": serialize_miniprogram_user(target_user),
-        },
-    )
-
-
 def handle_miniprogram_profile(ctx: RequestContext, start_response):
     if ctx.method != "POST":
         return start_response_json(
@@ -13794,7 +13798,6 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
 
     users = load_users()
-    data = load_validated_data()
     user = next((item for item in users if item["username"] == username), None)
     if not user:
         return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
@@ -13804,7 +13807,6 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
     region_name = form_value(ctx.form, "region_name", "广州市").strip()
     gender = form_value(ctx.form, "gender", "prefer_not_to_say").strip()
     bio = form_value(ctx.form, "bio").strip()
-    player_id = form_value(ctx.form, "player_id").strip()
     if not display_name:
         return start_response_json(start_response, "400 Bad Request", {"error": "显示名称不能为空。"})
     normalized_province, normalized_region = normalize_user_location(province_name, region_name)
@@ -13815,14 +13817,6 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
         return start_response_json(start_response, "400 Bad Request", {"error": "请选择有效性别。"})
     if not bio:
         return start_response_json(start_response, "400 Bad Request", {"error": "请填写个人简介。"})
-
-    if player_id:
-        player_exists = any(player["player_id"] == player_id for player in data.get("players", []))
-        if not player_exists:
-            return start_response_json(start_response, "400 Bad Request", {"error": "没有找到这个选手 ID。"})
-        owner = get_user_by_player_id(users, player_id)
-        if owner and owner["username"] != username:
-            return start_response_json(start_response, "409 Conflict", {"error": "这个选手 ID 已绑定其他账号。"})
 
     updated_user = user
     updated_users: list[dict[str, Any]] = []
@@ -13837,12 +13831,6 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
             "region_name": normalized_region,
             "gender": normalized_gender,
             "bio": bio,
-            "player_id": player_id or None,
-            "linked_player_ids": [
-                linked_id
-                for linked_id in (item.get("linked_player_ids") or [])
-                if linked_id and linked_id != player_id
-            ],
         }
         updated_user = next_user
         updated_users.append(next_user)
@@ -13852,6 +13840,132 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
         "200 OK",
         {
             "user": serialize_miniprogram_user(updated_user),
+        },
+    )
+
+
+def handle_miniprogram_player_search(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram player search only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    session_token = form_value(ctx.query, "session_token").strip()
+    username = load_session_username(session_token)
+    if not username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+    keyword = form_value(ctx.query, "q").strip().lower()
+    if len(keyword) < 1:
+        return start_response_json(start_response, "200 OK", {"players": []})
+    data = load_validated_data()
+    users = load_users()
+    team_lookup = {team["team_id"]: team for team in data.get("teams", [])}
+    rows = []
+    for player in data.get("players", []):
+        display_name = str(player.get("display_name") or "").strip()
+        aliases = [str(item or "").strip() for item in player.get("aliases", [])]
+        haystack = " ".join([display_name, player["player_id"], *aliases]).lower()
+        if keyword not in haystack:
+            continue
+        owner = get_user_by_player_id(users, player["player_id"])
+        team = team_lookup.get(player.get("team_id") or "")
+        rows.append(
+            {
+                "player_id": player["player_id"],
+                "display_name": display_name,
+                "aliases": aliases,
+                "aliases_text": "、".join(aliases),
+                "team_name": team["name"] if team else "未绑定战队",
+                "bound": bool(owner),
+                "bound_to_self": bool(owner and owner["username"] == username),
+            }
+        )
+    rows.sort(key=lambda item: (item["bound"] and not item["bound_to_self"], item["display_name"], item["player_id"]))
+    return start_response_json(start_response, "200 OK", {"players": rows[:20]})
+
+
+def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
+    if ctx.method != "POST":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram bind player only supports POST"},
+            headers=[("Allow", "POST")],
+        )
+    session_token = form_value(ctx.form, "session_token").strip()
+    username = load_session_username(session_token)
+    if not username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+    player_id = form_value(ctx.form, "player_id").strip()
+    data = load_validated_data()
+    users = load_users()
+    user = next((item for item in users if item["username"] == username), None)
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+    if not any(player["player_id"] == player_id for player in data.get("players", [])):
+        return start_response_json(start_response, "400 Bad Request", {"error": "没有找到这个选手。"})
+    owner = get_user_by_player_id(users, player_id)
+    if owner and owner["username"] != username:
+        return start_response_json(start_response, "409 Conflict", {"error": "这个选手已绑定其他账号。"})
+    updated_user = user
+    updated_users = []
+    for item in users:
+        if item["username"] != username:
+            updated_users.append(item)
+            continue
+        next_user = {
+            **item,
+            "player_id": player_id,
+            "linked_player_ids": [
+                linked_id
+                for linked_id in (item.get("linked_player_ids") or [])
+                if linked_id and linked_id != player_id
+            ],
+        }
+        updated_user = next_user
+        updated_users.append(next_user)
+    save_users(updated_users)
+    return start_response_json(start_response, "200 OK", {"user": serialize_miniprogram_user(updated_user)})
+
+
+def handle_miniprogram_web_login_confirm(ctx: RequestContext, start_response):
+    if ctx.method != "POST":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram web login confirm only supports POST"},
+            headers=[("Allow", "POST")],
+        )
+    session_token = form_value(ctx.form, "session_token").strip()
+    username = load_session_username(session_token)
+    if not username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录小程序。"})
+    token = form_value(ctx.form, "token").strip()
+    payload = load_web_login_challenge(token)
+    if not payload:
+        return start_response_json(start_response, "404 Not Found", {"error": "登录二维码无效，请刷新网页后重试。"})
+    if web_login_is_expired(payload):
+        payload["status"] = "expired"
+        save_web_login_challenge(token, payload)
+        return start_response_json(start_response, "410 Gone", {"error": "登录二维码已过期，请刷新网页后重试。"})
+    if payload.get("status") not in ("pending", "confirmed"):
+        return start_response_json(start_response, "409 Conflict", {"error": "这个登录二维码已经使用过，请刷新网页后重试。"})
+    users = load_users()
+    user = next((item for item in users if item["username"] == username and item.get("active", True)), None)
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录小程序。"})
+    payload["status"] = "confirmed"
+    payload["username"] = username
+    payload["confirmed_at"] = int(time.time())
+    save_web_login_challenge(token, payload)
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "ok": True,
+            "display_name": user.get("display_name") or user["username"],
         },
     )
 
@@ -14168,10 +14282,16 @@ def app(environ, start_response):
             return serve_asset(start_response, path)
         if path == "/api/miniprogram/login":
             return handle_miniprogram_login(ctx, start_response)
-        if path == "/api/miniprogram/bind-account":
-            return handle_miniprogram_bind_account(ctx, start_response)
         if path == "/api/miniprogram/profile":
             return handle_miniprogram_profile(ctx, start_response)
+        if path == "/api/miniprogram/player-search":
+            return handle_miniprogram_player_search(ctx, start_response)
+        if path == "/api/miniprogram/bind-player":
+            return handle_miniprogram_bind_player(ctx, start_response)
+        if path == "/api/miniprogram/web-login-confirm":
+            return handle_miniprogram_web_login_confirm(ctx, start_response)
+        if path == "/api/web-login/status":
+            return handle_web_login_status(ctx, start_response)
         if path == "/api/dashboard":
             return handle_dashboard_api(ctx, start_response)
         if path == "/api/competitions":
@@ -14204,6 +14324,12 @@ def app(environ, start_response):
             return handle_schedule_api(ctx, start_response)
         if path == "/login":
             return handle_login(ctx, start_response)
+        if path == "/web-login-complete":
+            return handle_web_login_complete(ctx, start_response)
+        if path == "/mini-web-login":
+            return handle_mini_web_login_info(ctx, start_response)
+        if path in {"/wechat-login", "/wechat-callback"}:
+            return redirect(start_response, "/login")
         if path == "/register":
             return handle_register(ctx, start_response)
         if path == "/logout":

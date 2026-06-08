@@ -255,7 +255,6 @@ def build_guilds_frontend_page(ctx: RequestContext) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 
@@ -387,7 +386,6 @@ def _build_guild_account_html(ctx: RequestContext) -> str:
     return """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 

@@ -420,7 +420,6 @@ def build_competitions_frontend_page(ctx: RequestContext) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 
@@ -597,7 +596,6 @@ def build_series_frontend_page(ctx: RequestContext, series_slug: str) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 
@@ -2882,7 +2880,6 @@ def build_match_day_frontend_page(ctx: RequestContext, played_on: str) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 
@@ -3638,7 +3635,6 @@ def build_teams_frontend_page(ctx: RequestContext) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
     bootstrap = json.dumps(
@@ -4034,7 +4030,6 @@ def build_schedule_frontend_page(ctx: RequestContext) -> str:
         account_html = """
         <div class="shell-account">
           <a class="shell-button shell-button-secondary" href="/login">登录</a>
-          <a class="shell-button shell-button-primary" href="/register">注册</a>
         </div>
         """
 

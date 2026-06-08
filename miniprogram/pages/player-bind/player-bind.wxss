@@ -1,0 +1,42 @@
+.search-card,
+.player-card {
+  padding: 24rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.input {
+  height: 78rpx;
+  padding: 0 22rpx;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 12rpx;
+  background: #f8fafc;
+  box-sizing: border-box;
+  font-size: 26rpx;
+}
+
+.player-card {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+}
+
+.bind-state {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.bind-button {
+  flex: 0 0 132rpx;
+  width: 132rpx;
+  height: 64rpx;
+  border-radius: 12rpx;
+  font-size: 24rpx;
+  line-height: 64rpx;
+  color: #ffffff;
+  background: #111827;
+}

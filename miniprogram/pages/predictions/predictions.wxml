@@ -1,0 +1,117 @@
+<view class="page">
+  <view class="hero">
+    <text class="eyebrow">Score Forecast</text>
+    <text class="title">胜率预测</text>
+    <text class="copy" wx:if="{{needsCompetition}}">必须先进入一个赛事，之后才能查看赛事内比赛的预测数据。</text>
+    <text class="copy" wx:else>{{scope.label || "当前赛事"}} · {{scope.selected_season || "当前赛季"}}</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="section">
+    <view class="empty-card">
+      <text class="empty-title">正在加载</text>
+      <text class="empty-copy">正在读取比赛预测。</text>
+    </view>
+  </view>
+
+  <view wx:elif="{{error}}" class="section">
+    <view class="error-card">
+      <text>{{error}}</text>
+    </view>
+  </view>
+
+  <block wx:else>
+    <view class="section" wx:if="{{needsCompetition}}">
+      <view class="empty-card">
+        <text class="empty-title">先进入赛事</text>
+        <text class="empty-copy">选择赛事后，才能查看该赛事内的胜率预测。</text>
+        <view class="button-row">
+          <button class="primary-button" bindtap="goCompetitions">去选择赛事</button>
+        </view>
+      </view>
+    </view>
+
+    <block wx:if="{{!needsCompetition}}">
+      <view class="section">
+        <view class="section-head">
+          <text class="section-title">选择比赛</text>
+          <text class="section-note">{{matches.length}} 场</text>
+        </view>
+        <scroll-view class="match-strip" scroll-x="true" wx:if="{{matches.length}}">
+          <view
+            class="match-chip {{selectedMatch && selectedMatch.match_id === item.match_id ? 'is-active' : ''}}"
+            wx:for="{{matches}}"
+            wx:key="match_id"
+            data-match-id="{{item.match_id}}"
+            bindtap="chooseMatch"
+          >
+            <text class="match-chip-title">{{item.played_on || "未定日期"}}</text>
+            <text class="match-chip-copy">{{item.stage || "比赛"}} · {{item.player_count}} 人</text>
+          </view>
+        </scroll-view>
+        <view class="empty-card" wx:else>
+          <text class="empty-title">暂无可预测比赛</text>
+          <text class="empty-copy">录入比赛名单后，这里会显示预测入口。</text>
+        </view>
+      </view>
+
+      <view class="section" wx:if="{{selectedMatch}}">
+        <view class="selected-match">
+          <text class="selected-label">当前比赛</text>
+          <text class="selected-title">{{selectedMatch.label || selectedMatch.match_id}}</text>
+          <text class="selected-copy">{{selectedMatch.table_label || selectedMatch.match_id}} · {{selectedMatch.player_count}} 名选手</text>
+        </view>
+      </view>
+
+      <view class="section" wx:if="{{notice}}">
+        <view class="notice-card">{{notice}}</view>
+      </view>
+
+      <view class="section" wx:if="{{predictions.length}}">
+        <view class="section-head">
+          <text class="section-title">选手预测</text>
+          <text class="section-note">{{predictions.length}} 人</text>
+        </view>
+        <view class="stack">
+          <view class="prediction-card" wx:for="{{predictions}}" wx:key="player_id">
+            <view class="prediction-head" data-player-id="{{item.player_id}}" bindtap="openPlayer">
+              <view class="seat-pill">{{item.seat}}号</view>
+              <view class="prediction-main">
+                <text class="prediction-name">{{item.player_name}}</text>
+                <text class="prediction-meta">{{item.team_name || "未绑定门派"}} · 本季胜率 {{item.win_rate}} · 置信度 {{item.confidence}}</text>
+              </view>
+              <view class="expected-box">
+                <text class="expected-value">{{item.expected_points}}</text>
+                <text class="expected-label">均分</text>
+              </view>
+            </view>
+
+            <view class="prob-grid">
+              <view class="prob-item" wx:for="{{item.system}}" wx:for-item="prob" wx:key="key">
+                <text class="prob-label">系统 {{prob.label}}</text>
+                <text class="prob-value">{{prob.display}}</text>
+              </view>
+            </view>
+
+            <view class="manual-block">
+              <text class="manual-title">人工概率</text>
+              <view class="manual-grid" wx:if="{{item.manualFilled}}">
+                <view class="manual-item" wx:for="{{item.manual}}" wx:for-item="prob" wx:key="key">
+                  <text>{{prob.label}}</text>
+                  <text>{{prob.display}}</text>
+                </view>
+              </view>
+              <text class="manual-empty" wx:else>后台暂未填写人工概率</text>
+            </view>
+          </view>
+        </view>
+      </view>
+
+      <view class="section" wx:elif="{{selectedMatch}}">
+        <view class="empty-card">
+          <text class="empty-title">暂无预测数据</text>
+          <text class="empty-copy">这场比赛还没有可计算的选手名单。</text>
+        </view>
+      </view>
+    </block>
+  </block>
+</view>

@@ -15,6 +15,7 @@ import secrets
 import sys
 import threading
 import time
+import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesParser
@@ -66,7 +67,10 @@ from competition_meta import (
 from sqlite_store import (
     DB_PATH,
     add_ai_job_step,
+    connect_read_db,
+    connection_backend,
     create_ai_job,
+    database_is_initialized,
     delete_session,
     delete_sessions_for_username,
     load_access_overview,
@@ -174,13 +178,25 @@ WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
 WEB_LOGIN_BASE_URL = os.getenv("WEB_LOGIN_BASE_URL", "https://wolf.fakerclaw.indevs.in").rstrip("/")
 WEB_LOGIN_TTL_SECONDS = int(os.getenv("WEB_LOGIN_TTL_SECONDS", "600"))
 WEB_LOGIN_META_PREFIX = "web_login:"
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1" if WEB_LOGIN_BASE_URL.startswith("https://") else "0").strip() != "0"
+LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "900"))
+LOGIN_RATE_LIMIT_MAX_FAILURES = int(os.getenv("LOGIN_RATE_LIMIT_MAX_FAILURES", "8"))
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
+LOGIN_FAILURES: dict[str, list[float]] = {}
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
 SLUG_SANITIZE_PATTERN = re.compile(r"[^a-z0-9_-]+")
 MATCH_ID_PATTERN = re.compile(r"^[a-z0-9]{1,6}-[a-z0-9]{1,8}-\d{6}-\d{2}$")
 ALIAS_SPLIT_PATTERN = re.compile(r"[\n,，、]+")
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
-ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg"}
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(50 * 1024 * 1024)))
+ALLOWED_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".gif"}
+IMAGE_SIGNATURES = {
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".webp": (b"RIFF",),
+    ".gif": (b"GIF87a", b"GIF89a"),
+}
 VALIDATED_DATA_CACHE_LOCK = threading.RLock()
 VALIDATED_DATA_CACHE: dict[str, Any] = {
     "db_mtime_ns": None,
@@ -382,6 +398,12 @@ class RequestContext:
     files: dict[str, list[UploadedFile]]
     current_user: dict[str, Any] | None
     now_label: str
+    remote_addr: str = ""
+    request_id: str = ""
+
+
+class RequestBodyTooLarge(ValueError):
+    pass
 
 
 def china_now() -> datetime:
@@ -1066,6 +1088,8 @@ def get_request_data(
     if environ.get("REQUEST_METHOD", "GET").upper() == "POST":
         content_type = environ.get("CONTENT_TYPE", "")
         size = int(environ.get("CONTENT_LENGTH") or 0)
+        if size > MAX_REQUEST_BODY_BYTES:
+            raise RequestBodyTooLarge("请求体过大。")
         raw_body = environ["wsgi.input"].read(size)
         if content_type.startswith("multipart/form-data"):
             message = BytesParser(policy=default_email_policy).parsebytes(
@@ -1121,6 +1145,32 @@ def verify_password(password: str, user: dict[str, Any]) -> bool:
     expected = base64.b64decode(user["password_hash"])
     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 200000)
     return hmac.compare_digest(candidate, expected)
+
+
+def login_rate_limit_key(remote_addr: str, username: str) -> str:
+    normalized_user = (username or "-").strip().lower() or "-"
+    normalized_addr = (remote_addr or "unknown").strip() or "unknown"
+    return f"{normalized_addr}:{normalized_user}"
+
+
+def login_rate_limited(remote_addr: str, username: str) -> bool:
+    now = time.time()
+    cutoff = now - LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    key = login_rate_limit_key(remote_addr, username)
+    attempts = [item for item in LOGIN_FAILURES.get(key, []) if item >= cutoff]
+    LOGIN_FAILURES[key] = attempts
+    return len(attempts) >= LOGIN_RATE_LIMIT_MAX_FAILURES
+
+
+def record_login_failure(remote_addr: str, username: str) -> None:
+    now = time.time()
+    cutoff = now - LOGIN_RATE_LIMIT_WINDOW_SECONDS
+    key = login_rate_limit_key(remote_addr, username)
+    LOGIN_FAILURES[key] = [item for item in LOGIN_FAILURES.get(key, []) if item >= cutoff] + [now]
+
+
+def clear_login_failures(remote_addr: str, username: str) -> None:
+    LOGIN_FAILURES.pop(login_rate_limit_key(remote_addr, username), None)
 
 
 def hash_password(password: str) -> tuple[str, str]:
@@ -1558,12 +1608,54 @@ def revoke_user_sessions(username: str) -> None:
     delete_sessions_for_username(username)
 
 
-def start_response_html(start_response, status: str, body: str, headers: list[tuple[str, str]] | None = None):
-    extra_headers = headers or []
+def build_request_id(environ: dict[str, Any]) -> str:
+    existing = str(environ.get("werewolf.request_id") or "").strip()
+    if existing:
+        return existing
+    incoming = str(environ.get("HTTP_X_REQUEST_ID") or "").strip()
+    if re.fullmatch(r"[A-Za-z0-9_.:-]{8,80}", incoming):
+        return incoming
+    return "req_" + secrets.token_hex(12)
+
+
+def wrap_start_response_with_request_id(start_response, request_id: str):
+    def wrapped_start_response(status, headers, exc_info=None):
+        next_headers = with_request_id_header(list(headers or []), request_id)
+        if exc_info is not None:
+            return start_response(status, next_headers, exc_info)
+        return start_response(status, next_headers)
+
+    return wrapped_start_response
+
+
+def with_request_id_header(
+    headers: list[tuple[str, str]] | None,
+    request_id: str = "",
+) -> list[tuple[str, str]]:
+    normalized_headers = list(headers or [])
+    if request_id and not any(name.lower() == "x-request-id" for name, _ in normalized_headers):
+        normalized_headers.append(("X-Request-ID", request_id))
+    return normalized_headers
+
+
+def start_response_html(
+    start_response,
+    status: str,
+    body: str,
+    headers: list[tuple[str, str]] | None = None,
+    request_id: str = "",
+):
+    extra_headers = with_request_id_header(headers, request_id)
     payload = body.encode("utf-8")
     start_response(
         status,
-        [("Content-Type", "text/html; charset=utf-8"), ("Content-Length", str(len(payload)))] + extra_headers,
+        [
+            ("Content-Type", "text/html; charset=utf-8"),
+            ("Content-Length", str(len(payload))),
+            ("X-Content-Type-Options", "nosniff"),
+            ("X-Frame-Options", "DENY"),
+            ("Referrer-Policy", "strict-origin-when-cross-origin"),
+        ] + extra_headers,
     )
     return [payload]
 
@@ -1573,20 +1665,36 @@ def start_response_json(
     status: str,
     payload: Any,
     headers: list[tuple[str, str]] | None = None,
+    request_id: str = "",
 ):
-    extra_headers = headers or []
+    extra_headers = with_request_id_header(headers, request_id)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     start_response(
         status,
-        [("Content-Type", "application/json; charset=utf-8"), ("Content-Length", str(len(body)))] + extra_headers,
+        [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("X-Content-Type-Options", "nosniff"),
+            ("Referrer-Policy", "strict-origin-when-cross-origin"),
+        ] + extra_headers,
     )
     return [body]
 
 
-def redirect(start_response, location: str, headers: list[tuple[str, str]] | None = None):
-    extra_headers = headers or []
+def redirect(
+    start_response,
+    location: str,
+    headers: list[tuple[str, str]] | None = None,
+    request_id: str = "",
+):
+    extra_headers = with_request_id_header(headers, request_id)
     start_response("302 Found", [("Location", location)] + extra_headers)
     return [b""]
+
+
+def build_session_cookie(token: str, max_age: int = SESSION_COOKIE_MAX_AGE_SECONDS) -> str:
+    secure_flag = "; Secure" if COOKIE_SECURE else ""
+    return f"{SESSION_COOKIE}={token}; Path=/; Max-Age={max_age}; HttpOnly; SameSite=Lax{secure_flag}"
 
 
 def form_value(form: dict[str, list[str]], key: str, default: str = "") -> str:
@@ -1690,6 +1798,7 @@ def is_management_path(path: str) -> bool:
         "/team-admin",
         "/series-manage",
         "/matches/new",
+        "/prediction-admin",
     }:
         return True
     if path.startswith("/matches/") and path.endswith("/edit"):
@@ -1743,6 +1852,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                     ctx.path == "/matches/new"
                     or (ctx.path.startswith("/matches/") and ctx.path.endswith("/edit")),
                 )
+            )
+            admin_nav_links.append(
+                build_nav_link("胜率预测", "/prediction-admin", ctx.path == "/prediction-admin")
             )
         if can_access_series_management(ctx.current_user):
             admin_nav_links.append(
@@ -5189,11 +5301,32 @@ def validate_uploaded_photo(upload: UploadedFile | None) -> str:
         return ""
     extension = Path(upload.filename).suffix.lower()
     if extension not in ALLOWED_IMAGE_EXTENSIONS:
-        return "照片文件格式仅支持 PNG、JPG、JPEG、WEBP、GIF 或 SVG。"
+        return "照片文件格式仅支持 PNG、JPG、JPEG、WEBP 或 GIF。"
     if len(upload.data) > MAX_UPLOAD_BYTES:
         return "照片文件不能超过 5 MB。"
     if not upload.data:
         return "上传的照片文件为空，请重新选择。"
+    signature_error = validate_image_bytes(upload.filename, upload.data)
+    if signature_error:
+        return signature_error
+    return ""
+
+
+def validate_image_bytes(filename: str, image_bytes: bytes) -> str:
+    extension = Path(filename).suffix.lower()
+    if extension not in ALLOWED_IMAGE_EXTENSIONS:
+        return "图片文件格式仅支持 PNG、JPG、JPEG、WEBP 或 GIF。"
+    if not image_bytes:
+        return "图片文件为空，请重新选择。"
+    if len(image_bytes) > MAX_UPLOAD_BYTES:
+        return "图片文件不能超过 5 MB。"
+    signatures = IMAGE_SIGNATURES.get(extension, ())
+    if extension == ".webp":
+        if len(image_bytes) < 12 or not image_bytes.startswith(b"RIFF") or image_bytes[8:12] != b"WEBP":
+            return "图片内容与文件格式不一致，请重新上传真实图片。"
+        return ""
+    if signatures and not any(image_bytes.startswith(signature) for signature in signatures):
+        return "图片内容与文件格式不一致，请重新上传真实图片。"
     return ""
 
 
@@ -9992,7 +10125,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             <input type="hidden" name="next" value="{escape(current_team_path)}">
             <div class="row g-3 align-items-end">
               <div class="col-12 col-lg-8">
-                <input class="form-control" name="logo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
+                <input class="form-control" name="logo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/*">
               </div>
               <div class="col-12 col-lg-4 d-flex gap-2">
                 <button type="submit" class="btn btn-dark">更新队标</button>
@@ -12352,7 +12485,7 @@ def build_player_edit_form(
     show_account_fields: bool = False,
     player_section_copy: str = "可以修改队员名称、别名、备注，并上传新的队员照片。",
     photo_field_label: str = "上传照片",
-    photo_help_text: str = "支持 PNG、JPG、JPEG、WEBP、GIF、SVG，大小不超过 5 MB。",
+    photo_help_text: str = "支持 PNG、JPG、JPEG、WEBP、GIF，大小不超过 5 MB。",
     photo_preview_path: str = "",
     photo_preview_name: str = "",
     photo_preview_path_label: str = "当前照片路径",
@@ -12423,7 +12556,7 @@ def build_player_edit_form(
             </div>
             <div class="mb-0">
               <label class="form-label">{escape(photo_field_label)}</label>
-              <input class="form-control" name="photo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
+              <input class="form-control" name="photo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/*">
               <div class="small text-secondary mt-2">{escape(photo_help_text)}</div>
             </div>
           </div>
@@ -13524,6 +13657,8 @@ def build_context(environ: dict[str, Any]) -> RequestContext:
         files=files,
         current_user=get_current_user(environ),
         now_label=china_now_label(),
+        remote_addr=str(environ.get("REMOTE_ADDR") or ""),
+        request_id=build_request_id(environ),
     )
 
 
@@ -13570,7 +13705,7 @@ def handle_web_login_complete(ctx: RequestContext, start_response):
     return redirect(
         start_response,
         normalize_next_path(str(payload.get("next") or "/dashboard")),
-        headers=[("Set-Cookie", f"{SESSION_COOKIE}={session_token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax")],
+        headers=[("Set-Cookie", build_session_cookie(session_token))],
     )
 
 
@@ -13683,15 +13818,23 @@ def handle_login(ctx: RequestContext, start_response):
     next_path = form_value(ctx.query, "next", "/dashboard")
     username = form_value(ctx.form, "username").strip()
     password = form_value(ctx.form, "password")
+    if login_rate_limited(ctx.remote_addr, username):
+        return start_response_html(
+            start_response,
+            "429 Too Many Requests",
+            login_page(ctx, alert="登录失败次数过多，请稍后再试或使用小程序扫码登录。"),
+        )
     for user in load_users():
         if user["username"] == username and user.get("active") and verify_password(password, user):
             token = secrets.token_urlsafe(24)
             save_session(token, username)
+            clear_login_failures(ctx.remote_addr, username)
             return redirect(
                 start_response,
                 normalize_next_path(next_path),
-                headers=[("Set-Cookie", f"{SESSION_COOKIE}={token}; Path=/; Max-Age={SESSION_COOKIE_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax")],
+                headers=[("Set-Cookie", build_session_cookie(token))],
             )
+    record_login_failure(ctx.remote_addr, username)
     return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
 
 
@@ -13714,10 +13857,12 @@ def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
 def request_wechat_session(code: str) -> dict[str, str]:
     dev_openid = os.getenv("WECHAT_MINIPROGRAM_DEV_OPENID", "").strip()
     if dev_openid:
-        return {
-            "openid": dev_openid,
-            "unionid": os.getenv("WECHAT_MINIPROGRAM_DEV_UNIONID", "").strip(),
-        }
+        if os.getenv("ALLOW_WECHAT_DEV_LOGIN", "").strip() == "1":
+            return {
+                "openid": dev_openid,
+                "unionid": os.getenv("WECHAT_MINIPROGRAM_DEV_UNIONID", "").strip(),
+            }
+        raise RuntimeError("生产环境不允许使用 WECHAT_MINIPROGRAM_DEV_OPENID；本地调试请同时设置 ALLOW_WECHAT_DEV_LOGIN=1。")
     appid = WECHAT_MINIPROGRAM_APPID.strip()
     secret = WECHAT_MINIPROGRAM_SECRET.strip()
     if not appid or not secret:
@@ -14006,7 +14151,7 @@ def handle_logout(start_response, environ: dict[str, Any]):
     return redirect(
         start_response,
         "/login",
-        headers=[("Set-Cookie", f"{SESSION_COOKIE}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax")],
+        headers=[("Set-Cookie", build_session_cookie("", 0))],
     )
 
 
@@ -14232,7 +14377,11 @@ def serve_asset(start_response, path: str):
     content_type = mimetypes.guess_type(asset_path.name)[0] or "application/octet-stream"
     start_response(
         "200 OK",
-        [("Content-Type", content_type), ("Content-Length", str(len(payload)))],
+        [
+            ("Content-Type", content_type),
+            ("Content-Length", str(len(payload))),
+            ("X-Content-Type-Options", "nosniff"),
+        ],
     )
     return [payload]
 
@@ -14274,6 +14423,119 @@ def handle_match_api(ctx: RequestContext, start_response, match_id: str):
     return impl(ctx, start_response, match_id)
 
 
+def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    from web.features.match_page import PREDICTION_BUCKETS, build_match_score_predictions
+
+    data = load_validated_data()
+    competition_names = sorted({get_match_competition_name(match) for match in data.get("matches", [])})
+    selected_competition = get_selected_competition(ctx, competition_names)
+    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    selected_season = get_selected_season(ctx, season_names)
+    selected_region = form_value(ctx.query, "region").strip() or None
+    selected_series_slug = form_value(ctx.query, "series").strip() or None
+    requested_match_id = form_value(ctx.query, "match_id").strip()
+    scoped_matches = [
+        match
+        for match in data.get("matches", [])
+        if match_in_scope(match, selected_competition, selected_season)
+        and any(str(item.get("player_id") or "").strip() for item in match.get("players", []))
+    ]
+    scoped_matches.sort(
+        key=lambda item: (
+            str(item.get("played_on") or ""),
+            int(item.get("round") or 0),
+            int(item.get("game_no") or 0),
+            str(item.get("match_id") or ""),
+        ),
+        reverse=True,
+    )
+    selected_match = None
+    if requested_match_id:
+        selected_match = next(
+            (match for match in scoped_matches if str(match.get("match_id") or "") == requested_match_id),
+            None,
+        )
+    if not selected_match and scoped_matches:
+        selected_match = scoped_matches[0]
+
+    def match_option(match: dict[str, Any]) -> dict[str, Any]:
+        match_id = str(match.get("match_id") or "")
+        stage = STAGE_OPTIONS.get(match.get("stage"), match.get("stage") or "")
+        label_parts = [
+            str(match.get("played_on") or ""),
+            stage,
+            f"第{int(match.get('round') or 0)}轮" if match.get("round") else "",
+            f"第{int(match.get('game_no') or 0)}局" if match.get("game_no") else "",
+        ]
+        return {
+            "match_id": match_id,
+            "competition": get_match_competition_name(match),
+            "season": str(match.get("season") or ""),
+            "played_on": str(match.get("played_on") or ""),
+            "stage": stage,
+            "round": int(match.get("round") or 0),
+            "game_no": int(match.get("game_no") or 0),
+            "table_label": str(match.get("table_label") or ""),
+            "player_count": len(match.get("players", [])),
+            "label": " · ".join(part for part in label_parts if part),
+        }
+
+    predictions: list[dict[str, Any]] = []
+    selected_payload = None
+    if selected_match:
+        match_id = str(selected_match.get("match_id") or "")
+        competition_name = get_match_competition_name(selected_match)
+        season_name = str(selected_match.get("season") or "").strip()
+        predictions = build_match_score_predictions(
+            data,
+            selected_match,
+            competition_name,
+            season_name,
+            selected_region,
+            selected_series_slug,
+        )
+        selected_payload = match_option(selected_match)
+
+    return {
+        "generated_at": ctx.now_label,
+        "scope": {
+            "label": selected_competition or "请先选择赛事",
+            "selected_competition": selected_competition,
+            "selected_season": selected_season,
+            "selected_region": selected_region,
+            "selected_series_slug": selected_series_slug,
+        },
+        "matches": [match_option(match) for match in scoped_matches[:60]],
+        "selected_match": selected_payload,
+        "prediction_buckets": [{"key": key, "label": label} for key, label, _, _ in PREDICTION_BUCKETS],
+        "predictions": predictions,
+        "notice": "预测仅用于赛前参考；未录入结果的比赛不会计入历史样本。",
+    }
+
+
+def handle_predictions_api(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "predictions api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_response_json(start_response, "200 OK", build_predictions_api_payload(ctx))
+
+
+def get_match_prediction_page(ctx: RequestContext, match_id: str) -> str:
+    from web.features.match_page import get_match_prediction_page as impl
+
+    return impl(ctx, match_id)
+
+
+def handle_prediction_admin(ctx: RequestContext, start_response):
+    from web.features.match_page import handle_prediction_admin as impl
+
+    return impl(ctx, start_response)
+
+
 def handle_match_create(ctx: RequestContext, start_response):
     from web.features.matches import handle_match_create as impl
 
@@ -14286,11 +14548,86 @@ def handle_dimension_stats_manage(ctx: RequestContext, start_response):
     return impl(ctx, start_response)
 
 
+def handle_healthz(ctx: RequestContext, start_response):
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "ok": True,
+            "status": "alive",
+            "time": ctx.now_label,
+        },
+    )
+
+
+def handle_readyz(ctx: RequestContext, start_response):
+    checks: dict[str, Any] = {
+        "backend": "",
+        "db_path": str(DB_PATH),
+        "db_exists": DB_PATH.exists(),
+        "initialized": False,
+        "quick_check": "",
+        "connectivity": False,
+        "users": None,
+        "matches": None,
+    }
+    status = "200 OK"
+    try:
+        with connect_read_db() as connection:
+            backend = connection_backend(connection)
+            checks["backend"] = backend
+            checks["connectivity"] = True
+            checks["initialized"] = database_is_initialized(connection)
+            if backend == "sqlite":
+                quick_row = connection.execute("PRAGMA quick_check").fetchone()
+                checks["quick_check"] = str(quick_row[0] if quick_row else "")
+            else:
+                connection.execute("SELECT 1").fetchone()
+                checks["quick_check"] = "not_applicable"
+                checks["db_path"] = ""
+                checks["db_exists"] = True
+            counts = connection.execute(
+                """
+                SELECT
+                    (SELECT COUNT(*) FROM users) AS users,
+                    (SELECT COUNT(*) FROM matches) AS matches
+                """
+            ).fetchone()
+            checks["users"] = int(counts["users"] or 0)
+            checks["matches"] = int(counts["matches"] or 0)
+    except Exception as exc:
+        status = "503 Service Unavailable"
+        checks["error"] = str(exc)
+    ok = (
+        status == "200 OK"
+        and bool(checks["db_exists"])
+        and bool(checks["connectivity"])
+        and bool(checks["initialized"])
+        and checks["quick_check"] in {"ok", "not_applicable"}
+    )
+    if not ok:
+        status = "503 Service Unavailable"
+    return start_response_json(
+        start_response,
+        status,
+        {
+            "ok": ok,
+            "status": "ready" if ok else "not_ready",
+            "time": ctx.now_label,
+            "checks": checks,
+        },
+    )
+
+
 def app(environ, start_response):
+    request_id = build_request_id(environ)
+    environ["werewolf.request_id"] = request_id
+    start_response = wrap_start_response_with_request_id(start_response, request_id)
     try:
         ctx = build_context(environ)
+        request_id = ctx.request_id
         path = ctx.path
-        if not path.startswith("/assets/"):
+        if not path.startswith("/assets/") and path not in {"/healthz", "/readyz"}:
             try:
                 record_access_log(
                     path=path,
@@ -14300,12 +14637,17 @@ def app(environ, start_response):
                     ip_address=str(environ.get("REMOTE_ADDR") or ""),
                     user_agent=str(environ.get("HTTP_USER_AGENT") or ""),
                     created_at=ctx.now_label,
+                    request_id=ctx.request_id,
                 )
             except Exception as exc:
-                print("访问日志写入失败：", exc)
+                print(f"访问日志写入失败 request_id={ctx.request_id}：", exc)
 
         if path == "/":
             return redirect(start_response, "/dashboard")
+        if path == "/healthz":
+            return handle_healthz(ctx, start_response)
+        if path == "/readyz":
+            return handle_readyz(ctx, start_response)
         if path.startswith("/assets/"):
             return serve_asset(start_response, path)
         if path == "/api/miniprogram/login":
@@ -14342,6 +14684,8 @@ def app(environ, start_response):
         if path.startswith("/api/matches/"):
             match_id = path.split("/", 3)[3]
             return handle_match_api(ctx, start_response, match_id)
+        if path == "/api/predictions":
+            return handle_predictions_api(ctx, start_response)
         if path.startswith("/api/series/"):
             series_slug = path.split("/", 3)[3]
             return handle_series_api(ctx, start_response, series_slug)
@@ -14460,6 +14804,11 @@ def app(environ, start_response):
             if guard is not None:
                 return guard
             return handle_dimension_stats_manage(ctx, start_response)
+        if path == "/prediction-admin":
+            guard = require_login(ctx, start_response)
+            if guard is not None:
+                return guard
+            return handle_prediction_admin(ctx, start_response)
         if path.startswith("/matches/") and path.endswith("/legacy"):
             parts = path.strip("/").split("/")
             if len(parts) == 3 and parts[0] == "matches" and parts[2] == "legacy":
@@ -14477,6 +14826,14 @@ def app(environ, start_response):
             if manager_guard is not None:
                 return manager_guard
             return handle_match_edit(ctx, start_response, match_id)
+        if path.startswith("/matches/") and path.endswith("/predictions"):
+            parts = path.strip("/").split("/")
+            if len(parts) == 3 and parts[0] == "matches" and parts[2] == "predictions":
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_prediction_page(ctx, parts[1]),
+                )
         if path.startswith("/matches/"):
             match_id = path.split("/", 2)[2]
             return start_response_html(start_response, "200 OK", get_match_legacy_page(ctx, match_id))
@@ -14576,11 +14933,19 @@ def app(environ, start_response):
             "404 Not Found",
             layout("页面不存在", '<div class="alert alert-danger">你访问的页面不存在。</div>', ctx),
         )
+    except RequestBodyTooLarge:
+        return start_response_html(
+            start_response,
+            "413 Payload Too Large",
+            f"<h1>上传内容过大</h1><p>请缩小文件后重试。</p><p>请求编号：{escape(request_id)}</p>",
+        )
     except Exception as exc:
+        print(f"请求处理失败 request_id={request_id}：", repr(exc))
+        traceback.print_exc()
         return start_response_html(
             start_response,
             "500 Internal Server Error",
-            f"<h1>服务运行出错</h1><pre>{escape(str(exc))}</pre>",
+            f"<h1>服务运行出错</h1><p>请稍后重试，或联系管理员查看服务日志。</p><p>请求编号：{escape(request_id)}</p>",
         )
 
 

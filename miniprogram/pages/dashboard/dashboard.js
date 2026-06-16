@@ -90,6 +90,10 @@ Page({
     wx.switchTab({ url: "/pages/players/players" });
   },
 
+  goPredictions() {
+    wx.navigateTo({ url: "/pages/predictions/predictions" });
+  },
+
   openPlayerDetail(event) {
     const playerId = event.currentTarget.dataset.playerId;
     if (!playerId) {

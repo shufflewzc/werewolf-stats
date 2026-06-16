@@ -5,6 +5,7 @@
     "include": []
   },
   "setting": {
+    "urlCheck": true,
     "bundle": false,
     "coverView": true,
     "es6": true,
@@ -14,7 +15,7 @@
     "showShadowRootInWxmlPanel": true,
     "compileWorklet": false,
     "uglifyFileName": false,
-    "uploadWithSourceMap": true,
+    "uploadWithSourceMap": false,
     "packNpmManually": false,
     "packNpmRelationList": [],
     "minifyWXSS": true,

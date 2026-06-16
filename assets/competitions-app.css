@@ -2616,6 +2616,31 @@ body.match-detail-app-shell .match-detail-table a {
 body.match-detail-app-shell .match-detail-table a:hover {
   color: #8fd3ff;
 }
+body.match-detail-app-shell .match-detail-prediction-note {
+  background: rgba(255, 202, 97, 0.16);
+  border: 1px solid rgba(255, 214, 128, 0.52);
+  border-radius: 16px;
+  color: #ffe7a3;
+  font-weight: 900;
+  line-height: 1.45;
+  padding: 12px 14px;
+}
+body.match-detail-app-shell .match-detail-prediction-table {
+  min-width: 1320px;
+}
+body.match-detail-app-shell .match-detail-prediction-table td:nth-child(n+6):nth-child(-n+11) {
+  color: #ffe7a3;
+}
+body.match-detail-app-shell .match-detail-prediction-actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+body.match-detail-app-shell .match-detail-prediction-actions span {
+  color: #b9d8ff;
+  font-weight: 900;
+}
 body.match-detail-app-shell .competitions-alert {
   background: rgba(143, 211, 255, 0.14);
   border: 1px solid rgba(143, 211, 255, 0.38);

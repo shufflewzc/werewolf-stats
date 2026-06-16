@@ -185,7 +185,7 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
             <input type="hidden" name="next" value="{escape(current_team_path)}">
             <div class="row g-3 align-items-end">
               <div class="col-12 col-lg-8">
-                <input class="form-control" name="logo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
+                <input class="form-control" name="logo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/*">
               </div>
               <div class="col-12 col-lg-4 d-flex gap-2">
                 <button type="submit" class="btn btn-dark">更新队标</button>

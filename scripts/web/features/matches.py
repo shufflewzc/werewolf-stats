@@ -6,6 +6,7 @@ from html import escape
 from io import BytesIO
 from io import StringIO
 import json
+import os
 from pathlib import Path
 from pathlib import PurePosixPath
 import re
@@ -69,6 +70,10 @@ TEAM_UPLOAD_DIR = legacy.TEAM_UPLOAD_DIR
 ROOT_DIR = legacy.ROOT
 ALLOWED_IMAGE_EXTENSIONS = legacy.ALLOWED_IMAGE_EXTENSIONS
 MAX_UPLOAD_BYTES = legacy.MAX_UPLOAD_BYTES
+MAX_EXCEL_UPLOAD_BYTES = int(os.getenv("MAX_EXCEL_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+MAX_EXCEL_SHEET_ROWS = int(os.getenv("MAX_EXCEL_SHEET_ROWS", "2000"))
+MAX_ZIP_UPLOAD_BYTES = int(os.getenv("MAX_ZIP_UPLOAD_BYTES", str(50 * 1024 * 1024)))
+MAX_ZIP_IMAGE_COUNT = int(os.getenv("MAX_ZIP_IMAGE_COUNT", "300"))
 PLAYER_PHOTO_PENDING_DIR = legacy.PLAYER_UPLOAD_DIR.parent / "import-pending"
 start_response_html = legacy.start_response_html
 uses_structured_score_model = legacy.uses_structured_score_model
@@ -956,7 +961,7 @@ def build_player_photo_import_panel(
             <input class="form-control" type="file" name="player_photo_zip_file" accept=".zip,application/zip,application/x-zip-compressed">
           </div>
         </div>
-        <div class="small text-secondary mt-3">压缩包内图片文件名一般为 `id.png`，例如 `player-001.png`。支持 PNG、JPG、JPEG、WEBP、GIF、SVG；同名目录不影响匹配，系统只取文件名去掉扩展名后的 ID。</div>
+        <div class="small text-secondary mt-3">压缩包内图片文件名一般为 `id.png`，例如 `player-001.png`。支持 PNG、JPG、JPEG、WEBP、GIF；同名目录不影响匹配，系统只取文件名去掉扩展名后的 ID。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark" name="action" value="import_player_photo_zip">上传并导入队员头像</button>
           <button type="submit" class="btn btn-outline-dark" name="action" value="export_season_player_photo_roster" formaction="/matches/new" formmethod="get" formnovalidate>导出本赛季队员名单</button>
@@ -1188,6 +1193,8 @@ def read_excel_sheet_rows(upload: UploadedFile, sheet_name: str) -> list[dict[st
 
     rows: list[list[str]] = []
     for row in sheet_xml.findall("main:sheetData/main:row", EXCEL_NS):
+        if len(rows) >= MAX_EXCEL_SHEET_ROWS:
+            raise ValueError(f"{sheet_name} 工作表超过 {MAX_EXCEL_SHEET_ROWS} 行，请拆分后再导入。")
         values: list[str] = []
         next_column_index = 1
         for cell in row.findall("main:c", EXCEL_NS):
@@ -1414,6 +1421,9 @@ def save_embedded_team_logo(team_id: str, original_name: str, image_bytes: bytes
     extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_IMAGE_EXTENSIONS:
         raise ValueError(f"不支持的图片格式：{original_name}")
+    signature_error = legacy.validate_image_bytes(original_name, image_bytes)
+    if signature_error:
+        raise ValueError(signature_error)
     ensure_team_asset_dirs()
     filename = f"{team_id}-{secrets.token_hex(6)}{extension}"
     target = TEAM_UPLOAD_DIR / filename
@@ -1425,6 +1435,9 @@ def save_embedded_player_photo(player_id: str, original_name: str, image_bytes: 
     extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_IMAGE_EXTENSIONS:
         raise ValueError(f"不支持的图片格式：{original_name}")
+    signature_error = legacy.validate_image_bytes(original_name, image_bytes)
+    if signature_error:
+        raise ValueError(signature_error)
     legacy.ensure_player_asset_dirs()
     target = legacy.PLAYER_UPLOAD_DIR / f"{player_id}-{secrets.token_hex(6)}{extension}"
     target.write_bytes(image_bytes)
@@ -1465,6 +1478,18 @@ def validate_excel_upload(upload: UploadedFile | None) -> str:
         return "目前只支持上传 .xlsx 格式的比赛模板。"
     if not upload.data:
         return "上传的 Excel 文件为空，请重新选择。"
+    if len(upload.data) > MAX_EXCEL_UPLOAD_BYTES:
+        return f"Excel 文件不能超过 {MAX_EXCEL_UPLOAD_BYTES // 1024 // 1024} MB，请拆分后再上传。"
+    try:
+        with ZipFile(BytesIO(upload.data)) as archive:
+            names = set(archive.namelist())
+            if "xl/workbook.xml" not in names:
+                return "上传的 .xlsx 文件结构无效，请确认文件没有损坏。"
+            worksheet_count = sum(1 for name in names if name.startswith("xl/worksheets/") and name.endswith(".xml"))
+            if worksheet_count <= 0:
+                return "上传的 Excel 文件没有可读取的工作表。"
+    except BadZipFile:
+        return "上传的 .xlsx 文件无法解析，请确认文件没有损坏。"
     return ""
 
 
@@ -1475,6 +1500,19 @@ def validate_zip_upload(upload: UploadedFile | None) -> str:
         return "目前只支持上传 .zip 格式的头像压缩包。"
     if not upload.data:
         return "上传的 zip 压缩包为空，请重新选择。"
+    if len(upload.data) > MAX_ZIP_UPLOAD_BYTES:
+        return f"zip 压缩包不能超过 {MAX_ZIP_UPLOAD_BYTES // 1024 // 1024} MB，请拆分后再上传。"
+    try:
+        with ZipFile(BytesIO(upload.data)) as archive:
+            entries = [
+                info
+                for info in archive.infolist()
+                if not info.is_dir() and not info.filename.startswith("__MACOSX/")
+            ]
+            if len(entries) > MAX_ZIP_IMAGE_COUNT:
+                return f"zip 压缩包内文件不能超过 {MAX_ZIP_IMAGE_COUNT} 个，请拆分后再上传。"
+    except BadZipFile:
+        return "zip 压缩包无法解析，请确认文件没有损坏。"
     return ""
 
 
@@ -2396,6 +2434,9 @@ def save_pending_player_photo_import(filename: str, image_bytes: bytes, batch_id
     extension = PurePosixPath(filename).suffix.lower()
     if extension not in ALLOWED_IMAGE_EXTENSIONS:
         raise ValueError(f"不支持的图片格式：{filename}")
+    signature_error = legacy.validate_image_bytes(filename, image_bytes)
+    if signature_error:
+        raise ValueError(signature_error)
     PLAYER_PHOTO_PENDING_DIR.mkdir(parents=True, exist_ok=True)
     batch_dir = PLAYER_PHOTO_PENDING_DIR / batch_id
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -2454,6 +2495,8 @@ def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, ob
             ]
             if not entries:
                 return None, "zip 压缩包中没有找到可导入的头像图片。"
+            if len(entries) > MAX_ZIP_IMAGE_COUNT:
+                return None, f"zip 压缩包内文件不能超过 {MAX_ZIP_IMAGE_COUNT} 个，请拆分后再上传。"
 
             items: list[dict[str, object]] = []
             ignored_count = 0
@@ -2472,7 +2515,10 @@ def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, ob
                     ignored_count += 1
                     continue
                 filename = PurePosixPath(info.filename).name
-                pending_path = save_pending_player_photo_import(filename, image_bytes, batch_id)
+                try:
+                    pending_path = save_pending_player_photo_import(filename, image_bytes, batch_id)
+                except ValueError as exc:
+                    return None, f"{filename} 图片校验失败：{exc}"
                 items.append(
                     {
                         "token": str(len(items)),

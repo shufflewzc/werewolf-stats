@@ -98,6 +98,28 @@
     `;
   }
 
+  function renderScorePredictions(predictions, buckets) {
+    const items = Array.isArray(predictions) ? predictions : [];
+    const actions = (buckets && buckets.actions) || {};
+    return `
+      <section class="competitions-panel match-detail-section match-detail-prediction-section">
+        <div class="competitions-section-head">
+          <div>
+            <div class="competitions-section-kicker">Score Forecast</div>
+            <h2 class="competitions-section-title">胜率预测</h2>
+            <p class="competitions-copy">预测已拆分到独立页面展示，前台会并排显示系统计算概率和后台人工概率。</p>
+          </div>
+        </div>
+        <div class="match-detail-prediction-note">预测仅用于赛前参考；未录入结果的比赛不会计入历史样本。</div>
+        <div class="match-detail-prediction-actions">
+          <a class="competitions-button competitions-button-primary" href="${escapeHtml(actions.prediction_href || "#")}">打开预测页</a>
+          ${actions.admin_href ? `<a class="competitions-button competitions-button-secondary" href="${escapeHtml(actions.admin_href)}">后台人工概率</a>` : ""}
+          <span>${escapeHtml(items.length)} 名选手可预测</span>
+        </div>
+      </section>
+    `;
+  }
+
   function renderMatch(payload) {
     const match = payload.match || {};
     const actions = payload.actions || {};
@@ -133,6 +155,7 @@
         <div class="competitions-section-head"><div><div class="competitions-section-kicker">Team Scores</div><h2 class="competitions-section-title">战队比分</h2><p class="competitions-copy">按本场所有上场成员的得分累计展示。</p></div></div>
         ${renderScores(payload.team_scores)}
       </section>
+      ${renderScorePredictions(payload.score_predictions, { actions: actions })}
       <section class="competitions-panel match-detail-section">
         <div class="competitions-section-head"><div><div class="competitions-section-kicker">Participants</div><h2 class="competitions-section-title">上场成员明细</h2><p class="competitions-copy">点击队员或战队名称，可以继续跳转到对应详情页。</p></div></div>
         ${renderParticipants(payload.participants, payload.score_fields)}

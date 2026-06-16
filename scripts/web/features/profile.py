@@ -115,7 +115,7 @@ def get_profile_page(
             account_bio=current_bio,
             player_section_copy="可以修改当前绑定主档案的名称、别名、备注。头像属于账号资料，不会写回赛季档案。",
             photo_field_label="上传账号头像",
-            photo_help_text="账号头像独立于赛季档案保存，支持 PNG、JPG、JPEG、WEBP、GIF、SVG，大小不超过 5 MB。",
+            photo_help_text="账号头像独立于赛季档案保存，支持 PNG、JPG、JPEG、WEBP、GIF，大小不超过 5 MB。",
             photo_preview_path=current_account_photo,
             photo_preview_name=current_account_name,
             photo_preview_path_label="当前账号头像路径",
@@ -168,7 +168,7 @@ def get_profile_page(
                   </div>
                   <div class="mb-3">
                     <label class="form-label">上传头像</label>
-                    <input class="form-control" name="photo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,.svg,image/*">
+                    <input class="form-control" name="photo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/*">
                     <div class="small text-secondary mt-2">即使还没有绑定队员，也可以先上传个人头像；后续首次绑定主队员时会自动沿用这张头像。</div>
                   </div>
                   <div class="mb-3">

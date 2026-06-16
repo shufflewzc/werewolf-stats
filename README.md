@@ -423,6 +423,25 @@ gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app
 - 启动命令：`gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app`
 - 监听端口：`8000`
 
+建议同时配置这些环境变量：
+
+```bash
+WECHAT_MINIPROGRAM_APPID=你的小程序AppID
+WECHAT_MINIPROGRAM_SECRET=你的小程序Secret
+WEB_LOGIN_BASE_URL=https://wolf.fakerclaw.indevs.in
+COOKIE_SECURE=1
+SQLITE_BUSY_TIMEOUT_MS=5000
+SQLITE_JOURNAL_MODE=WAL
+SQLITE_SYNCHRONOUS=NORMAL
+MAX_REQUEST_BODY_BYTES=52428800
+MAX_EXCEL_UPLOAD_BYTES=10485760
+MAX_EXCEL_SHEET_ROWS=2000
+MAX_ZIP_UPLOAD_BYTES=52428800
+MAX_ZIP_IMAGE_COUNT=300
+```
+
+本地 HTTP 调试网页登录时，可以临时设置 `COOKIE_SECURE=0`。
+
 ### 6. 常见问题
 
 如果仍然出现 `502` 或 `504`，优先检查：
@@ -433,12 +452,176 @@ gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app
 - `1Panel` 反向代理目标是否仍然是 `127.0.0.1:8000`
 - Python 运行环境日志里是否有报错或进程退出记录
 
-### 7. 当前仓库做过的线上优化
+### 7. 健康检查
+
+服务提供两个健康检查接口：
+
+```text
+/healthz
+/readyz
+```
+
+- `/healthz`：只确认 Python 服务进程可响应
+- `/readyz`：检查当前运行数据库是否可连接、是否已初始化，并返回用户/比赛数量；SQLite 模式会额外执行 `PRAGMA quick_check`
+
+反向代理或平台探活优先使用：
+
+```text
+http://127.0.0.1:8000/readyz
+```
+
+### 8. 数据备份
+
+可以使用内置脚本创建 SQLite 一致性备份，并默认打包上传头像/队标：
+
+```bash
+python3 scripts/backup_sqlite.py
+```
+
+默认输出到：
+
+```text
+data/backups/
+```
+
+默认保留最近 14 份数据库备份和资源备份。只备份数据库可执行：
+
+```bash
+python3 scripts/backup_sqlite.py --no-assets
+```
+
+Linux 服务器上可以用 cron 每天凌晨备份一次：
+
+```cron
+15 3 * * * cd /app && python3 scripts/backup_sqlite.py >> app.log 2>&1
+```
+
+### 9. PostgreSQL 迁移演练
+
+当前线上运行仍然使用 SQLite；如果后续数据量和并发继续增长，可以先用内置脚本演练迁移到 PostgreSQL。
+
+目标表结构：
+
+```text
+scripts/postgres_schema.sql
+```
+
+迁移脚本：
+
+```text
+scripts/migrate_sqlite_to_postgres.py
+```
+
+迁移前先安装 PostgreSQL Python 驱动：
+
+```bash
+python3 -m pip install 'psycopg[binary]>=3,<4'
+```
+
+先做 dry-run，确认 SQLite 源库表和行数：
+
+```bash
+python3 scripts/migrate_sqlite_to_postgres.py
+```
+
+准备好 PostgreSQL 数据库后，设置连接串：
+
+```bash
+export DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
+```
+
+向空 PostgreSQL 库导入并校验行数：
+
+```bash
+python3 scripts/migrate_sqlite_to_postgres.py --apply --truncate
+```
+
+建议迁移顺序：
+
+1. 先执行 `python3 scripts/backup_sqlite.py` 备份 SQLite 和上传资源
+2. 创建测试 PostgreSQL 库
+3. 执行预检脚本确认环境和连接串
+4. 在测试 PostgreSQL 库执行迁移
+5. 检查脚本输出的每张表行数是否一致
+6. 用运行时烟测脚本检查连接和核心表
+7. 运行 PostgreSQL 回归脚本
+8. 在测试环境打开 PostgreSQL 只读/写入验证模式，检查公开页面和后台保存
+9. 最后安排正式停机窗口做最终迁移
+
+运行时数据库适配底座：
+
+```text
+scripts/db_runtime.py
+```
+
+烟测脚本：
+
+```bash
+python3 scripts/runtime_db_smoke.py
+```
+
+如果设置了 `DATABASE_URL`，烟测会连接 PostgreSQL；否则默认检查 SQLite。
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' python3 scripts/runtime_db_smoke.py
+```
+
+预检脚本：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+python3 scripts/postgres_preflight.py --require-wechat
+```
+
+预检会检查 SQLite 源库、PostgreSQL 连接、核心表、初始化标记、微信小程序环境变量和生产 Cookie 配置。
+
+运行时回归脚本：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+python3 scripts/postgres_runtime_regression.py --allow-write
+```
+
+该脚本会临时写入并清理测试数据，用来检查用户、登录会话、meta、审核申请、维度数据、AI 任务、访问日志和 AI 对话记录。若还要验证整体资料重写保存路径，可在测试库加：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+python3 scripts/postgres_runtime_regression.py --allow-write --include-rewrite
+```
+
+核心读取验证模式：
+
+```bash
+export DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
+export ENABLE_POSTGRES_READS=1
+```
+
+打开后，`sqlite_store.py` 内的核心读取函数会通过 `scripts/db_runtime.py` 读取 PostgreSQL，包括用户、门派、战队、选手、比赛和赛季维度统计。不开 `ENABLE_POSTGRES_READS=1` 时，网站仍然默认读取 SQLite。
+
+账号写入验证模式：
+
+```bash
+export DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
+export ENABLE_POSTGRES_WRITES=1
+```
+
+打开后，账号资料、微信登录自动创建账号、微信绑定资料、网页登录会话、小程序登录会话、扫码登录临时状态、比赛录入、选手/战队/门派维护、维度数据保存、审核申请、AI 任务和访问日志会写入 PostgreSQL。`ENABLE_POSTGRES_WRITES=1` 会自动让读取也走 PostgreSQL，避免读写分库。
+
+注意：正式切库前仍建议在测试 PostgreSQL 库完整回归后台保存流程，再安排停机窗口做最终迁移。
+
+### 10. 当前仓库做过的线上优化
 
 为了减少 `1Panel` 下长时间运行后出现 `504` 的概率，当前仓库已经额外做了两件事：
 
 - 新增 `wsgi.py` 作为生产入口，供 `gunicorn` 直接启动
 - 网站读取路径加入短时运行时缓存，保存数据后会自动失效，减少普通页面反复整库校验造成的阻塞
+- SQLite 连接默认启用 WAL、busy timeout 和 `synchronous=NORMAL`，降低读写互相阻塞的概率
+- 新增 `/healthz`、`/readyz`，方便部署平台和反向代理做健康检查
+- 每个请求会自动生成或沿用 `X-Request-ID`，响应头、访问日志和异常日志都会带同一个请求编号，便于线上排障
+- Excel/zip/图片上传增加大小、行数、数量和文件头校验，避免错误文件拖慢导入或伪装格式绕过校验
+- 新增 `scripts/backup_sqlite.py`，用于日常一致性备份
+- 新增 `scripts/postgres_schema.sql` 和 `scripts/migrate_sqlite_to_postgres.py`，用于下一阶段 PostgreSQL 迁移演练
+- 新增 `scripts/db_runtime.py` 和 `scripts/runtime_db_smoke.py`，为 PostgreSQL 运行时切换做适配和连接烟测
 
 ### 网站数据说明
 

@@ -7,6 +7,7 @@
     <view class="button-row" wx:if="{{!choosing}}">
       <button class="primary-button" bindtap="goTeams">门派</button>
       <button class="ghost-button" bindtap="goPlayers">选手榜</button>
+      <button class="ghost-button" bindtap="goPredictions">胜率预测</button>
     </view>
   </view>
 

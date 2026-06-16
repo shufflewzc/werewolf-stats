@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 import secrets
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +17,9 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "data"
 DB_PATH = DATA_DIR / "werewolf_stats.db"
 DEFAULT_USER_PHOTO = "assets/players/default-player.svg"
+SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000"))
+SQLITE_JOURNAL_MODE = os.getenv("SQLITE_JOURNAL_MODE", "WAL").strip().upper()
+SQLITE_SYNCHRONOUS = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").strip().upper()
 
 
 def normalize_stance_result(entry: dict[str, Any]) -> str:
@@ -120,9 +125,14 @@ def derive_match_awards(
 
 
 def connect_db() -> sqlite3.Connection:
-    connection = sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect(DB_PATH, timeout=max(1.0, SQLITE_BUSY_TIMEOUT_MS / 1000))
     connection.row_factory = sqlite3.Row
+    connection.execute(f"PRAGMA busy_timeout = {SQLITE_BUSY_TIMEOUT_MS}")
     connection.execute("PRAGMA foreign_keys = ON")
+    if SQLITE_JOURNAL_MODE:
+        connection.execute(f"PRAGMA journal_mode = {SQLITE_JOURNAL_MODE}")
+    if SQLITE_SYNCHRONOUS:
+        connection.execute(f"PRAGMA synchronous = {SQLITE_SYNCHRONOUS}")
     return connection
 
 
@@ -186,6 +196,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
 
         CREATE TABLE IF NOT EXISTS access_logs (
             log_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL DEFAULT '',
             path TEXT NOT NULL,
             method TEXT NOT NULL,
             query_string TEXT NOT NULL DEFAULT '',
@@ -464,6 +475,11 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         WHERE wechat_web_openid != ''
         """
     )
+    access_log_columns = {
+        row["name"] for row in connection.execute("PRAGMA table_info(access_logs)").fetchall()
+    }
+    if access_log_columns and "request_id" not in access_log_columns:
+        connection.execute("ALTER TABLE access_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT ''")
     guild_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(guilds)").fetchall()
     }
@@ -802,7 +818,7 @@ def backfill_team_claim_captains(connection: sqlite3.Connection) -> None:
     )
 
 
-def database_is_initialized(connection: sqlite3.Connection) -> bool:
+def database_is_initialized(connection: Any) -> bool:
     cursor = connection.execute(
         "SELECT meta_value FROM app_meta WHERE meta_key = 'initialized'"
     )
@@ -810,8 +826,23 @@ def database_is_initialized(connection: sqlite3.Connection) -> bool:
     return bool(row and row["meta_value"] == "1")
 
 
+def connection_backend(connection: Any) -> str:
+    return str(getattr(connection, "backend", "sqlite") or "sqlite")
+
+
+def transaction_context(connection: Any) -> Any:
+    transaction = getattr(connection, "transaction", None)
+    if transaction:
+        return transaction()
+    return connection
+
+
+def china_today_iso() -> str:
+    return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
+
+
 def replace_repository_data(
-    connection: sqlite3.Connection,
+    connection: Any,
     teams: list[dict[str, Any]],
     players: list[dict[str, Any]],
     matches: list[dict[str, Any]],
@@ -819,20 +850,23 @@ def replace_repository_data(
     guilds: list[dict[str, Any]] | None = None,
 ) -> None:
     guild_rows = guilds or []
+    backend = connection_backend(connection)
     existing_sessions = connection.execute(
         """
         SELECT session_token, username, created_at
         FROM user_sessions
         """
     ).fetchall()
-    connection.execute("PRAGMA foreign_keys = OFF")
-    with connection:
+    if backend == "sqlite":
+        connection.execute("PRAGMA foreign_keys = OFF")
+    with transaction_context(connection):
         connection.execute("DELETE FROM match_players")
         connection.execute("DELETE FROM matches")
         connection.execute("DELETE FROM team_members")
         connection.execute("DELETE FROM players")
         connection.execute("DELETE FROM teams")
         connection.execute("DELETE FROM guilds")
+        connection.execute("DELETE FROM user_sessions")
         connection.execute("DELETE FROM users")
 
         for user in users:
@@ -1055,7 +1089,8 @@ def replace_repository_data(
             ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
             """
         )
-    connection.execute("PRAGMA foreign_keys = ON")
+    if backend == "sqlite":
+        connection.execute("PRAGMA foreign_keys = ON")
 
 
 def ensure_database() -> None:
@@ -1064,20 +1099,55 @@ def ensure_database() -> None:
         create_schema(connection)
 
 
-def require_initialized_database(connection: sqlite3.Connection) -> None:
+def postgres_read_mode_enabled() -> bool:
+    if (
+        os.getenv("ENABLE_POSTGRES_READS", "").strip() != "1"
+        and os.getenv("ENABLE_POSTGRES_WRITES", "").strip() != "1"
+    ):
+        return False
+    from db_runtime import database_backend
+
+    return database_backend() == "postgres"
+
+
+def postgres_write_mode_enabled() -> bool:
+    if os.getenv("ENABLE_POSTGRES_WRITES", "").strip() != "1":
+        return False
+    from db_runtime import database_backend
+
+    return database_backend() == "postgres"
+
+
+def connect_read_db() -> Any:
+    if postgres_read_mode_enabled():
+        from db_runtime import connect_runtime_db
+
+        return connect_runtime_db()
+    ensure_database()
+    return connect_db()
+
+
+def connect_write_db() -> Any:
+    if postgres_write_mode_enabled():
+        from db_runtime import connect_runtime_db
+
+        return connect_runtime_db()
+    ensure_database()
+    return connect_db()
+
+
+def require_initialized_database(connection: Any) -> None:
     if database_is_initialized(connection):
         return
     raise ValueError(
-        "SQLite 数据库尚未初始化。请先运行 `python3 scripts/migrate_json_to_sqlite.py`，"
-        "或准备好 `data/werewolf_stats.db` 后再使用。"
+        "数据库尚未初始化。请先准备好 SQLite 主库，或完成 PostgreSQL 迁移后再使用。"
     )
 
 
-def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def load_users(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         rows = connection.execute(
@@ -1118,7 +1188,81 @@ def load_users(connection: sqlite3.Connection | None = None) -> list[dict[str, A
             connection.close()
 
 
+def upsert_users_only(connection: Any, users: list[dict[str, Any]]) -> None:
+    incoming_usernames = {
+        str(user.get("username") or "").strip()
+        for user in users
+        if str(user.get("username") or "").strip()
+    }
+    existing_rows = connection.execute("SELECT username FROM users").fetchall()
+    for row in existing_rows:
+        username = str(row["username"] or "").strip()
+        if username and username not in incoming_usernames:
+            connection.execute("DELETE FROM users WHERE username = ?", (username,))
+
+    for user in users:
+        username = str(user.get("username") or "").strip()
+        if not username:
+            continue
+        connection.execute(
+            """
+            INSERT INTO users (
+                username, display_name, password_salt, password_hash, active, player_id,
+                linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
+                province_name, region_name, gender, bio, photo,
+                wechat_openid, wechat_web_openid, wechat_unionid
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(username) DO UPDATE SET
+                display_name = excluded.display_name,
+                password_salt = excluded.password_salt,
+                password_hash = excluded.password_hash,
+                active = excluded.active,
+                player_id = excluded.player_id,
+                linked_player_ids_json = excluded.linked_player_ids_json,
+                manager_scope_keys_json = excluded.manager_scope_keys_json,
+                permissions_json = excluded.permissions_json,
+                role = excluded.role,
+                province_name = excluded.province_name,
+                region_name = excluded.region_name,
+                gender = excluded.gender,
+                bio = excluded.bio,
+                photo = excluded.photo,
+                wechat_openid = excluded.wechat_openid,
+                wechat_web_openid = excluded.wechat_web_openid,
+                wechat_unionid = excluded.wechat_unionid
+            """,
+            (
+                username,
+                user.get("display_name") or username,
+                user["password_salt"],
+                user["password_hash"],
+                1 if user.get("active") else 0,
+                user.get("player_id"),
+                json.dumps(user.get("linked_player_ids", []), ensure_ascii=False),
+                json.dumps(user.get("manager_scope_keys", []), ensure_ascii=False),
+                json.dumps(user.get("permissions", []), ensure_ascii=False),
+                user.get("role") or ("admin" if username == "admin" else "member"),
+                user.get("province_name") or "",
+                user.get("region_name") or "",
+                user.get("gender") or "",
+                user.get("bio") or "",
+                user.get("photo") or DEFAULT_USER_PHOTO,
+                user.get("wechat_openid") or "",
+                user.get("wechat_web_openid") or "",
+                user.get("wechat_unionid") or "",
+            ),
+        )
+
+
 def save_users(users: list[dict[str, Any]]) -> None:
+    if postgres_write_mode_enabled():
+        with connect_write_db() as connection:
+            require_initialized_database(connection)
+            with connection.transaction():
+                upsert_users_only(connection, users)
+        return
+
     ensure_database()
     with connect_db() as connection:
         require_initialized_database(connection)
@@ -1136,11 +1280,10 @@ def save_users(users: list[dict[str, Any]]) -> None:
         )
 
 
-def load_guilds(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def load_guilds(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         rows = connection.execute(
@@ -1171,11 +1314,10 @@ def load_guilds(connection: sqlite3.Connection | None = None) -> list[dict[str, 
             connection.close()
 
 
-def load_teams(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def load_teams(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         team_rows = connection.execute(
@@ -1220,11 +1362,10 @@ def load_teams(connection: sqlite3.Connection | None = None) -> list[dict[str, A
             connection.close()
 
 
-def load_players(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def load_players(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         rows = connection.execute(
@@ -1252,11 +1393,10 @@ def load_players(connection: sqlite3.Connection | None = None) -> list[dict[str,
             connection.close()
 
 
-def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def load_matches(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         match_rows = connection.execute(
@@ -1333,8 +1473,7 @@ def load_matches(connection: sqlite3.Connection | None = None) -> list[dict[str,
 
 
 def load_repository_data() -> dict[str, Any]:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_read_db() as connection:
         require_initialized_database(connection)
         return {
             "guilds": load_guilds(connection),
@@ -1347,8 +1486,7 @@ def load_repository_data() -> dict[str, Any]:
 
 
 def save_matches(matches: list[dict[str, Any]]) -> None:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
         guilds = load_guilds(connection)
         teams = load_teams(connection)
@@ -1365,8 +1503,7 @@ def save_matches(matches: list[dict[str, Any]]) -> None:
 
 
 def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | None = None) -> None:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
         replace_repository_data(
             connection,
@@ -1379,12 +1516,11 @@ def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | Non
 
 
 def load_season_player_dimension_stats(
-    connection: sqlite3.Connection | None = None,
+    connection: Any | None = None,
 ) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         rows = connection.execute(
@@ -1412,12 +1548,11 @@ def load_season_player_dimension_stats(
 
 
 def load_season_team_dimension_stats(
-    connection: sqlite3.Connection | None = None,
+    connection: Any | None = None,
 ) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         rows = connection.execute(
@@ -1447,10 +1582,9 @@ def save_season_dimension_stats(
     player_rows: list[dict[str, Any]],
     team_rows: list[dict[str, Any]],
 ) -> None:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             for row in player_rows:
                 metrics = {
                     key: value
@@ -1525,10 +1659,9 @@ def clear_season_dimension_stats(
     competition_name: str,
     season_name: str,
 ) -> tuple[int, int]:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             player_cursor = connection.execute(
                 """
                 DELETE FROM season_player_dimension_stats
@@ -1551,10 +1684,9 @@ def clear_season_dimension_stats_for_day(
     season_name: str,
     played_on: str,
 ) -> tuple[int, int]:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             player_cursor = connection.execute(
                 """
                 DELETE FROM season_player_dimension_stats
@@ -1572,11 +1704,10 @@ def clear_season_dimension_stats_for_day(
         return int(player_cursor.rowcount or 0), int(team_cursor.rowcount or 0)
 
 
-def load_membership_requests(connection: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+def load_membership_requests(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         rows = connection.execute(
@@ -1611,10 +1742,9 @@ def load_membership_requests(connection: sqlite3.Connection | None = None) -> li
 
 
 def save_membership_requests(requests: list[dict[str, Any]]) -> None:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             connection.execute("DELETE FROM membership_requests")
             for item in requests:
                 connection.execute(
@@ -1645,12 +1775,11 @@ def save_membership_requests(requests: list[dict[str, Any]]) -> None:
 
 def load_meta_value(
     meta_key: str,
-    connection: sqlite3.Connection | None = None,
+    connection: Any | None = None,
 ) -> str | None:
     should_close = connection is None
     if connection is None:
-        ensure_database()
-        connection = connect_db()
+        connection = connect_read_db()
     try:
         require_initialized_database(connection)
         row = connection.execute(
@@ -1666,18 +1795,16 @@ def load_meta_value(
 
 
 def save_meta_value(meta_key: str, meta_value: str) -> None:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
-            connection.execute(
-                """
-                INSERT INTO app_meta (meta_key, meta_value)
-                VALUES (?, ?)
-                ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
-                """,
-                (meta_key, meta_value),
-            )
+        connection.execute(
+            """
+            INSERT INTO app_meta (meta_key, meta_value)
+            VALUES (?, ?)
+            ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+            """,
+            (meta_key, meta_value),
+        )
 
 
 def create_ai_job(
@@ -1691,10 +1818,9 @@ def create_ai_job(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     job_id = "aijob_" + secrets.token_hex(12)
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             connection.execute(
                 """
                 INSERT INTO ai_jobs (
@@ -1729,10 +1855,9 @@ def update_ai_job_status(
     normalized_job_id = str(job_id or "").strip()
     if not normalized_job_id:
         return
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             if model is None:
                 connection.execute(
                     """
@@ -1778,10 +1903,9 @@ def add_ai_job_step(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     step_id = "aistep_" + secrets.token_hex(12)
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             connection.execute(
                 """
                 INSERT INTO ai_job_steps (
@@ -1809,8 +1933,7 @@ def add_ai_job_step(
 
 
 def load_ai_jobs(limit: int = 50) -> list[dict[str, Any]]:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_read_db() as connection:
         require_initialized_database(connection)
         job_rows = connection.execute(
             """
@@ -1892,22 +2015,23 @@ def record_access_log(
     ip_address: str = "",
     user_agent: str = "",
     created_at: str,
+    request_id: str = "",
 ) -> str:
     log_id = "access_" + secrets.token_hex(12)
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             connection.execute(
                 """
                 INSERT INTO access_logs (
-                    log_id, path, method, query_string, username,
+                    log_id, request_id, path, method, query_string, username,
                     ip_address, user_agent, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     log_id,
+                    str(request_id or "").strip()[:80],
                     str(path or "").strip() or "/",
                     str(method or "").strip().upper() or "GET",
                     str(query_string or "").strip(),
@@ -1922,16 +2046,16 @@ def record_access_log(
 
 def load_access_overview(limit: int = 80) -> dict[str, Any]:
     row_limit = max(1, min(int(limit), 300))
-    ensure_database()
-    with connect_db() as connection:
+    with connect_read_db() as connection:
         require_initialized_database(connection)
         total_row = connection.execute("SELECT COUNT(*) AS count FROM access_logs").fetchone()
         today_row = connection.execute(
             """
             SELECT COUNT(*) AS count
             FROM access_logs
-            WHERE substr(created_at, 1, 10) = date('now', '+8 hours')
-            """
+            WHERE substr(created_at, 1, 10) = ?
+            """,
+            (china_today_iso(),),
         ).fetchone()
         unique_ip_row = connection.execute(
             "SELECT COUNT(DISTINCT ip_address) AS count FROM access_logs WHERE ip_address != ''"
@@ -1947,7 +2071,7 @@ def load_access_overview(limit: int = 80) -> dict[str, Any]:
         ).fetchall()
         recent_rows = connection.execute(
             """
-            SELECT log_id, path, method, query_string, username, ip_address,
+            SELECT log_id, request_id, path, method, query_string, username, ip_address,
                    user_agent, created_at
             FROM access_logs
             ORDER BY created_at DESC
@@ -1978,10 +2102,9 @@ def record_ai_conversation(
     metadata: dict[str, Any] | None = None,
 ) -> str:
     conversation_id = "aichat_" + secrets.token_hex(12)
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
+        with transaction_context(connection):
             connection.execute(
                 """
                 INSERT INTO ai_conversations (
@@ -2009,8 +2132,7 @@ def record_ai_conversation(
 
 
 def load_ai_conversations(limit: int = 80) -> list[dict[str, Any]]:
-    ensure_database()
-    with connect_db() as connection:
+    with connect_read_db() as connection:
         require_initialized_database(connection)
         rows = connection.execute(
             """
@@ -2040,8 +2162,7 @@ def load_session_username(session_token: str) -> str | None:
     normalized_token = str(session_token or "").strip()
     if not normalized_token:
         return None
-    ensure_database()
-    with connect_db() as connection:
+    with connect_read_db() as connection:
         require_initialized_database(connection)
         row = connection.execute(
             """
@@ -2061,45 +2182,40 @@ def save_session(session_token: str, username: str) -> None:
     normalized_username = str(username or "").strip()
     if not normalized_token or not normalized_username:
         return
-    ensure_database()
-    with connect_db() as connection:
+    created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
-            connection.execute(
-                """
-                INSERT INTO user_sessions (session_token, username)
-                VALUES (?, ?)
-                ON CONFLICT(session_token) DO UPDATE SET
-                    username = excluded.username,
-                    created_at = CURRENT_TIMESTAMP
-                """,
-                (normalized_token, normalized_username),
-            )
+        connection.execute(
+            """
+            INSERT INTO user_sessions (session_token, username, created_at)
+            VALUES (?, ?, ?)
+            ON CONFLICT(session_token) DO UPDATE SET
+                username = excluded.username,
+                created_at = excluded.created_at
+            """,
+            (normalized_token, normalized_username, created_at),
+        )
 
 
 def delete_session(session_token: str) -> None:
     normalized_token = str(session_token or "").strip()
     if not normalized_token:
         return
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
-            connection.execute(
-                "DELETE FROM user_sessions WHERE session_token = ?",
-                (normalized_token,),
-            )
+        connection.execute(
+            "DELETE FROM user_sessions WHERE session_token = ?",
+            (normalized_token,),
+        )
 
 
 def delete_sessions_for_username(username: str) -> None:
     normalized_username = str(username or "").strip()
     if not normalized_username:
         return
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        with connection:
-            connection.execute(
-                "DELETE FROM user_sessions WHERE username = ?",
-                (normalized_username,),
-            )
+        connection.execute(
+            "DELETE FROM user_sessions WHERE username = ?",
+            (normalized_username,),
+        )

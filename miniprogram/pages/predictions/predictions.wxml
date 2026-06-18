@@ -78,12 +78,6 @@
 
       <view class="section" wx:if="{{predictions.length}}">
         <view class="forecast-summary">
-          <view class="my-forecast">
-            <text class="summary-label">我的位置</text>
-            <text class="summary-title">{{myPredictionText}}</text>
-            <text class="summary-copy" wx:if="{{myPrediction}}">{{myPrediction.player_name}} · {{myPrediction.team_name || "未绑定门派"}}</text>
-            <text class="summary-copy" wx:else>{{currentUser ? "去个人中心绑定选手后，这里会自动高亮。" : "登录并绑定选手后，这里会自动高亮。"}}</text>
-          </view>
           <view class="band-grid">
             <view class="band-stat" wx:for="{{bandSummary}}" wx:key="label">
               <text class="band-value">{{item.value}}</text>
@@ -104,13 +98,12 @@
           <text class="section-note">{{predictionVisibleCount}} / {{predictionTotalCount}} 人</text>
         </view>
         <view class="stack">
-          <view class="prediction-card {{item.bandClass}} {{item.isMine ? 'is-mine' : ''}}" wx:for="{{predictions}}" wx:key="player_id">
+          <view class="prediction-card {{item.bandClass}}" wx:for="{{predictions}}" wx:key="player_id">
             <view class="prediction-head" data-player-id="{{item.player_id}}" bindtap="openPlayer">
               <view class="seat-pill">{{item.rank}}</view>
               <view class="prediction-main">
                 <view class="prediction-title-line">
                   <text class="prediction-name">{{item.player_name}}</text>
-                  <text class="mine-tag" wx:if="{{item.isMine}}">我的</text>
                 </view>
                 <text class="prediction-meta">{{item.team_name || "未绑定门派"}} · 当日 {{item.match_count}} 场 · 场均 {{item.average_expected_points}} · 置信度 {{item.confidence}}</text>
               </view>

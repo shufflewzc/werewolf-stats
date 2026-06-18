@@ -94,11 +94,6 @@
   padding: 22rpx;
 }
 
-.my-forecast {
-  padding-bottom: 20rpx;
-  border-bottom: 1rpx solid #e2e8f0;
-}
-
 .summary-label,
 .summary-title,
 .summary-copy {
@@ -127,7 +122,6 @@
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12rpx;
-  margin-top: 18rpx;
 }
 
 .band-stat {
@@ -203,11 +197,6 @@
   border-left-color: #94a3b8;
 }
 
-.prediction-card.is-mine {
-  background: #f8fafc;
-  border-color: #2563eb;
-}
-
 .prediction-main {
   flex: 1;
   min-width: 0;
@@ -228,16 +217,6 @@
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.mine-tag {
-  flex: 0 0 auto;
-  padding: 4rpx 10rpx;
-  border-radius: 999rpx;
-  font-size: 18rpx;
-  font-weight: 800;
-  color: #ffffff;
-  background: #2563eb;
 }
 
 .prediction-meta {

@@ -226,7 +226,7 @@ CONTENT_SECURITY_POLICY = os.getenv(
     ),
 )
 
-DEFAULT_PREDICTION_MODEL_SETTINGS: dict[str, Any] = {
+LEGACY_PREDICTION_MODEL_SETTINGS_V6: dict[str, Any] = {
     "model_version": "result_weighted_v6",
     "score_uplift": 0.92,
     "score_bonus": 0.0,
@@ -261,6 +261,82 @@ DEFAULT_PREDICTION_MODEL_SETTINGS: dict[str, Any] = {
         "main_min": 5.05,
         "main_max": 6.95,
         "main_slope": 0.45,
+    },
+}
+
+LEGACY_PREDICTION_MODEL_SETTINGS_V7: dict[str, Any] = {
+    "model_version": "result_weighted_v7",
+    "score_uplift": 0.98,
+    "score_bonus": 0.0,
+    "camp_win_rate_priors": {
+        "werewolves": 0.90,
+        "villagers": 0.44,
+        "third_party": 0.35,
+    },
+    "camp_win_rate_floors": {
+        "werewolves": 0.90,
+        "villagers": 0.34,
+        "third_party": 0.22,
+    },
+    "camp_base_point_floors": {
+        "werewolves": 0.30,
+        "villagers": 1.00,
+        "third_party": 0.50,
+    },
+    "camp_expected_point_caps": {
+        "werewolves": 5.35,
+    },
+    "day_total": {
+        "elite_threshold": 12.0,
+        "elite_min": 12.0,
+        "elite_max": 12.8,
+        "elite_anchor": 10.5,
+        "elite_slope": 0.60,
+        "middle_slots": 4,
+        "middle_caps": [11.7, 10.6, 9.6, 8.6],
+        "middle_min": 7.15,
+        "middle_slope": 0.65,
+        "main_min": 5.35,
+        "main_max": 6.98,
+        "main_slope": 0.58,
+    },
+}
+
+DEFAULT_PREDICTION_MODEL_SETTINGS: dict[str, Any] = {
+    "model_version": "result_weighted_v8",
+    "score_uplift": 0.98,
+    "score_bonus": 0.0,
+    "camp_win_rate_priors": {
+        "werewolves": 0.90,
+        "villagers": 0.44,
+        "third_party": 0.35,
+    },
+    "camp_win_rate_floors": {
+        "werewolves": 0.90,
+        "villagers": 0.34,
+        "third_party": 0.22,
+    },
+    "camp_base_point_floors": {
+        "werewolves": 0.30,
+        "villagers": 1.00,
+        "third_party": 0.50,
+    },
+    "camp_expected_point_caps": {
+        "werewolves": 5.35,
+    },
+    "day_total": {
+        "elite_threshold": 12.0,
+        "elite_min": 12.0,
+        "elite_max": 12.8,
+        "elite_anchor": 10.5,
+        "elite_slope": 0.60,
+        "middle_slots": 4,
+        "middle_caps": [11.7, 10.6, 9.6, 8.6],
+        "middle_min": 7.10,
+        "middle_slope": 0.52,
+        "main_min": 5.35,
+        "main_max": 6.98,
+        "main_slope": 0.58,
     },
 }
 
@@ -670,8 +746,57 @@ def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> 
     return max(minimum, min(maximum, number))
 
 
+def _prediction_setting_matches(value: Any, expected: Any) -> bool:
+    if isinstance(expected, float):
+        try:
+            return abs(float(value) - expected) < 0.000001
+        except (TypeError, ValueError):
+            return False
+    if isinstance(expected, list):
+        if not isinstance(value, list) or len(value) != len(expected):
+            return False
+        return all(_prediction_setting_matches(item, expected[index]) for index, item in enumerate(value))
+    if isinstance(expected, dict):
+        if not isinstance(value, dict):
+            return False
+        return all(_prediction_setting_matches(value.get(key), expected_value) for key, expected_value in expected.items())
+    return value == expected
+
+
+def _upgrade_prediction_model_settings(raw_settings: dict[str, Any]) -> dict[str, Any]:
+    legacy_settings_by_version = {
+        "result_weighted_v6": LEGACY_PREDICTION_MODEL_SETTINGS_V6,
+        "result_weighted_v7": LEGACY_PREDICTION_MODEL_SETTINGS_V7,
+    }
+    legacy_settings = legacy_settings_by_version.get(str(raw_settings.get("model_version") or ""))
+    if legacy_settings is None:
+        return raw_settings
+    upgraded = json.loads(json.dumps(raw_settings, ensure_ascii=False))
+
+    def upgrade_key(target: dict[str, Any], legacy: dict[str, Any], current: dict[str, Any], key: str) -> None:
+        if _prediction_setting_matches(target.get(key), legacy.get(key)):
+            target[key] = current.get(key)
+
+    for key in ("score_uplift", "score_bonus"):
+        upgrade_key(upgraded, legacy_settings, DEFAULT_PREDICTION_MODEL_SETTINGS, key)
+    for group_name in ("camp_win_rate_priors", "camp_win_rate_floors", "camp_base_point_floors", "camp_expected_point_caps"):
+        target_group = upgraded.setdefault(group_name, {})
+        legacy_group = legacy_settings.get(group_name, {})
+        current_group = DEFAULT_PREDICTION_MODEL_SETTINGS.get(group_name, {})
+        for key in current_group:
+            upgrade_key(target_group, legacy_group, current_group, key)
+    target_day = upgraded.setdefault("day_total", {})
+    legacy_day = legacy_settings.get("day_total", {})
+    current_day = DEFAULT_PREDICTION_MODEL_SETTINGS.get("day_total", {})
+    for key in current_day:
+        upgrade_key(target_day, legacy_day, current_day, key)
+    upgraded["model_version"] = DEFAULT_PREDICTION_MODEL_SETTINGS["model_version"]
+    return upgraded
+
+
 def _merge_prediction_model_settings(raw_settings: dict[str, Any] | None = None) -> dict[str, Any]:
     raw_settings = raw_settings if isinstance(raw_settings, dict) else {}
+    raw_settings = _upgrade_prediction_model_settings(raw_settings)
     defaults = DEFAULT_PREDICTION_MODEL_SETTINGS
     day_defaults = defaults["day_total"]
     raw_day = raw_settings.get("day_total") if isinstance(raw_settings.get("day_total"), dict) else {}
@@ -15865,23 +15990,26 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
         main_slope = float(day_settings.get("main_slope") or 0.45)
         has_elite_slot = bool(sorted_entries and float(sorted_entries[0].get("expected_total") or 0.0) >= elite_threshold)
         middle_start = 1 if has_elite_slot else 0
+        upper_half_cutoff = (len(sorted_entries) + 1) // 2
+        effective_middle_slots = max(middle_slots, max(0, upper_half_cutoff - middle_start))
         for index, entry in enumerate(sorted_entries):
             raw_total = float(entry.get("expected_total") or 0.0)
             match_count = max(1, int(entry.get("match_count") or 0))
             calibrated_total = raw_total
             if has_elite_slot and index == 0:
                 calibrated_total = min(elite_max, max(elite_min, elite_anchor + (raw_total - elite_anchor) * elite_slope))
-            elif middle_start <= index < middle_start + middle_slots and raw_total >= 7.0:
+            elif middle_start <= index < middle_start + effective_middle_slots:
                 middle_index = index - middle_start
                 middle_cap = middle_caps[min(middle_index, len(middle_caps) - 1)] if middle_caps else 8.2
+                middle_floor_boost = min(0.55, max(0.0, raw_total) / 7.0 * 0.55)
                 calibrated_total = min(
                     middle_cap,
-                    max(middle_min, 7.0 + (raw_total - 7.0) * middle_slope),
+                    max(middle_min, 7.0 + middle_floor_boost + max(0.0, raw_total - 7.0) * middle_slope),
                 )
             elif raw_total >= 5.0 or match_count >= 2:
                 calibrated_total = min(main_max, main_min + max(0.0, raw_total - 5.0) * main_slope)
             elif raw_total > 0:
-                calibrated_total = main_min
+                calibrated_total = min(main_max, main_min + min(0.45, raw_total / 5.0 * 0.45))
             entry["raw_expected_total"] = raw_total
             entry["expected_total"] = round(calibrated_total, 2)
         return sorted_entries

@@ -1,10 +1,31 @@
 .honor-card,
-.history-section {
+.history-section,
+.overview-card,
+.featured-team {
   padding: 24rpx;
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
   background: #ffffff;
   box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.overview-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12rpx;
+}
+
+.overview-card {
+  min-height: 132rpx;
+  padding: 18rpx 14rpx;
+}
+
+.featured-team {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  min-height: 112rpx;
+  box-sizing: border-box;
 }
 
 .honor-title,

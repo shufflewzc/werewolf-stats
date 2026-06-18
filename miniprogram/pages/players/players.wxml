@@ -15,6 +15,9 @@
   <view wx:elif="{{error}}" class="section">
     <view class="error-card">
       <text>{{error}}</text>
+      <view class="button-row">
+        <button class="ghost-button" bindtap="loadData">重试</button>
+      </view>
     </view>
   </view>
 
@@ -31,6 +34,17 @@
 
     <block wx:if="{{!needsCompetition}}">
       <view class="section">
+        <view class="scope-bar">
+          <view class="scope-main">
+            <text class="scope-label">当前赛事</text>
+            <text class="scope-title">{{selectedScope.competition}}</text>
+            <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+          </view>
+          <button class="scope-button" bindtap="changeCompetition">切换</button>
+        </view>
+      </view>
+
+      <view class="section">
         <view class="metrics">
           <view class="metric-card" wx:for="{{metrics}}" wx:key="label">
             <text class="metric-label">{{item.label}}</text>
@@ -43,10 +57,10 @@
       <view class="section">
         <view class="section-head">
           <text class="section-title">{{scope.label || "当前范围"}}</text>
-          <text class="section-note">{{players.length}} 名</text>
+          <text class="section-note">{{playerVisibleCount}} / {{playerTotalCount}} 名</text>
         </view>
         <view class="stack" wx:if="{{players.length}}">
-          <view class="list-card player-row" wx:for="{{players}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
+          <view class="list-card player-row" wx:for="{{visiblePlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
             <text class="rank">{{item.rank}}</text>
             <image class="avatar" src="{{item.photoUrl}}" mode="aspectFill"></image>
             <view class="list-main">
@@ -59,7 +73,10 @@
             </view>
           </view>
         </view>
-        <view class="empty-card" wx:else>
+        <view class="button-row" wx:if="{{playerHasMore}}">
+          <button class="ghost-button" bindtap="loadMorePlayers">加载更多</button>
+        </view>
+        <view class="empty-card" wx:if="{{!players.length}}">
           <text class="empty-title">暂无选手</text>
           <text class="empty-copy">录入比赛结果后，这里会显示选手排行。</text>
         </view>

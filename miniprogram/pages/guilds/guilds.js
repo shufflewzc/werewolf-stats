@@ -1,10 +1,13 @@
 const { request } = require("../../utils/api");
 const { take } = require("../../utils/format");
+const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 Page({
   data: {
     loading: true,
     error: "",
+    selectedScope: null,
+    needsCompetition: false,
     hero: {},
     metrics: [],
     guilds: []
@@ -21,9 +24,21 @@ Page({
   async loadData() {
     this.setData({ loading: true, error: "" });
     try {
-      const payload = await request("/api/guilds");
+      const selectedScope = getRequiredScope();
+      if (!selectedScope) {
+        this.setData(needsCompetitionState({
+          hero: {},
+          metrics: [],
+          guilds: []
+        }));
+        return;
+      }
+
+      const payload = await request("/api/guilds", scopeParams(selectedScope));
       this.setData({
         loading: false,
+        selectedScope,
+        needsCompetition: false,
         hero: payload.hero || {},
         metrics: take(payload.metrics, 4),
         guilds: payload.cards || []
@@ -34,6 +49,14 @@ Page({
         error: error.message || "门派数据加载失败"
       });
     }
+  },
+
+  goCompetitions() {
+    goCompetitions();
+  },
+
+  changeCompetition() {
+    goCompetitions();
   },
 
   openGuildDetail(event) {

@@ -9,6 +9,7 @@ DEFAULT_PROVINCE_NAME = legacy.DEFAULT_PROVINCE_NAME
 DEFAULT_PLAYER_PHOTO = legacy.DEFAULT_PLAYER_PHOTO
 DEFAULT_TEAM_LOGO = legacy.DEFAULT_TEAM_LOGO
 GENDER_OPTIONS = legacy.GENDER_OPTIONS
+audit_action = legacy.audit_action
 build_bound_player_summary = legacy.build_bound_player_summary
 build_player_edit_form = legacy.build_player_edit_form
 build_player_photo_html = legacy.build_player_photo_html
@@ -374,14 +375,15 @@ def handle_profile(ctx: RequestContext, start_response):
                     },
                 ),
             )
+        guild_id = build_unique_slug(
+            {guild["guild_id"] for guild in data.get("guilds", [])},
+            "guild",
+            name,
+            "guild",
+        )
         data.setdefault("guilds", []).append(
             {
-                "guild_id": build_unique_slug(
-                    {guild["guild_id"] for guild in data.get("guilds", [])},
-                    "guild",
-                    name,
-                    "guild",
-                ),
+                "guild_id": guild_id,
                 "name": name,
                 "short_name": short_name,
                 "logo": DEFAULT_TEAM_LOGO,
@@ -400,6 +402,14 @@ def handle_profile(ctx: RequestContext, start_response):
                 "200 OK",
                 get_profile_page(ctx, alert="创建门派失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "guild.create",
+            target_type="guild",
+            target_id=guild_id,
+            summary=f"从个人中心创建门派 {name}",
+            metadata={"short_name": short_name, "manager_usernames": manager_usernames},
+        )
         refreshed_ctx = RequestContext(
             method="GET",
             path="/profile",
@@ -493,6 +503,19 @@ def handle_profile(ctx: RequestContext, start_response):
             "200 OK",
             get_profile_page(ctx, alert="保存失败：" + "；".join(errors[:3])),
         )
+    audit_action(
+        ctx,
+        "profile.update",
+        target_type="user",
+        target_id=current_user["username"],
+        summary=f"更新账号 {current_user['username']} 的个人资料",
+        metadata={
+            "password_changed": bool(password),
+            "photo_updated": bool(new_account_photo),
+            "player_id": current_player.get("player_id") if current_player else "",
+            "player_profile_updated": bool(current_player),
+        },
+    )
 
     refreshed_user = next((user for user in users if user["username"] == current_user["username"]), current_user)
     refreshed_ctx = RequestContext(

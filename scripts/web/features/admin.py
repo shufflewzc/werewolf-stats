@@ -9,9 +9,12 @@ import web_app as legacy
 ACCOUNT_ROLE_OPTIONS = legacy.ACCOUNT_ROLE_OPTIONS
 ADMIN_USERNAME = legacy.ADMIN_USERNAME
 DEFAULT_PROVINCE_NAME = legacy.DEFAULT_PROVINCE_NAME
+EVENT_SCOPE_PERMISSION_KEYS = legacy.EVENT_SCOPE_PERMISSION_KEYS
+PERMISSION_GROUPS = legacy.PERMISSION_GROUPS
 PERMISSION_LABELS = legacy.PERMISSION_LABELS
 RequestContext = legacy.RequestContext
 account_role_label = legacy.account_role_label
+audit_action = legacy.audit_action
 build_manager_scope_options = legacy.build_manager_scope_options
 form_value = legacy.form_value
 get_all_permission_keys = legacy.get_all_permission_keys
@@ -88,11 +91,17 @@ def get_accounts_page(
             }
         )
     editing_account = bool(str(current_form.get("editing_username") or "").strip())
+    total_accounts = len(users)
+    active_accounts = sum(1 for user in users if user.get("active"))
+    manager_accounts = sum(1 for user in users if user.get("role") == "event_manager")
+    bound_accounts = sum(1 for user in users if user.get("player_id") or user.get("linked_player_ids"))
     rows = []
     for user in users:
         username = user["username"]
         display_name = user.get("display_name") or username
         region_name = get_user_region_label(user) or "未设置"
+        role = user.get("role") or "member"
+        status_value = "active" if user.get("active") else "inactive"
         tags = []
         if username == ADMIN_USERNAME:
             tags.append('<span class="chip">主管理员</span>')
@@ -140,7 +149,8 @@ def get_accounts_page(
             <form method="post" action="/accounts" class="m-0">
               <input type="hidden" name="action" value="delete">
               <input type="hidden" name="username" value="{escape(username)}">
-              <button type="submit" class="btn btn-sm btn-outline-danger">删除账号</button>
+              <input class="form-control form-control-sm mb-1" name="delete_confirmation" placeholder="输入 {escape(username)} 确认">
+              <button type="submit" class="btn btn-sm btn-outline-danger" data-confirm="确认删除账号 {escape(username)}？该账号的登录会话也会失效。">删除账号</button>
             </form>
             """
             if can_delete
@@ -149,7 +159,7 @@ def get_accounts_page(
 
         rows.append(
             f"""
-            <tr>
+            <tr data-account-row data-account-keyword="{escape((username + ' ' + display_name + ' ' + region_name).lower())}" data-account-role="{escape(role)}" data-account-status="{status_value}">
               <td>{escape(username)}</td>
               <td>{escape(display_name)}</td>
               <td>{escape(region_name)}</td>
@@ -184,9 +194,37 @@ def get_accounts_page(
     )
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
-      <div class="eyebrow mb-3">管理员后台</div>
+      <div class="eyebrow mb-3">身份与权限</div>
       <h1 class="display-6 fw-semibold mb-3">账号管理</h1>
-      <p class="mb-0 opacity-75">这里只有管理员可以访问，用来新增账号和删除账号。</p>
+      <p class="mb-0 opacity-75">集中维护后台登录账号、基础身份、地区归属和参赛 ID 绑定入口。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="row g-3">
+        <div class="col-6 col-xl-3">
+          <div class="stat-card h-100 p-3 border-0">
+            <div class="stat-label">账号总数</div>
+            <div class="stat-value mt-2">{total_accounts}</div>
+          </div>
+        </div>
+        <div class="col-6 col-xl-3">
+          <div class="stat-card h-100 p-3 border-0">
+            <div class="stat-label">启用中</div>
+            <div class="stat-value mt-2">{active_accounts}</div>
+          </div>
+        </div>
+        <div class="col-6 col-xl-3">
+          <div class="stat-card h-100 p-3 border-0">
+            <div class="stat-label">赛事负责人</div>
+            <div class="stat-value mt-2">{manager_accounts}</div>
+          </div>
+        </div>
+        <div class="col-6 col-xl-3">
+          <div class="stat-card h-100 p-3 border-0">
+            <div class="stat-label">已绑定参赛</div>
+            <div class="stat-value mt-2">{bound_accounts}</div>
+          </div>
+        </div>
+      </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -219,20 +257,6 @@ def get_accounts_page(
             <a class="btn btn-outline-dark" href="/dashboard">查看首页</a>
           </div>
         </form>
-      </div>
-    </section>
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
-        <div>
-          <h2 class="section-title mb-2">AI 管理</h2>
-          <p class="section-copy mb-0">模型接口、提示词模板、AI 使用记录、AI 对话记录和访问统计已经独立到后台页面。</p>
-        </div>
-        <div class="d-flex flex-wrap gap-2">
-          <a class="btn btn-dark" href="/ai-admin">打开 AI 管理</a>
-          <a class="btn btn-outline-dark" href="/ai-jobs">AI 使用记录</a>
-          <a class="btn btn-outline-dark" href="/ai-conversations">AI 对话记录</a>
-          <a class="btn btn-outline-dark" href="/access-stats">访问统计</a>
-        </div>
       </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -286,7 +310,39 @@ def get_accounts_page(
                 <h2 class="section-title mb-2">现有账号</h2>
                 <p class="section-copy mb-0">管理员账号会被保护，当前登录账号也不能在这里直接删除；更细的能力授权请进入“权限控制”。</p>
               </div>
-              <a class="btn btn-outline-dark" href="/permissions">打开权限控制页</a>
+              <div class="d-flex flex-wrap gap-2">
+                <a class="btn btn-outline-dark" href="/permissions">打开权限控制页</a>
+                <a class="btn btn-outline-dark" href="/audit-logs">查看操作审计</a>
+              </div>
+            </div>
+            <div class="form-panel p-3 mb-3">
+              <div class="row g-2 align-items-end">
+                <div class="col-12 col-lg-5">
+                  <label class="form-label">搜索账号</label>
+                  <input class="form-control" id="account-search" placeholder="用户名、显示名或地区">
+                </div>
+                <div class="col-6 col-lg-3">
+                  <label class="form-label">账号类型</label>
+                  <select class="form-select" id="account-role-filter">
+                    <option value="">全部类型</option>
+                    <option value="member">普通成员</option>
+                    <option value="event_manager">赛事负责人</option>
+                    <option value="admin">管理员</option>
+                  </select>
+                </div>
+                <div class="col-6 col-lg-2">
+                  <label class="form-label">状态</label>
+                  <select class="form-select" id="account-status-filter">
+                    <option value="">全部状态</option>
+                    <option value="active">启用中</option>
+                    <option value="inactive">已停用</option>
+                  </select>
+                </div>
+                <div class="col-12 col-lg-2">
+                  <button class="btn btn-outline-dark w-100" type="button" id="account-filter-reset">重置</button>
+                </div>
+              </div>
+              <div class="small text-secondary mt-2"><span id="account-visible-count">{total_accounts}</span> / {total_accounts} 个账号</div>
             </div>
             <div class="table-responsive">
               <table class="table align-middle">
@@ -301,6 +357,9 @@ def get_accounts_page(
                 </thead>
                 <tbody>
                   {''.join(rows)}
+                  <tr id="account-empty-row" class="d-none">
+                    <td colspan="5" class="text-secondary">没有符合筛选条件的账号。</td>
+                  </tr>
                 </tbody>
               </table>
             </div>
@@ -308,6 +367,67 @@ def get_accounts_page(
         </div>
       </div>
     </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
+        <div>
+          <h2 class="section-title mb-2">系统入口</h2>
+          <p class="section-copy mb-0">账号页只保留身份相关工作流，其他系统能力进入对应后台模块处理。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/ai-admin">AI 管理</a>
+          <a class="btn btn-outline-dark" href="/access-stats">访问统计</a>
+          <a class="btn btn-outline-dark" href="/audit-logs">操作审计</a>
+        </div>
+      </div>
+    </section>
+    <script>
+      (function () {{
+        const searchInput = document.getElementById("account-search");
+        const roleFilter = document.getElementById("account-role-filter");
+        const statusFilter = document.getElementById("account-status-filter");
+        const resetButton = document.getElementById("account-filter-reset");
+        const visibleCount = document.getElementById("account-visible-count");
+        const emptyRow = document.getElementById("account-empty-row");
+        const rows = Array.from(document.querySelectorAll("[data-account-row]"));
+
+        function applyFilters() {{
+          const keyword = (searchInput && searchInput.value || "").trim().toLowerCase();
+          const role = roleFilter && roleFilter.value || "";
+          const status = statusFilter && statusFilter.value || "";
+          let shown = 0;
+          rows.forEach((row) => {{
+            const matchesKeyword = !keyword || (row.getAttribute("data-account-keyword") || "").includes(keyword);
+            const matchesRole = !role || row.getAttribute("data-account-role") === role;
+            const matchesStatus = !status || row.getAttribute("data-account-status") === status;
+            const visible = matchesKeyword && matchesRole && matchesStatus;
+            row.classList.toggle("d-none", !visible);
+            if (visible) shown += 1;
+          }});
+          if (visibleCount) visibleCount.textContent = String(shown);
+          if (emptyRow) emptyRow.classList.toggle("d-none", shown !== 0);
+        }}
+
+        [searchInput, roleFilter, statusFilter].forEach((control) => {{
+          if (control) control.addEventListener("input", applyFilters);
+          if (control) control.addEventListener("change", applyFilters);
+        }});
+        if (resetButton) {{
+          resetButton.addEventListener("click", function () {{
+            if (searchInput) searchInput.value = "";
+            if (roleFilter) roleFilter.value = "";
+            if (statusFilter) statusFilter.value = "";
+            applyFilters();
+          }});
+        }}
+        document.querySelectorAll("[data-confirm]").forEach((button) => {{
+          button.addEventListener("click", function (event) {{
+            const message = button.getAttribute("data-confirm") || "确认执行这个操作？";
+            if (!window.confirm(message)) event.preventDefault();
+          }});
+        }});
+        applyFilters();
+      }})();
+    </script>
     """
     return layout("账号管理", body, ctx, alert=alert)
 
@@ -349,17 +469,30 @@ def get_permission_control_page(
             target_user,
         )
 
+    total_accounts = len(users)
+    admin_accounts = sum(1 for user in users if is_admin_user(user))
+    permissioned_accounts = sum(
+        1
+        for user in users
+        if is_admin_user(user) or normalize_permission_keys(user.get("permissions", []))
+    )
+    scoped_accounts = sum(1 for user in users if get_user_manager_scope_keys(user))
     user_cards: list[str] = []
     for user in users:
         permission_labels = get_user_permission_labels(user)
+        username = user["username"]
+        display_name = user.get("display_name") or username
+        role = user.get("role") or "member"
+        region_label = get_user_region_label(user) or "未设置地区"
+        selected_class = " border-primary" if target_user and username == target_user.get("username") else ""
         user_cards.append(
             f"""
-            <a class="team-link-card shadow-sm p-3 h-100 d-block" href="/permissions?{urlencode({"username": user["username"]})}">
+            <a class="team-link-card shadow-sm p-3 h-100 d-block{selected_class}" href="/permissions?{urlencode({"username": username})}" data-permission-user data-permission-keyword="{escape((username + ' ' + display_name + ' ' + region_label).lower())}" data-permission-role="{escape(role)}">
               <div class="d-flex justify-content-between align-items-start gap-3">
                 <div>
-                  <div class="fw-semibold">{escape(user.get("display_name") or user["username"])}</div>
-                  <div class="small text-secondary mt-1">{escape(user["username"])} · {escape(account_role_label(user))}</div>
-                  <div class="small text-secondary mt-1">{escape(get_user_region_label(user) or "未设置地区")}</div>
+                  <div class="fw-semibold">{escape(display_name)}</div>
+                  <div class="small text-secondary mt-1">{escape(username)} · {escape(account_role_label(user))}</div>
+                  <div class="small text-secondary mt-1">{escape(region_label)}</div>
                 </div>
                 <span class="chip">{'管理员' if is_admin_user(user) else f'{len(permission_labels)} 项权限'}</span>
               </div>
@@ -370,12 +503,31 @@ def get_permission_control_page(
     permission_panel = '<div class="alert alert-secondary mb-0">请先从左侧选择一个账号。</div>'
     if target_user:
         role_label = account_role_label(target_user)
+        selected_permissions = normalize_permission_keys(current_form["permission_keys"])
+        selected_event_permissions = [
+            key for key in selected_permissions if key in EVENT_SCOPE_PERMISSION_KEYS
+        ]
+        selected_scope_keys = [
+            str(scope_key or "").strip()
+            for scope_key in current_form["manager_scope_keys"]
+            if str(scope_key or "").strip()
+        ]
         permission_summary = "；".join(get_user_permission_labels(target_user)) or "暂未授予额外权限"
+        scope_warning = (
+            '<div class="alert alert-warning mb-4">已勾选赛事类权限，请至少选择一个“地区 + 系列赛”负责范围后再保存。</div>'
+            if selected_event_permissions and not selected_scope_keys
+            else ""
+        )
         if is_admin_user(target_user):
             permission_panel = f"""
             <section class="panel shadow-sm p-3 p-lg-4">
-              <h2 class="section-title mb-2">权限详情</h2>
-              <p class="section-copy mb-3">当前账号是管理员，默认拥有全部权限，不通过这里单独配置。</p>
+              <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
+                <div>
+                  <h2 class="section-title mb-2">管理员权限</h2>
+                  <p class="section-copy mb-0">当前账号默认拥有全部后台能力，不通过权限表单单独配置。</p>
+                </div>
+                <a class="btn btn-outline-dark" href="/accounts?{urlencode({'edit_username': target_user['username']})}">编辑账号资料</a>
+              </div>
               <div class="row g-3">
                 <div class="col-12 col-md-6"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">账号</div><div class="stat-value mt-2">{escape(target_user['username'])}</div></div></div>
                 <div class="col-12 col-md-6"><div class="stat-card h-100 p-3 shadow-sm border-0"><div class="stat-label">身份</div><div class="stat-value mt-2">{escape(role_label)}</div></div></div>
@@ -389,20 +541,41 @@ def get_permission_control_page(
               <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
                 <div>
                   <h2 class="section-title mb-2">编辑账号权限</h2>
-                  <p class="section-copy mb-0">赛事类权限必须配合下方“地区 + 系列赛负责范围”一起保存。你可以给同一账号勾选多个系列赛范围，但它只能在这些范围内生效。</p>
+                  <p class="section-copy mb-0">先授予功能权限，再限定赛事类权限的生效范围。组织类和数据类权限不受赛事范围限制。</p>
                 </div>
-                <div class="small text-secondary">
-                  目标账号：{escape(target_user['username'])}<br>
-                  基础身份：{escape(role_label)}<br>
-                  当前权限：{escape(permission_summary)}
+                <div class="d-flex flex-wrap gap-2 align-items-start">
+                  <a class="btn btn-outline-dark" href="/accounts?{urlencode({'edit_username': target_user['username']})}">编辑账号资料</a>
+                  <a class="btn btn-outline-dark" href="/audit-logs">查看审计</a>
                 </div>
               </div>
+              <div class="row g-3 mb-4">
+                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">功能权限</div><div class="stat-value mt-2">{len(selected_permissions)}</div></div></div>
+                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">赛事权限</div><div class="stat-value mt-2">{len(selected_event_permissions)}</div></div></div>
+                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">负责范围</div><div class="stat-value mt-2">{len(selected_scope_keys)}</div></div></div>
+                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">账号身份</div><div class="stat-value mt-2">{escape(role_label)}</div></div></div>
+              </div>
+              <div class="alert alert-light mb-4">当前权限：{escape(permission_summary)}</div>
+              {scope_warning}
               <form method="post" action="/permissions">
                 <input type="hidden" name="username" value="{escape(current_form['username'])}">
-                {legacy.build_permission_options(current_form['permission_keys'])}
-                <div class="mb-4">
-                  <h3 class="h6 mb-2">赛事负责范围</h3>
-                  <p class="small text-secondary mb-3">范围口径为“地区 + 系列赛”，可多选。赛事类权限只会在这些已选范围内生效。</p>
+                <div class="panel shadow-sm p-3 p-lg-4 mb-4">
+                  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+                    <div>
+                      <h3 class="h5 mb-1">功能权限</h3>
+                      <p class="small text-secondary mb-0">勾选账号可以进入和维护的后台能力。</p>
+                    </div>
+                    <span class="chip">{len(selected_permissions)} / {len(PERMISSION_LABELS)} 已选</span>
+                  </div>
+                  {legacy.build_permission_options(current_form['permission_keys'])}
+                </div>
+                <div class="panel shadow-sm p-3 p-lg-4 mb-4">
+                  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+                    <div>
+                      <h3 class="h5 mb-1">赛事负责范围</h3>
+                      <p class="small text-secondary mb-0">范围口径为“地区 + 系列赛”。赛事类权限只会在这些已选范围内生效。</p>
+                    </div>
+                    <span class="chip">{len(selected_scope_keys)} 个范围</span>
+                  </div>
                   {build_manager_scope_options(ctx.current_user, current_form['manager_scope_keys'])}
                 </div>
                 <div class="d-flex flex-wrap gap-2">
@@ -415,21 +588,83 @@ def get_permission_control_page(
 
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
-      <div class="eyebrow mb-3">管理员后台</div>
+      <div class="eyebrow mb-3">RBAC</div>
       <h1 class="display-6 fw-semibold mb-3">用户权限控制</h1>
-      <p class="mb-0 opacity-75">这里集中控制账号的门派、战队、赛事与数据维护权限。一个账号可以同时拥有多个权限，最终以管理员勾选结果为准。</p>
+      <p class="mb-0 opacity-75">集中控制账号的门派、战队、赛事与数据维护权限。赛事类权限必须绑定负责范围。</p>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="row g-3">
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">账号总数</div><div class="stat-value mt-2">{total_accounts}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">管理员</div><div class="stat-value mt-2">{admin_accounts}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">已授权账号</div><div class="stat-value mt-2">{permissioned_accounts}</div></div></div>
+        <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">有赛事范围</div><div class="stat-value mt-2">{scoped_accounts}</div></div></div>
+      </div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4">
       <div class="row g-4">
         <div class="col-12 col-xl-4">
-          <h2 class="section-title mb-3">账号列表</h2>
-          <div class="row g-3">{''.join(f'<div class="col-12">{card}</div>' for card in user_cards)}</div>
+          <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">账号目录</h2>
+              <p class="section-copy mb-0">选择一个账号后，在右侧维护权限。</p>
+            </div>
+            <a class="btn btn-outline-dark" href="/accounts">账号管理</a>
+          </div>
+          <div class="form-panel p-3 mb-3">
+            <label class="form-label">搜索账号</label>
+            <input class="form-control mb-2" id="permission-user-search" placeholder="用户名、显示名或地区">
+            <label class="form-label">账号类型</label>
+            <select class="form-select" id="permission-role-filter">
+              <option value="">全部类型</option>
+              <option value="member">普通成员</option>
+              <option value="event_manager">赛事负责人</option>
+              <option value="admin">管理员</option>
+            </select>
+            <div class="small text-secondary mt-2"><span id="permission-user-visible-count">{total_accounts}</span> / {total_accounts} 个账号</div>
+          </div>
+          <div class="row g-3" id="permission-user-list">
+            {''.join(f'<div class="col-12" data-permission-user-shell>{card}</div>' for card in user_cards)}
+            <div class="col-12 d-none" id="permission-user-empty">
+              <div class="alert alert-secondary mb-0">没有符合筛选条件的账号。</div>
+            </div>
+          </div>
         </div>
         <div class="col-12 col-xl-8">
           {permission_panel}
         </div>
       </div>
     </section>
+    <script>
+      (function () {{
+        const searchInput = document.getElementById("permission-user-search");
+        const roleFilter = document.getElementById("permission-role-filter");
+        const visibleCount = document.getElementById("permission-user-visible-count");
+        const emptyState = document.getElementById("permission-user-empty");
+        const shells = Array.from(document.querySelectorAll("[data-permission-user-shell]"));
+
+        function applyUserFilters() {{
+          const keyword = (searchInput && searchInput.value || "").trim().toLowerCase();
+          const role = roleFilter && roleFilter.value || "";
+          let shown = 0;
+          shells.forEach((shell) => {{
+            const card = shell.querySelector("[data-permission-user]");
+            const matchesKeyword = !keyword || (card && (card.getAttribute("data-permission-keyword") || "").includes(keyword));
+            const matchesRole = !role || (card && card.getAttribute("data-permission-role") === role);
+            const visible = matchesKeyword && matchesRole;
+            shell.classList.toggle("d-none", !visible);
+            if (visible) shown += 1;
+          }});
+          if (visibleCount) visibleCount.textContent = String(shown);
+          if (emptyState) emptyState.classList.toggle("d-none", shown !== 0);
+        }}
+
+        [searchInput, roleFilter].forEach((control) => {{
+          if (control) control.addEventListener("input", applyUserFilters);
+          if (control) control.addEventListener("change", applyUserFilters);
+        }});
+        applyUserFilters();
+      }})();
+    </script>
     """
     return layout("权限控制", body, ctx, alert=alert)
 
@@ -560,6 +795,14 @@ def handle_accounts(ctx: RequestContext, start_response):
             }
         )
         save_users(users)
+        audit_action(
+            ctx,
+            "account.create",
+            target_type="user",
+            target_id=username,
+            summary=f"创建账号 {username}",
+            metadata={"role": role, "region_name": normalized_region or "广州市"},
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -645,6 +888,18 @@ def handle_accounts(ctx: RequestContext, start_response):
                 updated_user["password_hash"] = password_hash
             updated_users.append(updated_user)
         save_users(updated_users)
+        audit_action(
+            ctx,
+            "account.update",
+            target_type="user",
+            target_id=editing_username,
+            summary=f"更新账号 {editing_username}",
+            metadata={
+                "role": role,
+                "region_name": normalized_region or "广州市",
+                "password_changed": bool(password),
+            },
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -677,10 +932,23 @@ def handle_accounts(ctx: RequestContext, start_response):
                 "200 OK",
                 get_accounts_page(ctx, alert="没有找到要删除的账号。"),
             )
+        if form_value(ctx.form, "delete_confirmation").strip() != username:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_accounts_page(ctx, alert=f"删除账号前，请在确认框输入完整用户名：{username}。"),
+            )
 
         users = [user for user in users if user["username"] != username]
         revoke_user_sessions(username)
         save_users(users)
+        audit_action(
+            ctx,
+            "account.delete",
+            target_type="user",
+            target_id=username,
+            summary=f"删除账号 {username}",
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -763,6 +1031,17 @@ def handle_permission_control(ctx: RequestContext, start_response):
             }
         )
     save_users(updated_users)
+    audit_action(
+        ctx,
+        "permission.update",
+        target_type="user",
+        target_id=username,
+        summary=f"更新账号 {username} 的权限",
+        metadata={
+            "permission_keys": normalize_permission_keys(permission_keys),
+            "manager_scope_keys": manager_scope_keys,
+        },
+    )
     return start_response_html(
         start_response,
         "200 OK",

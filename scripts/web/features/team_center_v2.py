@@ -9,6 +9,7 @@ from web.features import team_center as base
 RequestContext = legacy.RequestContext
 append_alert_query = legacy.append_alert_query
 append_user_player_binding = legacy.append_user_player_binding
+audit_action = legacy.audit_action
 build_placeholder_player = legacy.build_placeholder_player
 build_scoped_path = legacy.build_scoped_path
 build_unique_slug = legacy.build_unique_slug
@@ -382,10 +383,25 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
                 "created_on": legacy.china_now_label(),
             }
         )
+        request_id = requests[-1]["request_id"]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "team_claim.request",
+            target_type="membership_request",
+            target_id=request_id,
+            summary=f"提交战队 {target_team['name']} 的认领申请",
+            metadata={"team_id": team_id, "username": current_user["username"]},
+        )
         return _respond_with_alert(start_response, ctx, "认领申请已提交，等待管理员或赛事管理员审核。", next_path)
 
     if action == "cancel_request":
+        cancelled_ids = [
+            str(item.get("request_id") or "")
+            for item in requests
+            if item.get("username") == current_user["username"]
+            and item.get("request_type") == "team_claim"
+        ]
         requests = [
             item
             for item in requests
@@ -395,6 +411,15 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
             )
         ]
         save_membership_requests(requests)
+        if cancelled_ids:
+            audit_action(
+                ctx,
+                "team_claim.cancel",
+                target_type="membership_request",
+                target_id=",".join(cancelled_ids),
+                summary=f"取消账号 {current_user['username']} 的战队认领申请",
+                metadata={"request_ids": cancelled_ids},
+            )
         return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="认领申请已取消。"))
 
     if action in {"approve_team_claim", "reject_team_claim"}:
@@ -420,6 +445,17 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         if action == "reject_team_claim":
             requests = [item for item in requests if item.get("request_id") != request_id]
             save_membership_requests(requests)
+            audit_action(
+                ctx,
+                "team_claim.reject",
+                target_type="membership_request",
+                target_id=request_id,
+                summary=f"拒绝战队 {target_team.get('name') if target_team else request_item.get('target_team_id')} 的认领申请",
+                metadata={
+                    "team_id": request_item.get("target_team_id"),
+                    "username": request_item.get("username"),
+                },
+            )
             return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="战队认领申请已拒绝。"))
 
         requester = next((user for user in users if user["username"] == request_item["username"]), None)
@@ -469,6 +505,18 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
             return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="通过认领申请失败：" + "；".join(errors[:3])))
         requests = [item for item in requests if item.get("request_id") != request_id]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "team_claim.approve",
+            target_type="membership_request",
+            target_id=request_id,
+            summary=f"通过战队 {target_team['name']} 的认领申请",
+            metadata={
+                "team_id": target_team["team_id"],
+                "username": requester["username"],
+                "captain_player_id": captain_player["player_id"],
+            },
+        )
         return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert=f"已通过 {target_team['name']} 的认领申请。"))
 
     if action == "update_team_profile":
@@ -491,6 +539,14 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         errors = save_repository_state(data, users)
         if errors:
             return _respond_with_alert(start_response, ctx, "保存战队资料失败：" + "；".join(errors[:3]), next_path)
+        audit_action(
+            ctx,
+            "team.profile_update",
+            target_type="team",
+            target_id=team_id,
+            summary=f"更新战队 {team['name']} 的资料",
+            metadata={"short_name": short_name},
+        )
         return _respond_with_alert(start_response, ctx, "战队资料已更新。", next_path)
 
     if action == "unbind_team_claim":
@@ -520,6 +576,14 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
             )
         ]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "team_claim.unbind",
+            target_type="team",
+            target_id=team_id,
+            summary=f"解除战队 {team['name']} 的认领负责人",
+            metadata={"team_id": team_id},
+        )
         return _respond_with_alert(start_response, ctx, f"已解除 {team['name']} 的认领负责人。", next_path)
 
     if action == "update_team_stage_groups":
@@ -539,6 +603,14 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         errors = save_repository_state(data, users)
         if errors:
             return start_response_html(start_response, "200 OK", legacy.get_team_page(ctx, team_id, alert="保存战队分组失败：" + "；".join(errors[:3])))
+        audit_action(
+            ctx,
+            "team.stage_groups_update",
+            target_type="team",
+            target_id=team_id,
+            summary=f"更新战队 {team['name']} 的赛段分组",
+            metadata={"stage_group_count": len(team.get("stage_groups") or [])},
+        )
         return start_response_html(start_response, "200 OK", legacy.get_team_page(ctx, team_id, alert="战队分组信息已更新。"))
 
     if action == "delete_team":
@@ -560,6 +632,14 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         if errors:
             return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="删除战队失败：" + "；".join(errors[:3])))
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "team.delete",
+            target_type="team",
+            target_id=team_id,
+            summary=f"删除战队 {team['name']}",
+            metadata={"team_id": team_id},
+        )
         return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert=f"战队 {team['name']} 已删除。"))
 
     return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="未识别的操作。"))

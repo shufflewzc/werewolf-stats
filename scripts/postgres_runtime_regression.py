@@ -88,7 +88,7 @@ def cleanup_temp_rows(database_url_value: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     database_url_value = (args.database_url or database_url()).strip()
     if database_backend(database_url_value) != "postgres":
         print("回归失败：DATABASE_URL 不是 PostgreSQL。", file=sys.stderr)

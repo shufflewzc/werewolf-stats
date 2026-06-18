@@ -6,6 +6,7 @@ import argparse
 import sys
 
 from db_runtime import connect_runtime_db, runtime_database_summary
+from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
 
 
 CORE_TABLES = [
@@ -16,6 +17,7 @@ CORE_TABLES = [
     "matches",
     "match_players",
     "app_meta",
+    "audit_logs",
 ]
 
 
@@ -26,7 +28,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     summary = runtime_database_summary(args.database_url or None)
     print("运行时数据库：")
     print(f"- backend: {summary['backend']}")
@@ -41,6 +43,10 @@ def main(argv: list[str] | None = None) -> int:
                 "SELECT meta_value FROM app_meta WHERE meta_key = ?",
                 ("initialized",),
             ).fetchone()
+            schema_version_row = connection.execute(
+                "SELECT meta_value FROM app_meta WHERE meta_key = ?",
+                (SCHEMA_VERSION_META_KEY,),
+            ).fetchone()
     except Exception as exc:
         print(f"烟测失败：{exc}", file=sys.stderr)
         return 1
@@ -54,6 +60,19 @@ def main(argv: list[str] | None = None) -> int:
     if initialized != "1":
         print("烟测失败：app_meta.initialized 不是 1。", file=sys.stderr)
         return 2
+    schema_version = 0
+    if schema_version_row:
+        raw_version = schema_version_row["meta_value"] if isinstance(schema_version_row, dict) else schema_version_row["meta_value"]
+        try:
+            schema_version = int(str(raw_version or "0"))
+        except ValueError:
+            schema_version = 0
+    if schema_version < REQUIRED_SCHEMA_VERSION:
+        print(
+            f"烟测失败：schema_version={schema_version}，需要 {REQUIRED_SCHEMA_VERSION}。",
+            file=sys.stderr,
+        )
+        return 3
     print("烟测通过。")
     return 0
 

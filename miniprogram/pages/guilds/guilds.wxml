@@ -1,8 +1,9 @@
 <view class="page">
   <view class="hero">
     <text class="eyebrow">Guilds</text>
-    <text class="title">{{hero.title || "全部门派"}}</text>
-    <text class="copy">{{hero.copy || "查看长期战队组织、赛季身份和荣誉归档。"}}</text>
+    <text class="title">{{needsCompetition ? "先进入赛事" : (hero.title || "全部门派")}}</text>
+    <text class="copy" wx:if="{{needsCompetition}}">必须先选择赛事，之后才能查看该赛事上下文里的门派与详情。</text>
+    <text class="copy" wx:else>{{hero.copy || "查看长期战队组织、赛季身份和荣誉归档。"}}</text>
   </view>
 
   <view wx:if="{{loading}}" class="section">
@@ -15,10 +16,35 @@
   <view wx:elif="{{error}}" class="section">
     <view class="error-card">
       <text>{{error}}</text>
+      <view class="button-row">
+        <button class="ghost-button" bindtap="loadData">重试</button>
+      </view>
     </view>
   </view>
 
   <block wx:else>
+    <view class="section" wx:if="{{needsCompetition}}">
+      <view class="empty-card">
+        <text class="empty-title">先进入赛事</text>
+        <text class="empty-copy">选择赛事后，门派列表、门派详情和赛事数据会跟随当前赛事。</text>
+        <view class="button-row">
+          <button class="primary-button" bindtap="goCompetitions">去选择赛事</button>
+        </view>
+      </view>
+    </view>
+
+    <block wx:if="{{!needsCompetition}}">
+    <view class="section">
+      <view class="scope-bar">
+        <view class="scope-main">
+          <text class="scope-label">当前赛事</text>
+          <text class="scope-title">{{selectedScope.competition}}</text>
+          <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+        </view>
+        <button class="scope-button" bindtap="changeCompetition">切换</button>
+      </view>
+    </view>
+
     <view class="section">
       <view class="metrics">
         <view class="metric-card" wx:for="{{metrics}}" wx:key="label">
@@ -61,5 +87,6 @@
         <text class="empty-copy">网站后台登记门派后，这里会显示公开入口。</text>
       </view>
     </view>
+    </block>
   </block>
 </view>

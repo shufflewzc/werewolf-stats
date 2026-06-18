@@ -44,6 +44,48 @@
   margin-top: 10rpx;
 }
 
+.summary-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12rpx;
+}
+
+.summary-card {
+  min-height: 132rpx;
+  padding: 18rpx 14rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  box-sizing: border-box;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.summary-label,
+.summary-value,
+.summary-copy {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.summary-label {
+  font-size: 20rpx;
+  color: #64748b;
+}
+
+.summary-value {
+  margin-top: 8rpx;
+  font-size: 30rpx;
+  font-weight: 800;
+}
+
+.summary-copy {
+  margin-top: 6rpx;
+  font-size: 20rpx;
+  color: #475569;
+}
+
 .insight-card,
 .dimension-card,
 .role-card {

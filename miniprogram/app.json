@@ -8,7 +8,8 @@
     "pages/guild-detail/guild-detail",
     "pages/mine/mine",
     "pages/player-bind/player-bind",
-    "pages/predictions/predictions"
+    "pages/predictions/predictions",
+    "pages/day-detail/day-detail"
   ],
   "window": {
     "navigationBarTitleText": "狼人杀赛事",

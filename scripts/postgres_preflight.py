@@ -10,12 +10,14 @@ from pathlib import Path
 from typing import Any
 
 from db_runtime import database_backend
+from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
 from sqlite_store import DB_PATH
 
 
 REQUIRED_TABLES = [
     "users",
     "app_meta",
+    "audit_logs",
     "user_sessions",
     "guilds",
     "teams",
@@ -66,6 +68,13 @@ def warn(message: str) -> None:
 def sqlite_table_count(connection: sqlite3.Connection, table_name: str) -> int:
     row = connection.execute(f'SELECT COUNT(*) AS count FROM "{table_name}"').fetchone()
     return int(row["count"] or 0)
+
+
+def parse_schema_version(value: Any) -> int:
+    try:
+        return int(str(value or "0").strip() or "0")
+    except ValueError:
+        return 0
 
 
 def check_sqlite_source(sqlite_db: Path, errors: list[str]) -> None:
@@ -142,6 +151,20 @@ def check_postgres(database_url: str, errors: list[str]) -> None:
                 ok("PostgreSQL app_meta.initialized 为 1。")
             else:
                 fail(errors, "PostgreSQL app_meta.initialized 不是 1，请先迁移数据。")
+            schema_version_row = connection.execute(
+                "SELECT meta_value FROM app_meta WHERE meta_key = %s",
+                (SCHEMA_VERSION_META_KEY,),
+            ).fetchone()
+            schema_version = parse_schema_version(
+                schema_version_row["meta_value"] if schema_version_row else "0"
+            )
+            if schema_version >= REQUIRED_SCHEMA_VERSION:
+                ok(f"PostgreSQL schema_version={schema_version}。")
+            else:
+                fail(
+                    errors,
+                    f"PostgreSQL schema_version={schema_version}，需要 {REQUIRED_SCHEMA_VERSION}。请先执行 scripts/apply_postgres_schema.py。",
+                )
             counts = connection.execute(
                 """
                 SELECT
@@ -170,7 +193,7 @@ def check_environment(args: argparse.Namespace, errors: list[str]) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     errors: list[str] = []
     print("PostgreSQL 切换预检")
     check_environment(args, errors)

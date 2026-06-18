@@ -63,11 +63,33 @@ CREATE TABLE IF NOT EXISTS access_logs (
     request_id TEXT NOT NULL DEFAULT '',
     path TEXT NOT NULL,
     method TEXT NOT NULL,
+    status_code INTEGER NOT NULL DEFAULT 0,
+    duration_ms INTEGER NOT NULL DEFAULT 0,
     query_string TEXT NOT NULL DEFAULT '',
     username TEXT NOT NULL DEFAULT '',
     ip_address TEXT NOT NULL DEFAULT '',
     user_agent TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL
+);
+
+ALTER TABLE access_logs
+    ADD COLUMN IF NOT EXISTS request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE access_logs
+    ADD COLUMN IF NOT EXISTS status_code INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE access_logs
+    ADD COLUMN IF NOT EXISTS duration_ms INTEGER NOT NULL DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+    audit_id TEXT PRIMARY KEY,
+    request_id TEXT NOT NULL DEFAULT '',
+    username TEXT NOT NULL DEFAULT '',
+    action TEXT NOT NULL,
+    target_type TEXT NOT NULL DEFAULT '',
+    target_id TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    ip_address TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
 CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -160,7 +182,9 @@ CREATE TABLE IF NOT EXISTS matches (
 CREATE TABLE IF NOT EXISTS match_players (
     match_id TEXT NOT NULL REFERENCES matches(match_id) ON DELETE CASCADE,
     sort_order INTEGER NOT NULL,
-    player_id TEXT NOT NULL REFERENCES players(player_id),
+    -- Allows non-profile participants such as NPC while season dimension tables
+    -- still keep strict player references.
+    player_id TEXT NOT NULL,
     team_id TEXT NOT NULL REFERENCES teams(team_id),
     seat INTEGER NOT NULL,
     role TEXT NOT NULL,
@@ -219,8 +243,41 @@ CREATE TABLE IF NOT EXISTS membership_requests (
 CREATE INDEX IF NOT EXISTS idx_team_members_team_order
 ON team_members(team_id, sort_order);
 
+CREATE INDEX IF NOT EXISTS idx_team_members_player
+ON team_members(player_id);
+
+CREATE INDEX IF NOT EXISTS idx_teams_scope
+ON teams(competition_name, season_name, active, name);
+
+CREATE INDEX IF NOT EXISTS idx_teams_guild_scope
+ON teams(guild_id, competition_name, season_name);
+
+CREATE INDEX IF NOT EXISTS idx_players_team_active
+ON players(team_id, active, display_name);
+
+CREATE INDEX IF NOT EXISTS idx_players_display_name
+ON players(display_name);
+
+CREATE INDEX IF NOT EXISTS idx_matches_scope_day
+ON matches(competition_name, season, played_on, round, game_no);
+
+CREATE INDEX IF NOT EXISTS idx_matches_day
+ON matches(played_on, competition_name, season);
+
+CREATE INDEX IF NOT EXISTS idx_matches_stage
+ON matches(competition_name, season, stage, group_label);
+
 CREATE INDEX IF NOT EXISTS idx_match_players_match_order
 ON match_players(match_id, sort_order);
+
+CREATE INDEX IF NOT EXISTS idx_match_players_player
+ON match_players(player_id, match_id);
+
+CREATE INDEX IF NOT EXISTS idx_match_players_team
+ON match_players(team_id, match_id);
+
+CREATE INDEX IF NOT EXISTS idx_match_players_camp_result
+ON match_players(camp, result);
 
 CREATE INDEX IF NOT EXISTS idx_ai_jobs_created_at
 ON ai_jobs(created_at);
@@ -234,6 +291,27 @@ ON access_logs(created_at);
 CREATE INDEX IF NOT EXISTS idx_access_logs_path_created_at
 ON access_logs(path, created_at);
 
+CREATE INDEX IF NOT EXISTS idx_access_logs_status_created_at
+ON access_logs(status_code, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_access_logs_duration_ms
+ON access_logs(duration_ms);
+
+CREATE INDEX IF NOT EXISTS idx_access_logs_request_id
+ON access_logs(request_id);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
+ON audit_logs(created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_target
+ON audit_logs(target_type, target_id, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_username
+ON audit_logs(username, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id
+ON audit_logs(request_id);
+
 CREATE INDEX IF NOT EXISTS idx_ai_conversations_created_at
 ON ai_conversations(created_at);
 
@@ -243,8 +321,26 @@ ON ai_conversations(competition_name, season_name, created_at);
 CREATE INDEX IF NOT EXISTS idx_season_player_dimension_stats_scope
 ON season_player_dimension_stats(competition_name, season_name, played_on, player_id);
 
+CREATE INDEX IF NOT EXISTS idx_season_player_dimension_stats_player_scope
+ON season_player_dimension_stats(player_id, competition_name, season_name, played_on);
+
+CREATE INDEX IF NOT EXISTS idx_season_player_dimension_stats_team_scope
+ON season_player_dimension_stats(team_id, competition_name, season_name, played_on);
+
 CREATE INDEX IF NOT EXISTS idx_season_team_dimension_stats_scope
 ON season_team_dimension_stats(competition_name, season_name, played_on, team_id, seat);
+
+CREATE INDEX IF NOT EXISTS idx_season_team_dimension_stats_team_scope
+ON season_team_dimension_stats(team_id, competition_name, season_name, played_on);
+
+CREATE INDEX IF NOT EXISTS idx_membership_requests_username
+ON membership_requests(username, created_on);
+
+CREATE INDEX IF NOT EXISTS idx_membership_requests_target_team
+ON membership_requests(target_team_id, created_on);
+
+CREATE INDEX IF NOT EXISTS idx_membership_requests_scope
+ON membership_requests(scope_competition_name, scope_season_name, created_on);
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_player_id
 ON users(player_id)
@@ -257,5 +353,9 @@ WHERE wechat_openid != '';
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_web_openid
 ON users(wechat_web_openid)
 WHERE wechat_web_openid != '';
+
+INSERT INTO app_meta (meta_key, meta_value)
+VALUES ('schema_version', '2')
+ON CONFLICT (meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value;
 
 COMMIT;

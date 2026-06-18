@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getSelectedScope, scopeParams } = require("../../utils/scope");
+const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 Page({
   data: {
@@ -24,16 +24,13 @@ Page({
   async loadData() {
     this.setData({ loading: true, error: "" });
     try {
-      const selectedScope = getSelectedScope();
-      if (!selectedScope || !selectedScope.competition) {
-        this.setData({
-          loading: false,
-          selectedScope: null,
-          needsCompetition: true,
+      const selectedScope = getRequiredScope();
+      if (!selectedScope) {
+        this.setData(needsCompetitionState({
           scope: {},
           metrics: [],
           teams: []
-        });
+        }));
         return;
       }
 
@@ -58,6 +55,6 @@ Page({
   },
 
   goCompetitions() {
-    wx.switchTab({ url: "/pages/dashboard/dashboard" });
+    goCompetitions();
   }
 });

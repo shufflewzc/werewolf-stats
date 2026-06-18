@@ -4,6 +4,7 @@ from html import escape
 import web_app as legacy
 
 RequestContext = legacy.RequestContext
+audit_action = legacy.audit_action
 build_scoped_path = legacy.build_scoped_path
 form_value = legacy.form_value
 get_team_by_id = legacy.get_team_by_id
@@ -116,6 +117,7 @@ def get_team_admin_page(ctx: RequestContext, alert: str = "") -> str:
                   <form method="post" action="/team-admin" class="m-0">
                     <input type="hidden" name="action" value="delete_team">
                     <input type="hidden" name="team_id" value="{escape(team_id)}">
+                    <input class="form-control form-control-sm mb-1" name="delete_confirmation" placeholder="输入门派名确认">
                     <button type="submit" class="btn btn-sm btn-outline-danger">删除</button>
                   </form>
                 </div>
@@ -212,6 +214,12 @@ def handle_team_admin(ctx: RequestContext, start_response):
             "200 OK",
             get_team_admin_page(ctx, alert=dissolution_error),
         )
+    if form_value(ctx.form, "delete_confirmation").strip() != str(team.get("name") or "").strip():
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_team_admin_page(ctx, alert=f"删除战队前，请在确认框输入完整名称：{team['name']}。"),
+        )
 
     users, requests = dissolve_team(data, users, team)
     errors = save_repository_state(data, users)
@@ -222,4 +230,12 @@ def handle_team_admin(ctx: RequestContext, start_response):
             get_team_admin_page(ctx, alert="删除战队失败：" + "；".join(errors[:3])),
         )
     save_membership_requests(requests)
+    audit_action(
+        ctx,
+        "team.delete",
+        target_type="team",
+        target_id=team_id,
+        summary=f"删除战队 {team['name']}",
+        metadata={"team_name": team["name"]},
+    )
     return redirect(start_response, "/team-admin")

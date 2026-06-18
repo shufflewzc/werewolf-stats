@@ -28,6 +28,7 @@ build_competition_switcher = legacy.build_competition_switcher
 build_season_switcher = legacy.build_season_switcher
 build_match_day_path = legacy.build_match_day_path
 append_alert_query = legacy.append_alert_query
+audit_action = legacy.audit_action
 account_role_label = legacy.account_role_label
 can_access_series_management = legacy.can_access_series_management
 can_manage_competition_catalog = legacy.can_manage_competition_catalog
@@ -2446,6 +2447,14 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
             summary_content,
             "管理员手动编辑",
         )
+        audit_action(
+            ctx,
+            "season.ai_summary_save",
+            target_type="season",
+            target_id=f"{competition_name}:{season_name}",
+            summary=f"手动保存 {competition_name} / {season_name} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name, "source": "ai_analysis"},
+        )
         return redirect(start_response, append_alert_query(redirect_path, "AI 赛季总结已保存。"))
 
     if action == "generate_ai_season_summary":
@@ -2458,6 +2467,14 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
             _generate_and_save_ai_season_summary(competition_name, season_name)
         except ValueError as exc:
             return redirect(start_response, append_alert_query(redirect_path, str(exc)))
+        audit_action(
+            ctx,
+            "season.ai_summary_generate",
+            target_type="season",
+            target_id=f"{competition_name}:{season_name}",
+            summary=f"生成 {competition_name} / {season_name} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name, "source": "ai_analysis"},
+        )
         return redirect(start_response, append_alert_query(redirect_path, "AI 赛季总结已生成。"))
 
     if action == "ask_ai_data_question":
@@ -2762,6 +2779,36 @@ def _serialize_day_team_row(
     }
 
 
+def _serialize_day_player_row(
+    row: dict[str, Any],
+    catalog: dict[str, Any],
+) -> dict[str, Any]:
+    competition_name = str(row.get("competition_name") or "").strip()
+    season_name = str(row.get("season_name") or "").strip()
+    series_entry = get_series_entry_by_competition(catalog, competition_name)
+    region_name = series_entry["region_name"] if series_entry else DEFAULT_REGION_NAME
+    series_slug = series_entry["series_slug"] if series_entry else None
+    return {
+        "rank": row.get("rank", "-"),
+        "player_id": row["player_id"],
+        "display_name": row["display_name"],
+        "team_name": row.get("team_name") or "",
+        "games_played": int(row.get("games_played") or 0),
+        "wins": int(row.get("wins") or 0),
+        "losses": int(row.get("losses") or 0),
+        "win_rate": format_pct(float(row.get("win_rate") or 0.0)),
+        "points_total": f'{float(row.get("points_earned_total") or 0.0):.2f}',
+        "average_points": f'{float(row.get("average_points") or 0.0):.2f}',
+        "href": build_scoped_path(
+            "/players/" + row["player_id"],
+            competition_name,
+            season_name,
+            region_name,
+            series_slug,
+        ),
+    }
+
+
 def _serialize_day_match_competition_section(
     played_on: str,
     competition_name: str,
@@ -3016,6 +3063,10 @@ def build_match_day_api_payload(
         "team_leaderboard": [
             _serialize_day_team_row(row, scope["catalog"])
             for row in scope["day_team_rows"]
+        ],
+        "player_leaderboard": [
+            _serialize_day_player_row(row, scope["catalog"])
+            for row in scope["day_player_rows"]
         ],
         "competitions": [
             _serialize_day_match_competition_section(
@@ -4391,6 +4442,14 @@ def handle_competitions(ctx: RequestContext, start_response):
             summary_content,
             "管理员手动编辑",
         )
+        audit_action(
+            ctx,
+            "season.ai_summary_save",
+            target_type="season",
+            target_id=f"{competition_name}:{season_name}",
+            summary=f"手动保存 {competition_name} / {season_name} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name, "source": "competitions"},
+        )
         return redirect(start_response, append_alert_query(redirect_path, "AI 赛季总结已保存。"))
 
     if action == "generate_ai_season_summary":
@@ -4467,6 +4526,14 @@ def handle_competitions(ctx: RequestContext, start_response):
             save_ai_season_summary(competition_name, season_name, report_text, model)
         except ValueError as exc:
             return redirect(start_response, append_alert_query(redirect_path, str(exc)))
+        audit_action(
+            ctx,
+            "season.ai_summary_generate",
+            target_type="season",
+            target_id=f"{competition_name}:{season_name}",
+            summary=f"生成 {competition_name} / {season_name} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name, "source": "competitions", "model": model},
+        )
 
         return redirect(start_response, append_alert_query(redirect_path, "AI 赛季总结已生成。"))
 

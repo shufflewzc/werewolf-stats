@@ -30,6 +30,7 @@ STAGE_OPTIONS = legacy.STAGE_OPTIONS
 STANCE_OPTIONS = legacy.STANCE_OPTIONS
 WINNING_CAMP_OPTIONS = legacy.WINNING_CAMP_OPTIONS
 append_alert_query = legacy.append_alert_query
+audit_action = legacy.audit_action
 build_empty_match = legacy.build_empty_match
 build_empty_score_breakdown = legacy.build_empty_score_breakdown
 build_match_award_select = legacy.build_match_award_select
@@ -37,6 +38,7 @@ build_scoped_path = legacy.build_scoped_path
 calculate_score_breakdown_total = legacy.calculate_score_breakdown_total
 can_manage_matches = legacy.can_manage_matches
 canonicalize_match_ids = legacy.canonicalize_match_ids
+create_import_batch = legacy.create_import_batch
 ensure_placeholder_players_for_matches = legacy.ensure_placeholder_players_for_matches
 ensure_placeholder_users_for_player_ids = legacy.ensure_placeholder_users_for_player_ids
 file_value = legacy.file_value
@@ -46,10 +48,12 @@ get_match_competition_name = legacy.get_match_competition_name
 get_match_score_model_label = legacy.get_match_score_model_label
 layout = legacy.layout
 list_seasons = legacy.list_seasons
+load_import_batches = legacy.load_import_batches
 load_series_catalog = legacy.load_series_catalog
 load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
 invalidate_validated_data_cache = legacy.invalidate_validated_data_cache
+is_admin_user = legacy.is_admin_user
 MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 normalize_stance_result = legacy.normalize_stance_result
@@ -63,6 +67,7 @@ redirect = legacy.redirect
 replace_match_path_id = legacy.replace_match_path_id
 require_competition_manager = legacy.require_competition_manager
 resolve_match_entities = legacy.resolve_match_entities
+rollback_import_batch = legacy.rollback_import_batch
 save_repository_state = legacy.save_repository_state
 safe_asset_path = legacy.safe_asset_path
 ensure_team_asset_dirs = legacy.ensure_team_asset_dirs
@@ -76,6 +81,7 @@ MAX_ZIP_UPLOAD_BYTES = int(os.getenv("MAX_ZIP_UPLOAD_BYTES", str(50 * 1024 * 102
 MAX_ZIP_IMAGE_COUNT = int(os.getenv("MAX_ZIP_IMAGE_COUNT", "300"))
 PLAYER_PHOTO_PENDING_DIR = legacy.PLAYER_UPLOAD_DIR.parent / "import-pending"
 start_response_html = legacy.start_response_html
+update_import_batch = legacy.update_import_batch
 uses_structured_score_model = legacy.uses_structured_score_model
 validate_match_awards = legacy.validate_match_awards
 validate_match_competition_selection = legacy.validate_match_competition_selection
@@ -215,6 +221,12 @@ def parse_date_input(value: str) -> datetime | None:
 
 def format_room_label(game_no: int) -> str:
     return f"{game_no}号房"
+
+
+def danger_confirmation_error(actual: str, expected: str, action_label: str) -> str:
+    if str(actual or "").strip() == expected:
+        return ""
+    return f"{action_label}前，请在确认框输入：{expected}"
 
 
 def resolve_match_template_download_name(series_slug: str) -> str:
@@ -494,6 +506,11 @@ def build_dimension_import_panel(
               <label class="form-label">赛季</label>
               {season_field_html}
             </div>
+            <div class="col-12 col-xl-5">
+              <label class="form-label">危险操作确认</label>
+              <input class="form-control" name="danger_confirmation" placeholder="输入 清空维度 确认">
+              <div class="small text-secondary mt-2">会删除当前赛事赛季下全部已导入维度数据，不能撤销。</div>
+            </div>
           </div>
           <div class="d-flex flex-wrap gap-2 mt-4">
             <button type="submit" class="btn btn-outline-danger">清空这个赛季的维度数据</button>
@@ -759,6 +776,7 @@ def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str
               <input type="hidden" name="competition_name" value="{escape(str(row['competition_name']))}">
               <input type="hidden" name="season" value="{escape(str(row['season_name']))}">
               <input type="hidden" name="played_on" value="{escape(str(row['played_on']))}">
+              <input class="form-control form-control-sm mb-1" name="danger_confirmation" placeholder="输入 删除维度 确认">
               <button type="submit" class="btn btn-sm btn-outline-danger">删除这一天</button>
             </form>
             """
@@ -851,6 +869,13 @@ def handle_dimension_stats_manage(ctx: RequestContext, start_response):
         return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, "请先选择要删除的赛事、赛季和比赛日。"))
     if not can_manage_matches(ctx.current_user, data, competition_name):
         return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, f"你没有权限管理 {competition_name} 的维度数据。"))
+    confirmation_error = danger_confirmation_error(
+        form_value(ctx.form, "danger_confirmation"),
+        "删除维度",
+        "删除单日维度数据",
+    )
+    if confirmation_error:
+        return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, confirmation_error))
     try:
         deleted_player_count, deleted_team_count = clear_season_dimension_stats_for_day(
             competition_name,
@@ -860,6 +885,20 @@ def handle_dimension_stats_manage(ctx: RequestContext, start_response):
         invalidate_validated_data_cache()
     except Exception as exc:
         return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, f"删除维度数据失败：{exc}"))
+    audit_action(
+        ctx,
+        "dimension.delete_day",
+        target_type="competition",
+        target_id=competition_name,
+        summary=f"删除 {competition_name} / {season_name} / {played_on} 维度数据",
+        metadata={
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "played_on": played_on,
+            "deleted_player_count": deleted_player_count,
+            "deleted_team_count": deleted_team_count,
+        },
+    )
     next_path = build_scoped_path("/dimension-stats", competition_name, season_name)
     next_path = append_alert_query(
         f"{next_path}&played_on={quote(played_on)}" if "?" in next_path else f"{next_path}?played_on={quote(played_on)}",
@@ -971,6 +1010,82 @@ def build_player_photo_import_panel(
     """
 
 
+def _import_batch_status_label(status: str) -> str:
+    labels = {
+        "running": "处理中",
+        "succeeded": "成功",
+        "failed": "失败",
+        "rolled_back": "已回滚",
+    }
+    return labels.get(str(status or "").strip(), status or "未知")
+
+
+def build_import_batches_panel(ctx: RequestContext) -> str:
+    batches = load_import_batches()
+    can_rollback = is_admin_user(ctx.current_user)
+    rows = []
+    for item in batches[:20]:
+        batch_id = str(item.get("batch_id") or "").strip()
+        status = str(item.get("status") or "").strip()
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        metadata_copy = " · ".join(
+            part
+            for part in [
+                f"比赛 {metadata.get('created_matches')}" if metadata.get("created_matches") is not None else "",
+                f"更新 {metadata.get('updated_matches')}" if metadata.get("updated_matches") is not None else "",
+                f"选手 {metadata.get('created_players')}" if metadata.get("created_players") is not None else "",
+                f"维度 {metadata.get('player_rows')}/{metadata.get('team_rows')}" if metadata.get("player_rows") is not None else "",
+            ]
+            if part
+        )
+        rollback_form = ""
+        if status == "succeeded" and can_rollback:
+            rollback_form = f"""
+            <form method="post" action="/matches/new" class="d-flex flex-column gap-1">
+              <input type="hidden" name="action" value="rollback_import_batch">
+              <input type="hidden" name="batch_id" value="{escape(batch_id)}">
+              <input class="form-control form-control-sm" name="danger_confirmation" placeholder="输入 回滚 {escape(batch_id)}">
+              <button class="btn btn-sm btn-outline-danger" type="submit" data-confirm="确认回滚导入批次 {escape(batch_id)}？当前数据会恢复到该批次导入前。">回滚</button>
+            </form>
+            """
+        rows.append(
+            f"""
+            <tr>
+              <td><code>{escape(batch_id)}</code></td>
+              <td><span class="chip">{escape(_import_batch_status_label(status))}</span></td>
+              <td>
+                <div class="fw-semibold">{escape(str(item.get('label') or item.get('action') or '导入'))}</div>
+                <div class="small text-secondary">{escape(str(item.get('summary') or ''))}</div>
+                {f'<div class="small text-secondary">{escape(metadata_copy)}</div>' if metadata_copy else ''}
+              </td>
+              <td class="small text-secondary">
+                <div>{escape(str(item.get('created_at') or ''))}</div>
+                <div>{escape(str(item.get('created_by') or ''))}</div>
+                {f'<div>文件：{escape(str(item.get("filename") or ""))}</div>' if item.get("filename") else ''}
+              </td>
+              <td>{rollback_form or ('<span class="small text-secondary">仅管理员可回滚</span>' if status == 'succeeded' else '<span class="small text-secondary">不可回滚</span>')}</td>
+            </tr>
+            """
+        )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">导入记录与回滚</h2>
+          <p class="section-copy mb-0">批量创建、比赛 Excel、维度 Excel 会自动生成批次。回滚会恢复到该批次导入前的数据状态，请谨慎操作。</p>
+        </div>
+        <span class="chip">最近 {len(batches[:20])} 条</span>
+      </div>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>批次</th><th>状态</th><th>摘要</th><th>创建</th><th>操作</th></tr></thead>
+          <tbody>{''.join(rows) or '<tr><td colspan="5" class="text-secondary">暂无导入记录。</td></tr>'}</tbody>
+        </table>
+      </div>
+    </section>
+    """
+
+
 def get_management_form_values(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
@@ -980,6 +1095,7 @@ def get_management_form_values(
         "competition_name": current.get(
             "competition_name",
             form_value(ctx.form, "competition_name").strip()
+            or form_value(ctx.query, "competition_name").strip()
             or form_value(ctx.query, "competition").strip(),
         ),
         "season": current.get(
@@ -998,7 +1114,23 @@ def get_management_form_values(
             "keyword",
             form_value(ctx.form, "keyword").strip() or form_value(ctx.query, "keyword").strip(),
         ),
+        "page": current.get(
+            "page",
+            form_value(ctx.form, "page").strip() or form_value(ctx.query, "page").strip() or "1",
+        ),
+        "per_page": current.get(
+            "per_page",
+            form_value(ctx.form, "per_page").strip() or form_value(ctx.query, "per_page").strip() or "25",
+        ),
     }
+
+
+def normalize_positive_int(value: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(str(value or "").strip())
+    except ValueError:
+        parsed = default
+    return max(minimum, min(maximum, parsed))
 
 
 def build_match_management_path(
@@ -1020,6 +1152,8 @@ def build_match_management_path(
             "stage": current["stage"],
             "played_on": current["played_on"],
             "keyword": current["keyword"],
+            "page": "" if current["page"] in {"", "1"} else current["page"],
+            "per_page": "" if current["per_page"] in {"", "25"} else current["per_page"],
         }.items()
         if value
     }
@@ -1039,6 +1173,10 @@ def build_match_management_panel(
     stage_value = current["stage"]
     played_on = current["played_on"]
     keyword = current["keyword"]
+    requested_page = normalize_positive_int(current["page"], 1, 1, 100000)
+    per_page = normalize_positive_int(current["per_page"], 25, 10, 100)
+    if per_page not in {10, 25, 50, 100}:
+        per_page = 25
     competition_field_html = build_match_competition_field(
         competition_name,
         ctx.current_user,
@@ -1069,6 +1207,17 @@ def build_match_management_panel(
             or keyword.lower() in str(match.get("format") or "").lower()
         )
     ]
+    total_matches = len(filtered_matches)
+    page_count = max(1, (total_matches + per_page - 1) // per_page)
+    page = min(requested_page, page_count)
+    start_index = (page - 1) * per_page
+    end_index = start_index + per_page
+    page_matches = filtered_matches[start_index:end_index]
+    page_summary = (
+        f"显示第 {start_index + 1}-{min(end_index, total_matches)} 场，共 {total_matches} 场"
+        if total_matches
+        else "当前筛选下没有比赛"
+    )
     rows_html = "".join(
         f"""
         <tr>
@@ -1092,17 +1241,52 @@ def build_match_management_panel(
           </td>
         </tr>
         """
-        for match in filtered_matches
+        for match in page_matches
+    )
+    pagination_items = []
+    if page_count > 1:
+        def pagination_link(label: str, target_page: int, disabled: bool = False, active: bool = False) -> str:
+            if disabled:
+                return f'<span class="btn btn-sm btn-outline-dark disabled">{escape(label)}</span>'
+            link_values = {**current, "page": str(target_page), "per_page": str(per_page)}
+            class_name = "btn btn-sm btn-dark" if active else "btn btn-sm btn-outline-dark"
+            return f'<a class="{class_name}" href="{escape(build_match_management_path(ctx, values=link_values))}#match-list">{escape(label)}</a>'
+
+        pagination_items.append(pagination_link("上一页", page - 1, disabled=page <= 1))
+        window_start = max(1, page - 2)
+        window_end = min(page_count, page + 2)
+        if window_start > 1:
+            pagination_items.append(pagination_link("1", 1, active=page == 1))
+            if window_start > 2:
+                pagination_items.append('<span class="btn btn-sm btn-outline-dark disabled">...</span>')
+        for page_no in range(window_start, window_end + 1):
+            pagination_items.append(pagination_link(str(page_no), page_no, active=page_no == page))
+        if window_end < page_count:
+            if window_end < page_count - 1:
+                pagination_items.append('<span class="btn btn-sm btn-outline-dark disabled">...</span>')
+            pagination_items.append(pagination_link(str(page_count), page_count, active=page == page_count))
+        pagination_items.append(pagination_link("下一页", page + 1, disabled=page >= page_count))
+    pagination_html = (
+        f"""
+        <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-center gap-3 mt-3">
+          <div class="small text-secondary">{escape(page_summary)} · 第 {page} / {page_count} 页</div>
+          <div class="d-flex flex-wrap gap-2">{''.join(pagination_items)}</div>
+        </div>
+        """
+        if total_matches
+        else '<div class="small text-secondary mt-3">当前筛选下没有比赛。</div>'
     )
     return f"""
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4" id="match-list">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
           <h2 class="section-title mb-2">批量管理比赛</h2>
-          <p class="section-copy mb-0">这里可以筛选、查看、编辑和批量删除比赛。新增比赛、批量创建待补录比赛和 Excel 导入也都保留在这个页面。</p>
+          <p class="section-copy mb-0">这里可以筛选、查看、编辑和批量删除比赛。列表已分页显示，避免数据量大时页面过长。</p>
         </div>
+        <span class="chip">{escape(page_summary)}</span>
       </div>
       <form method="get" action="/matches/new" class="mb-4">
+        <input type="hidden" name="page" value="1">
         <div class="row g-3">
           <div class="col-12 col-xl-3">
             <label class="form-label">地区赛事页</label>
@@ -1127,6 +1311,12 @@ def build_match_management_panel(
             <label class="form-label">关键词</label>
             <input class="form-control" name="keyword" value="{escape(keyword)}" placeholder="编号/分组/房间/板型">
           </div>
+          <div class="col-12 col-md-4 col-xl-2">
+            <label class="form-label">每页显示</label>
+            <select class="form-select" name="per_page">
+              {''.join(f'<option value="{size}"{" selected" if size == per_page else ""}>{size} 场</option>' for size in [10, 25, 50, 100])}
+            </select>
+          </div>
         </div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">查询比赛</button>
@@ -1139,6 +1329,8 @@ def build_match_management_panel(
         <input type="hidden" name="stage" value="{escape(stage_value)}">
         <input type="hidden" name="played_on" value="{escape(played_on)}">
         <input type="hidden" name="keyword" value="{escape(keyword)}">
+        <input type="hidden" name="page" value="{page}">
+        <input type="hidden" name="per_page" value="{per_page}">
         <div class="table-responsive">
           <table class="table align-middle">
             <thead>
@@ -1161,7 +1353,13 @@ def build_match_management_panel(
             <tbody>{rows_html or '<tr><td colspan="13" class="text-secondary">当前筛选下没有比赛。</td></tr>'}</tbody>
           </table>
         </div>
+        {pagination_html}
         <div class="d-flex flex-wrap gap-2 mt-3">
+          <div class="w-100">
+            <label class="form-label">批量删除确认</label>
+            <input class="form-control" name="danger_confirmation" placeholder="删除比赛时输入 删除比赛 确认">
+            <div class="small text-secondary mt-2">只有批量删除会校验此确认文字；设为抽局和取消抽局不会删除比赛。</div>
+          </div>
           <button type="submit" class="btn btn-outline-dark" name="action" value="batch_mark_team_score_excluded">设为抽局</button>
           <button type="submit" class="btn btn-outline-dark" name="action" value="batch_unmark_team_score_excluded">取消抽局</button>
           <button type="submit" class="btn btn-outline-danger" name="action" value="batch_delete_matches">批量删除选中比赛</button>
@@ -3563,14 +3761,19 @@ def get_match_create_page(
     dimension_panel_html = build_dimension_import_panel(ctx)
     team_logo_panel_html = build_team_logo_import_panel(ctx)
     player_photo_panel_html = build_player_photo_import_panel(ctx)
+    import_batches_panel_html = build_import_batches_panel(ctx)
     body_start = manual_form_html.find('<section class="form-panel')
     if body_start == -1:
         return manual_form_html
     combined_body = manual_form_html.replace(
         '<section class="form-panel',
-        f"{management_panel_html}{batch_panel_html}{excel_panel_html}{dimension_panel_html}{team_logo_panel_html}{player_photo_panel_html}<section class=\"form-panel",
+        f"{batch_panel_html}{excel_panel_html}{dimension_panel_html}{team_logo_panel_html}{player_photo_panel_html}{import_batches_panel_html}<section class=\"form-panel",
         1,
     )
+    if "</main>" in combined_body:
+        combined_body = combined_body.replace("</main>", f"{management_panel_html}</main>", 1)
+    else:
+        combined_body = combined_body.replace("</body>", f"{management_panel_html}</body>", 1)
     return combined_body
 
 
@@ -3724,6 +3927,36 @@ def handle_match_create(ctx: RequestContext, start_response):
 
     data = load_validated_data()
     action = form_value(ctx.form, "action").strip()
+    if action == "rollback_import_batch":
+        if not is_admin_user(ctx.current_user):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                get_match_create_page(ctx, alert="只有管理员可以回滚导入批次。"),
+            )
+        batch_id = form_value(ctx.form, "batch_id").strip()
+        expected_confirmation = f"回滚 {batch_id}"
+        confirmation_error = danger_confirmation_error(
+            form_value(ctx.form, "danger_confirmation"),
+            expected_confirmation,
+            "回滚导入批次",
+        )
+        if confirmation_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=confirmation_error),
+            )
+        ok, message = rollback_import_batch(batch_id, ctx)
+        audit_action(
+            ctx,
+            "import_batch.rollback",
+            target_type="import_batch",
+            target_id=batch_id,
+            summary=message,
+            metadata={"ok": ok},
+        )
+        return redirect(start_response, append_alert_query("/matches/new", message))
     if action in {
         "batch_delete_matches",
         "batch_mark_team_score_excluded",
@@ -3775,6 +4008,18 @@ def handle_match_create(ctx: RequestContext, start_response):
             )
             if permission_guard is not None:
                 return permission_guard
+        if action == "batch_delete_matches":
+            confirmation_error = danger_confirmation_error(
+                form_value(ctx.form, "danger_confirmation"),
+                "删除比赛",
+                "批量删除比赛",
+            )
+            if confirmation_error:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_create_page(ctx, alert=confirmation_error),
+                )
         if action in {
             "batch_mark_team_score_excluded",
             "batch_unmark_team_score_excluded",
@@ -3798,6 +4043,17 @@ def handle_match_create(ctx: RequestContext, start_response):
                     get_match_create_page(ctx, alert="抽局状态保存失败：" + "；".join(errors[:3])),
                 )
             action_message = "设为抽局" if should_exclude else "取消抽局"
+            audit_action(
+                ctx,
+                "matches.batch_score_exclusion",
+                target_type="match",
+                target_id=",".join(selected_match_ids[:20]),
+                summary=f"批量{action_message} {updated_count} 场比赛",
+                metadata={
+                    "match_ids": selected_match_ids,
+                    "exclude_from_team_scores": should_exclude,
+                },
+            )
             return redirect(
                 start_response,
                 append_alert_query(
@@ -3817,6 +4073,14 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="批量删除失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "matches.batch_delete",
+            target_type="match",
+            target_id=",".join(selected_match_ids[:20]),
+            summary=f"批量删除 {len(selected_match_ids)} 场比赛",
+            metadata={"match_ids": selected_match_ids},
+        )
         return redirect(
             start_response,
             append_alert_query(
@@ -3888,17 +4152,49 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=str(exc), batch_form_values=batch_form_values),
             )
+        import_batch_id = create_import_batch(
+            ctx=ctx,
+            action="matches.batch_create",
+            label="批量创建待补录比赛",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "created_matches": len(new_matches),
+            },
+        )
         normalized_matches, _ = canonicalize_match_ids([*data["matches"], *new_matches])
         users = load_users()
         data["matches"] = normalized_matches
         users = ensure_placeholder_users_for_player_ids(data, users, [])
         errors = save_repository_state(data, users)
         if errors:
+            update_import_batch(import_batch_id, status="failed", summary="批量创建失败：" + "；".join(errors[:3]), ctx=ctx)
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert="批量创建失败：" + "；".join(errors[:3]), batch_form_values=batch_form_values),
             )
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=f"批量创建 {len(new_matches)} 场待补录比赛",
+            metadata={
+                "match_ids": [str(match.get("match_id") or "") for match in new_matches],
+            },
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "matches.batch_create",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"批量创建 {len(new_matches)} 场待补录比赛",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "match_ids": [str(match.get("match_id") or "") for match in new_matches],
+            },
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
             ctx,
             competition_name,
@@ -3926,6 +4222,27 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=import_message, excel_form_values=excel_form_values),
             )
+        before_match_by_id = {str(match.get("match_id") or ""): match for match in data.get("matches", [])}
+        next_match_by_id = {str(match.get("match_id") or ""): match for match in next_matches}
+        created_match_ids = [match_id for match_id in next_match_by_id if match_id and match_id not in before_match_by_id]
+        updated_match_ids = [
+            match_id
+            for match_id, match in next_match_by_id.items()
+            if match_id in before_match_by_id
+            and json.dumps(before_match_by_id[match_id], ensure_ascii=False, sort_keys=True)
+            != json.dumps(match, ensure_ascii=False, sort_keys=True)
+        ]
+        import_batch_id = create_import_batch(
+            ctx=ctx,
+            action="matches.import_excel",
+            label="Excel 批量补录比赛详情",
+            filename=getattr(upload, "filename", "") or "",
+            metadata={
+                "group_label": group_label,
+                "created_matches": len(created_match_ids),
+                "updated_matches": len(updated_match_ids),
+            },
+        )
         users = load_users()
         normalized_matches, _ = canonicalize_match_ids(next_matches)
         data["matches"] = normalized_matches
@@ -3933,6 +4250,7 @@ def handle_match_create(ctx: RequestContext, start_response):
         users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
         errors = save_repository_state(data, users)
         if errors:
+            update_import_batch(import_batch_id, status="failed", summary="Excel 导入保存失败：" + "；".join(errors[:3]), ctx=ctx)
             return start_response_html(
                 start_response,
                 "200 OK",
@@ -3942,6 +4260,31 @@ def handle_match_create(ctx: RequestContext, start_response):
                     excel_form_values=excel_form_values,
                 ),
             )
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=import_message,
+            metadata={
+                "created_matches": len(created_match_ids),
+                "updated_matches": len(updated_match_ids),
+                "created_players": len(created_player_ids),
+                "created_match_ids": created_match_ids[:100],
+                "updated_match_ids": updated_match_ids[:100],
+            },
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "matches.import_excel",
+            target_type="competition",
+            target_id=group_label,
+            summary=import_message,
+            metadata={
+                "group_label": group_label,
+                "match_count": len(normalized_matches),
+                "placeholder_player_ids": created_player_ids,
+            },
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(ctx)
         alert_message = import_message
         if created_player_ids:
@@ -3971,15 +4314,53 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=import_message),
             )
+        import_batch_id = create_import_batch(
+            ctx=ctx,
+            action="dimension.import_excel",
+            label="Excel 批量导入赛季维度数据",
+            filename=getattr(upload, "filename", "") or "",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "player_rows": len(next_player_rows),
+                "team_rows": len(next_team_rows),
+            },
+        )
         try:
             save_season_dimension_stats(next_player_rows, next_team_rows)
             invalidate_validated_data_cache()
         except Exception as exc:
+            update_import_batch(import_batch_id, status="failed", summary=f"维度数据保存失败：{exc}", ctx=ctx)
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert=f"维度数据保存失败：{exc}"),
             )
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=import_message,
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "player_rows": len(next_player_rows),
+                "team_rows": len(next_team_rows),
+            },
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "dimension.import_excel",
+            target_type="competition",
+            target_id=competition_name,
+            summary=import_message,
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "player_rows": len(next_player_rows),
+                "team_rows": len(next_team_rows),
+            },
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
             ctx,
             competition_name,
@@ -4006,6 +4387,17 @@ def handle_match_create(ctx: RequestContext, start_response):
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert=f"你没有权限清空 {competition_name} 下的维度数据。"),
+            )
+        confirmation_error = danger_confirmation_error(
+            form_value(ctx.form, "danger_confirmation"),
+            "清空维度",
+            "清空赛季维度数据",
+        )
+        if confirmation_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=confirmation_error),
             )
         competition_error = validate_match_competition_selection(data, competition_name)
         if competition_error:
@@ -4037,6 +4429,19 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=f"清空维度数据失败：{exc}"),
             )
+        audit_action(
+            ctx,
+            "dimension.clear",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"清空 {competition_name} / {season_name} 维度数据",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "deleted_player_count": deleted_player_count,
+                "deleted_team_count": deleted_team_count,
+            },
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
             ctx,
             competition_name,
@@ -4082,6 +4487,14 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="战队图标导入保存失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "team_logo.import_excel",
+            target_type="competition",
+            target_id=competition_name,
+            summary=import_message,
+            metadata={"competition_name": competition_name, "season_name": season_name},
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
             ctx,
             competition_name,
@@ -4143,6 +4556,18 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="队员头像导入保存失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "player_photo.import_manual",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"手动确认导入队员头像，更新 {updated_count} 位",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "updated_count": updated_count,
+            },
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
             ctx,
             competition_name,
@@ -4247,6 +4672,19 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert="队员头像导入保存失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "player_photo.import_zip",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"ZIP 导入队员头像，更新 {updated_count} 位，跳过 {unmatched_count} 个",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "updated_count": updated_count,
+                "unmatched_count": unmatched_count,
+            },
+        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
             ctx,
             competition_name,
@@ -4335,6 +4773,19 @@ def handle_match_create(ctx: RequestContext, start_response):
                 field_values=new_match,
             ),
         )
+
+    audit_action(
+        ctx,
+        "match.create",
+        target_type="match",
+        target_id=resolved_match_id or str(new_match.get("match_id") or ""),
+        summary=f"新增比赛 {resolved_match_id or str(new_match.get('match_id') or '')}",
+        metadata={
+            "competition_name": str(new_match.get("competition_name") or ""),
+            "season_name": str(new_match.get("season") or ""),
+            "placeholder_player_ids": created_player_ids,
+        },
+    )
 
     next_path = form_value(ctx.query, "next").strip()
     if next_path:

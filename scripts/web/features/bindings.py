@@ -7,6 +7,7 @@ import secrets
 
 RequestContext = legacy.RequestContext
 add_user_linked_player_id = legacy.add_user_linked_player_id
+audit_action = legacy.audit_action
 build_bound_player_summary = legacy.build_bound_player_summary
 build_player_binding_candidates = legacy.build_player_binding_candidates
 build_profile_binding_summary = legacy.build_profile_binding_summary
@@ -412,7 +413,16 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                 "created_on": china_now_label(),
             }
         )
+        request_id = requests[-1]["request_id"]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "binding.request",
+            target_type="player",
+            target_id=player_id,
+            summary=f"提交账号 {target_username} 绑定参赛ID {player_id} 的申请",
+            metadata={"request_id": request_id, "username": target_username},
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -499,6 +509,14 @@ def handle_player_bindings(ctx: RequestContext, start_response):
             )
         ]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "binding.direct_bind",
+            target_type="player",
+            target_id=player_id,
+            summary=f"直接绑定账号 {target_username} 与参赛ID {player_id}",
+            metadata={"username": target_username},
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -587,6 +605,14 @@ def handle_player_bindings(ctx: RequestContext, start_response):
             )
         requests = [item for item in requests if item.get("request_id") != request_id]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "binding.approve",
+            target_type="membership_request",
+            target_id=request_id,
+            summary=f"通过账号 {request_target_user['username']} 绑定参赛ID {request_player_id} 的申请",
+            metadata={"username": request_target_user["username"], "player_id": request_player_id},
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -625,6 +651,17 @@ def handle_player_bindings(ctx: RequestContext, start_response):
             )
         requests = [item for item in requests if item.get("request_id") != request_id]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "binding.reject",
+            target_type="membership_request",
+            target_id=request_id,
+            summary="拒绝参赛ID绑定申请",
+            metadata={
+                "username": request_item.get("username"),
+                "player_id": request_item.get("player_id"),
+            },
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -674,6 +711,14 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                     selected_player_id=player_id,
                 ),
             )
+        audit_action(
+            ctx,
+            "binding.unbind",
+            target_type="player",
+            target_id=player_id,
+            summary=f"解除账号 {target_username} 与参赛ID {player_id} 的绑定",
+            metadata={"username": target_username, "released_team_names": released_team_names},
+        )
         return start_response_html(
             start_response,
             "200 OK",

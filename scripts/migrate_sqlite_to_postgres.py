@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from sqlite_store import DB_PATH
+from sqlite_store import DB_PATH, ensure_database
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,6 +21,7 @@ TABLE_ORDER = [
     "ai_jobs",
     "ai_job_steps",
     "access_logs",
+    "audit_logs",
     "ai_conversations",
     "user_sessions",
     "guilds",
@@ -77,6 +78,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Delete existing target rows before importing. Only valid with --apply.",
     )
     parser.add_argument(
+        "--recreate-target-schema",
+        action="store_true",
+        help="Drop and recreate the public schema before importing. Use only for disposable test databases.",
+    )
+    parser.add_argument(
         "--skip-schema",
         action="store_true",
         help="Do not execute the PostgreSQL schema file before importing.",
@@ -124,6 +130,12 @@ def execute_schema(pg_connection: Any, schema_path: Path) -> None:
         cursor.execute(schema_sql)
 
 
+def recreate_target_schema(pg_connection: Any) -> None:
+    with pg_connection.cursor() as cursor:
+        cursor.execute("DROP SCHEMA IF EXISTS public CASCADE")
+        cursor.execute("CREATE SCHEMA public")
+
+
 def truncate_target(pg_connection: Any) -> None:
     with pg_connection.cursor() as cursor:
         for table_name in TRUNCATE_ORDER:
@@ -157,7 +169,9 @@ def validate_counts(source: dict[str, int], target: dict[str, int]) -> list[str]
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
+    if args.sqlite_db.resolve() == DB_PATH.resolve():
+        ensure_database()
     with sqlite_connection(args.sqlite_db) as sqlite_db:
         counts = source_counts(sqlite_db)
         print_counts("SQLite 源库行数：", counts)
@@ -172,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
         psycopg = import_psycopg()
         with psycopg.connect(args.database_url) as pg_connection:
             with pg_connection.transaction():
+                if args.recreate_target_schema:
+                    recreate_target_schema(pg_connection)
                 if not args.skip_schema:
                     execute_schema(pg_connection, args.schema)
                 if args.truncate:

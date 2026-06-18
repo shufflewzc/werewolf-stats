@@ -352,7 +352,7 @@ python3 scripts/web_app.py
 将运行目录设置为项目根目录：
 
 ```text
-/Users/shufflewzc/Documents/GitHub/werewolf-stats
+/app
 ```
 
 线上服务器请替换成你自己的实际绝对路径，只要该目录下能看到：
@@ -362,7 +362,25 @@ python3 scripts/web_app.py
 - `scripts/`
 - `data/`
 
-### 2. 安装依赖
+### 2. 环境变量
+
+推荐先按 `.env.production.example` 在 `1Panel` 里逐项填写环境变量。正式环境不要把真实 `.env` 提交到仓库。
+
+最少需要确认这些变量：
+
+```bash
+APP_DIR=/app
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
+ENABLE_POSTGRES_WRITES=1
+WECHAT_MINIPROGRAM_APPID='你的小程序AppID'
+WECHAT_MINIPROGRAM_SECRET='你的小程序Secret'
+WEB_LOGIN_BASE_URL='https://wolf.fakerclaw.indevs.in'
+COOKIE_SECURE=1
+```
+
+其中 `APP_DIR` 要和服务器上的项目目录一致；如果 1Panel 的项目目录不是 `/app`，请改成实际路径。
+
+### 3. 安装依赖
 
 在 `1Panel` 的安装命令或初始化命令中填写：
 
@@ -376,7 +394,7 @@ pip install -r requirements.txt
 pip install gunicorn
 ```
 
-### 3. 启动命令
+### 4. 启动命令
 
 不要再直接使用：
 
@@ -384,7 +402,15 @@ pip install gunicorn
 python3 scripts/web_app.py
 ```
 
-请改为：
+推荐改为内置生产启动脚本：
+
+```bash
+sh scripts/start_production.sh
+```
+
+这条脚本会自动完成依赖安装、生产配置检查、PostgreSQL 表结构升级、运行时结构检查、smoke 和日志清理，最后再启动 `gunicorn`。
+
+如果你的 1Panel 环境不能执行脚本，再使用备用启动命令：
 
 ```bash
 gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app
@@ -398,7 +424,31 @@ gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app
 - `-t 120` 将超时时间设为 120 秒，减少慢请求直接被杀掉
 - `-b 0.0.0.0:8000` 监听 `8000` 端口，方便 `1Panel/OpenResty` 反代
 
-### 4. 端口配置
+### 5. 上线前检查
+
+每次正式发布前，推荐在服务器项目目录先跑：
+
+```bash
+python3 scripts/pre_deploy_check.py
+```
+
+它会串起生产配置、综合发布体检和备份可读性验证。检查未通过时不要启动或重启正式服务，先按提示修正。
+
+正式运营库如果已经有赛事数据，可以加上严格小程序数据检查：
+
+```bash
+python3 scripts/pre_deploy_check.py --require-miniprogram-data
+```
+
+上传微信小程序前，推荐在本地项目根目录先跑：
+
+```bash
+node scripts/check_miniprogram_release.js
+```
+
+它会检查正式接口域名、小程序 AppID、页面路径、tabBar 图标、JS 语法和本地地址风险。综合发布体检还会额外检查小程序依赖的后端 API 字段契约。
+
+### 6. 端口配置
 
 建议应用监听端口保持为：
 
@@ -414,45 +464,48 @@ gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app
 
 一般不需要额外改业务代码里的端口。
 
-### 5. 推荐的 1Panel 填写方式
+### 7. 推荐的 1Panel 填写方式
 
 如果你的 `Python 运行环境` 页面里有类似字段，可以这样填：
 
 - 运行目录：项目根目录
 - 安装命令：`pip install -r requirements.txt`
-- 启动命令：`gunicorn -w 2 -k gthread --threads 4 -t 120 -b 0.0.0.0:8000 wsgi:app`
+- 启动命令：`sh scripts/start_production.sh`
 - 监听端口：`8000`
 
-建议同时配置这些环境变量：
+建议同时配置 `.env.production.example` 里的环境变量。核心项如下：
 
 ```bash
+APP_DIR=/app
+DATABASE_URL=postgresql://user:password@host:5432/werewolf_stats
+ENABLE_POSTGRES_WRITES=1
 WECHAT_MINIPROGRAM_APPID=你的小程序AppID
 WECHAT_MINIPROGRAM_SECRET=你的小程序Secret
 WEB_LOGIN_BASE_URL=https://wolf.fakerclaw.indevs.in
 COOKIE_SECURE=1
-SQLITE_BUSY_TIMEOUT_MS=5000
-SQLITE_JOURNAL_MODE=WAL
-SQLITE_SYNCHRONOUS=NORMAL
 MAX_REQUEST_BODY_BYTES=52428800
 MAX_EXCEL_UPLOAD_BYTES=10485760
 MAX_EXCEL_SHEET_ROWS=2000
 MAX_ZIP_UPLOAD_BYTES=52428800
 MAX_ZIP_IMAGE_COUNT=300
+SECURITY_HEADERS_ENABLED=1
+CSRF_PROTECTION_ENABLED=1
 ```
 
 本地 HTTP 调试网页登录时，可以临时设置 `COOKIE_SECURE=0`。
 
-### 6. 常见问题
+### 8. 常见问题
 
 如果仍然出现 `502` 或 `504`，优先检查：
 
-- Python 运行环境是否真的已经切换到 `gunicorn`
+- Python 运行环境是否真的执行了 `sh scripts/start_production.sh`
 - 当前工作目录是否为项目根目录，而不是 `scripts/`
 - `requirements.txt` 是否已经安装成功
 - `1Panel` 反向代理目标是否仍然是 `127.0.0.1:8000`
+- `DATABASE_URL`、`WECHAT_MINIPROGRAM_APPID`、`WECHAT_MINIPROGRAM_SECRET` 是否已经填入服务器环境变量
 - Python 运行环境日志里是否有报错或进程退出记录
 
-### 7. 健康检查
+### 9. 健康检查
 
 服务提供两个健康检查接口：
 
@@ -462,7 +515,7 @@ MAX_ZIP_IMAGE_COUNT=300
 ```
 
 - `/healthz`：只确认 Python 服务进程可响应
-- `/readyz`：检查当前运行数据库是否可连接、是否已初始化，并返回用户/比赛数量；SQLite 模式会额外执行 `PRAGMA quick_check`
+- `/readyz`：检查当前运行数据库是否可连接、是否已初始化、`schema_version` 是否达标、关键表是否存在，并返回关键表行数；SQLite 模式会额外执行 `PRAGMA quick_check`
 
 反向代理或平台探活优先使用：
 
@@ -470,7 +523,15 @@ MAX_ZIP_IMAGE_COUNT=300
 http://127.0.0.1:8000/readyz
 ```
 
-### 8. 数据备份
+默认 `/readyz` 不写入数据库。如果要在发布验证时额外确认写入链路，可以临时访问：
+
+```text
+http://127.0.0.1:8000/readyz?write=1
+```
+
+写入探针会在 `app_meta` 中写入并删除一个临时标记，成功后不会留下数据。
+
+### 10. 数据备份
 
 可以使用内置脚本创建 SQLite 一致性备份，并默认打包上传头像/队标：
 
@@ -496,9 +557,40 @@ Linux 服务器上可以用 cron 每天凌晨备份一次：
 15 3 * * * cd /app && python3 scripts/backup_sqlite.py >> app.log 2>&1
 ```
 
-### 9. PostgreSQL 迁移演练
+备份后建议定期做恢复验证。SQLite 环境可以直接执行：
 
-当前线上运行仍然使用 SQLite；如果后续数据量和并发继续增长，可以先用内置脚本演练迁移到 PostgreSQL。
+```bash
+python3 scripts/backup_restore_check.py
+```
+
+正式 PostgreSQL 环境会使用 `pg_dump` 生成备份，并用 `pg_restore --list` 验证备份可读取：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+python3 scripts/backup_restore_check.py
+```
+
+服务器需要先安装 PostgreSQL client 工具，确保能执行：
+
+```bash
+pg_dump --version
+pg_restore --version
+```
+
+如果你准备了一个空的恢复测试库，可以做真正的恢复演练。注意：测试库会被 `pg_restore --clean --if-exists` 清理后重建，不要填正式库：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+python3 scripts/backup_restore_check.py \
+  --restore-test-database-url 'postgresql://user:password@host:5432/werewolf_stats_restore_test'
+```
+
+恢复演练会在测试库恢复备份后执行结构检查、运行时 smoke，并对比业务表、日志表和 AI 任务表等关键表行数。
+脚本会拒绝把备份恢复到与正式库相同的连接串；测试库名称也需要包含 `restore`、`test`、`staging`、`sandbox`、`scratch` 或 `rehearsal` 这类安全标识，降低误操作风险。
+
+### 11. PostgreSQL 迁移演练
+
+正式运行建议使用 PostgreSQL。SQLite 兼容逻辑仍保留，主要用于本地开发、迁移对照和应急回滚。
 
 目标表结构：
 
@@ -535,6 +627,16 @@ export DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
 ```bash
 python3 scripts/migrate_sqlite_to_postgres.py --apply --truncate
 ```
+
+代码升级后，先补 PostgreSQL 表结构，再做运行时结构检查：
+
+```bash
+python3 scripts/apply_postgres_schema.py
+python3 scripts/check_runtime_schema.py
+python3 scripts/check_postgres_indexes.py --strict
+```
+
+`apply_postgres_schema.py` 只更新表结构、索引和 `schema_version`，不会清空数据。`check_runtime_schema.py` 会检查核心表、初始化状态和 schema version，`check_postgres_indexes.py` 会检查高频页面需要的 PostgreSQL 关键索引，适合作为启动前检查。
 
 建议迁移顺序：
 
@@ -607,9 +709,157 @@ export ENABLE_POSTGRES_WRITES=1
 
 打开后，账号资料、微信登录自动创建账号、微信绑定资料、网页登录会话、小程序登录会话、扫码登录临时状态、比赛录入、选手/战队/门派维护、维度数据保存、审核申请、AI 任务和访问日志会写入 PostgreSQL。`ENABLE_POSTGRES_WRITES=1` 会自动让读取也走 PostgreSQL，避免读写分库。
 
-注意：正式切库前仍建议在测试 PostgreSQL 库完整回归后台保存流程，再安排停机窗口做最终迁移。
+生产启动命令建议直接使用内置脚本。脚本会先安装依赖、检查生产配置、升级表结构、检查运行时数据库、执行 smoke，最后启动服务：
 
-### 10. 当前仓库做过的线上优化
+```bash
+sh scripts/start_production.sh
+```
+
+如果 `production_config_check.py` 或 `check_runtime_schema.py` 未通过，不要启动服务，先按提示补环境变量、表结构或连接串。
+
+上线前推荐先跑一键检查。它会串起生产配置、综合发布体检和备份可读性验证：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+ENABLE_POSTGRES_WRITES=1 \
+WECHAT_MINIPROGRAM_APPID='你的 AppID' \
+WECHAT_MINIPROGRAM_SECRET='你的 Secret' \
+WEB_LOGIN_BASE_URL='https://wolf.fakerclaw.indevs.in' \
+COOKIE_SECURE=1 \
+python3 scripts/pre_deploy_check.py
+```
+
+本地已经准备好 PostgreSQL 时，也可以一条命令做完整生产启动演练。它会先跑上线前检查，再临时启动生产服务，访问 `/healthz` 和 `/readyz?write=1`，最后自动停止服务：
+
+```bash
+DATABASE_URL='postgresql://werewolf:werewolf@127.0.0.1:5432/werewolf_stats' \
+sh scripts/local_production_smoke.sh
+```
+
+如果 `8000` 端口被占用，可以临时换端口：
+
+```bash
+DATABASE_URL='postgresql://werewolf:werewolf@127.0.0.1:5432/werewolf_stats' \
+PORT=8010 \
+sh scripts/local_production_smoke.sh
+```
+
+本地演练可以放宽微信和 SQLite 限制：
+
+```bash
+python3 scripts/pre_deploy_check.py --local --no-assets
+```
+
+如果你准备了一个空的 PostgreSQL 恢复测试库，可以加上恢复演练参数。测试库名称建议包含 `restore`、`test` 或 `staging`，避免误恢复到正式库：
+
+```bash
+python3 scripts/pre_deploy_check.py \
+  --restore-test-database-url 'postgresql://user:password@host:5432/werewolf_stats_restore_test'
+```
+
+也可以单独执行生产配置体检：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+ENABLE_POSTGRES_WRITES=1 \
+WECHAT_MINIPROGRAM_APPID='你的 AppID' \
+WECHAT_MINIPROGRAM_SECRET='你的 Secret' \
+WEB_LOGIN_BASE_URL='https://wolf.fakerclaw.indevs.in' \
+COOKIE_SECURE=1 \
+python3 scripts/production_config_check.py
+```
+
+上线前可以先跑一次综合体检。它不会占用 Web 端口，会检查 Python 文件语法、运行时数据库结构、核心后台页面渲染、日志清理确认保护和请求编号追踪：
+
+```bash
+python3 scripts/release_check.py
+```
+
+也可以单独跑小程序高频接口基准测试。它不会绑定 Web 端口，会直接调用后端 WSGI 入口，输出每个接口的平均耗时和最大耗时：
+
+```bash
+python3 scripts/benchmark_miniprogram_api.py --require-data
+```
+
+基准测试默认会先预热一次再计时，适合观察缓存生效后的稳态体验。想观察冷启动耗时，可以加 `--warmup-runs 0`。
+
+预测接口带有短缓存。可以单独检查缓存命中和失效链路：
+
+```bash
+python3 scripts/check_prediction_cache.py --require-data
+```
+
+上线后管理员可以在 `/ops` 查看运维总览，包括 API 耗时、错误请求、近期问题请求和预测缓存命中状态。页面顶部会显示健康评分和告警：错误率 2% 开始提醒、5% 进入异常；慢请求率 5% 开始提醒、10% 进入异常。
+管理员也可以通过 `/api/ops` 获取同一份 JSON 健康状态，便于后续接入外部监控；未登录或非管理员访问会返回 403。
+
+正式 PostgreSQL 环境建议带上连接串运行：
+
+```bash
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
+ENABLE_POSTGRES_WRITES=1 \
+python3 scripts/release_check.py
+```
+
+常用启动环境变量：
+
+```bash
+APP_DIR=/app
+DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
+HOST=0.0.0.0
+PORT=8000
+GUNICORN_WORKERS=2
+GUNICORN_THREADS=4
+GUNICORN_TIMEOUT=120
+INSTALL_REQUIREMENTS=1
+RUN_PRODUCTION_CONFIG_CHECK=1
+RUN_INDEX_CHECK=1
+RUN_LOG_CLEANUP=1
+ACCESS_LOG_RETENTION_DAYS=30
+AUDIT_LOG_RETENTION_DAYS=365
+SLOW_REQUEST_THRESHOLD_MS=1500
+REQUEST_RATE_LIMIT_ENABLED=1
+REQUEST_RATE_LIMIT_WINDOW_SECONDS=60
+REQUEST_RATE_LIMIT_DEFAULT_MAX=120
+REQUEST_RATE_LIMIT_SENSITIVE_MAX=30
+IDEMPOTENCY_PROTECTION_ENABLED=1
+IDEMPOTENCY_PROTECTION_TTL_SECONDS=8
+STRUCTURED_ERROR_TRACEBACK=0
+SECURITY_HEADERS_ENABLED=1
+CSRF_PROTECTION_ENABLED=1
+# 可选：覆盖默认 CSP。默认值已兼容当前页面和静态资源。
+# CONTENT_SECURITY_POLICY="default-src 'self'; frame-ancestors 'none'; object-src 'none'"
+```
+
+脚本默认要求 `DATABASE_URL` 存在，并默认设置 `ENABLE_POSTGRES_WRITES=1`，避免生产环境意外回落到 SQLite。
+
+访问日志和审计日志会随运行增长。生产启动脚本默认会执行一次过期日志清理：
+
+- `ACCESS_LOG_RETENTION_DAYS`：访问日志保留天数，默认 30
+- `AUDIT_LOG_RETENTION_DAYS`：操作审计保留天数，默认 365
+- `RUN_LOG_CLEANUP=0`：关闭启动时自动清理
+
+也可以手动预览或执行清理：
+
+```bash
+python3 scripts/cleanup_logs.py --dry-run
+python3 scripts/cleanup_logs.py --access-days 30 --audit-days 365
+```
+
+后台的“访问统计”页也提供手动清理入口；每次实际清理会把摘要写入 `app_meta`，方便确认上次清理时间和删除数量。
+
+服务端会把慢请求、5xx 响应、未捕获异常输出为单行 JSON 日志，字段包含 `event`、`level`、`request_id`、`path`、`status_code`、`duration_ms`、`username`、`ip_address` 等。线上排障时可以先用页面上的“请求编号”搜索服务器日志：
+
+```bash
+grep 'req_xxxxx' app.log
+```
+
+- `SLOW_REQUEST_THRESHOLD_MS`：慢请求阈值，默认 1500 毫秒；设为 `0` 可关闭慢请求日志
+- `STRUCTURED_ERROR_TRACEBACK=1`：在结构化异常日志里附带完整堆栈；默认关闭，避免日志过长
+- `SECURITY_HEADERS_ENABLED=1`：默认开启安全响应头；生产环境不要关闭
+- `CSRF_PROTECTION_ENABLED=1`：默认开启后台浏览器表单 CSRF 防护；生产环境不要关闭
+- `CONTENT_SECURITY_POLICY`：可覆盖默认 CSP。默认策略会限制页面嵌套、对象加载和跨源能力，同时兼容当前 Google Fonts、Bootstrap CDN 和站内静态资源
+
+### 12. 当前仓库做过的线上优化
 
 为了减少 `1Panel` 下长时间运行后出现 `504` 的概率，当前仓库已经额外做了两件事：
 
@@ -617,16 +867,20 @@ export ENABLE_POSTGRES_WRITES=1
 - 网站读取路径加入短时运行时缓存，保存数据后会自动失效，减少普通页面反复整库校验造成的阻塞
 - SQLite 连接默认启用 WAL、busy timeout 和 `synchronous=NORMAL`，降低读写互相阻塞的概率
 - 新增 `/healthz`、`/readyz`，方便部署平台和反向代理做健康检查
-- 每个请求会自动生成或沿用 `X-Request-ID`，响应头、访问日志和异常日志都会带同一个请求编号，便于线上排障
+- 每个请求会自动生成或沿用 `X-Request-ID`，响应头、访问日志和结构化异常日志都会带同一个请求编号，便于线上排障
+- 默认开启安全响应头，包括 `X-Content-Type-Options`、`X-Frame-Options`、`Referrer-Policy`、`Permissions-Policy`、`Cross-Origin-*` 和 HTML CSP
+- 登录后的后台 POST 表单会自动注入并校验 CSRF token，防止跨站伪造提交；小程序/API 接口仍按 `session_token` 和接口权限校验
 - Excel/zip/图片上传增加大小、行数、数量和文件头校验，避免错误文件拖慢导入或伪装格式绕过校验
 - 新增 `scripts/backup_sqlite.py`，用于日常一致性备份
-- 新增 `scripts/postgres_schema.sql` 和 `scripts/migrate_sqlite_to_postgres.py`，用于下一阶段 PostgreSQL 迁移演练
-- 新增 `scripts/db_runtime.py` 和 `scripts/runtime_db_smoke.py`，为 PostgreSQL 运行时切换做适配和连接烟测
+- 新增 `scripts/postgres_schema.sql`、`scripts/migrate_sqlite_to_postgres.py`、`scripts/apply_postgres_schema.py`，用于 PostgreSQL 迁移和表结构升级
+- 新增 `scripts/db_runtime.py`、`scripts/runtime_db_smoke.py`、`scripts/check_runtime_schema.py`、`scripts/start_production.sh`，为 PostgreSQL 运行时切换、连接烟测、启动前结构检查和生产启动做适配
+- 新增 `scripts/cleanup_logs.py` 和后台日志留存清理，避免访问日志长期堆积拖慢后台查询
+- 新增 `scripts/backup_restore_check.py`，用于备份后验证和 PostgreSQL 恢复演练
 
 ### 网站数据说明
 
-- 主数据库文件：`data/werewolf_stats.db`
-- 用户、战队、队员、比赛、申请数据都保存在同一个 SQLite 数据库中
+- 正式运行主库建议使用 PostgreSQL；`data/werewolf_stats.db` 主要用于本地开发、迁移对照和应急回滚
+- 用户、战队、队员、比赛、申请数据都保存在运行时数据库中
 - 比赛记录支持单独的“赛事名称”字段，例如“京城大师赛广州公开赛”或“LAL广州公开赛”
 - 如需从旧 `JSON` 数据迁移，可执行 `python3 scripts/migrate_json_to_sqlite.py`
 - 页面中的当前时间按中国时间展示

@@ -1,6 +1,8 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getSelectedScope, scopeParams } = require("../../utils/scope");
+const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+
+const PAGE_SIZE = 30;
 
 Page({
   data: {
@@ -11,7 +13,11 @@ Page({
     requiresScope: false,
     scope: {},
     metrics: [],
-    players: []
+    players: [],
+    visiblePlayers: [],
+    playerTotalCount: 0,
+    playerVisibleCount: 0,
+    playerHasMore: false
   },
 
   onShow() {
@@ -25,21 +31,26 @@ Page({
   async loadData() {
     this.setData({ loading: true, error: "" });
     try {
-      const selectedScope = getSelectedScope();
-      if (!selectedScope || !selectedScope.competition) {
-        this.setData({
-          loading: false,
-          selectedScope: null,
-          needsCompetition: true,
+      const selectedScope = getRequiredScope();
+      if (!selectedScope) {
+        this.setData(needsCompetitionState({
           requiresScope: false,
           scope: {},
           metrics: [],
-          players: []
-        });
+          players: [],
+          visiblePlayers: [],
+          playerTotalCount: 0,
+          playerVisibleCount: 0,
+          playerHasMore: false
+        }));
         return;
       }
 
-      let payload = await request("/api/players", scopeParams(selectedScope));
+      let payload = await request("/api/players", {
+        ...scopeParams(selectedScope),
+        limit: PAGE_SIZE,
+        offset: 0
+      });
       if (payload.requires_scope) {
         const dashboard = await request("/api/dashboard", scopeParams(selectedScope));
         payload = {
@@ -52,6 +63,11 @@ Page({
           players: dashboard.top_players || []
         };
       }
+      const players = (payload.players || []).map((player) => ({
+        ...player,
+        photoUrl: assetUrl(player.photo)
+      }));
+      const pagination = payload.pagination || {};
       this.setData({
         loading: false,
         selectedScope,
@@ -59,10 +75,11 @@ Page({
         requiresScope: Boolean(payload.requires_scope),
         scope: payload.scope || {},
         metrics: take(payload.metrics, 4),
-        players: (payload.players || []).map((player) => ({
-          ...player,
-          photoUrl: assetUrl(player.photo)
-        }))
+        players,
+        visiblePlayers: players,
+        playerTotalCount: Number(pagination.total || players.length),
+        playerVisibleCount: players.length,
+        playerHasMore: Boolean(pagination.has_more)
       });
     } catch (error) {
       this.setData({
@@ -73,7 +90,11 @@ Page({
   },
 
   goCompetitions() {
-    wx.switchTab({ url: "/pages/competitions/competitions" });
+    goCompetitions();
+  },
+
+  changeCompetition() {
+    goCompetitions();
   },
 
   openPlayerDetail(event) {
@@ -82,5 +103,33 @@ Page({
       return;
     }
     wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
+  },
+
+  loadMorePlayers() {
+    const selectedScope = getRequiredScope();
+    if (!selectedScope || !this.data.playerHasMore) {
+      return;
+    }
+    request("/api/players", {
+      ...scopeParams(selectedScope),
+      limit: PAGE_SIZE,
+      offset: this.data.playerVisibleCount
+    }).then((payload) => {
+      const morePlayers = (payload.players || []).map((player) => ({
+        ...player,
+        photoUrl: assetUrl(player.photo)
+      }));
+      const players = this.data.players.concat(morePlayers);
+      const pagination = payload.pagination || {};
+      this.setData({
+        players,
+        visiblePlayers: players,
+        playerVisibleCount: players.length,
+        playerTotalCount: Number(pagination.total || this.data.playerTotalCount || players.length),
+        playerHasMore: Boolean(pagination.has_more)
+      });
+    }).catch((error) => {
+      this.setData({ error: error.message || "加载更多失败" });
+    });
   }
 });

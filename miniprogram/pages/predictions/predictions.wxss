@@ -48,7 +48,8 @@
 
 .selected-match,
 .notice-card,
-.prediction-card {
+.prediction-card,
+.forecast-summary {
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
   background: #ffffff;
@@ -89,8 +90,81 @@
   border-color: #fde68a;
 }
 
+.forecast-summary {
+  padding: 22rpx;
+}
+
+.my-forecast {
+  padding-bottom: 20rpx;
+  border-bottom: 1rpx solid #e2e8f0;
+}
+
+.summary-label,
+.summary-title,
+.summary-copy {
+  display: block;
+}
+
+.summary-label {
+  font-size: 21rpx;
+  color: #64748b;
+}
+
+.summary-title {
+  margin-top: 8rpx;
+  font-size: 30rpx;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.summary-copy {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.band-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+
+.band-stat {
+  min-height: 112rpx;
+  padding: 16rpx 12rpx;
+  border-radius: 12rpx;
+  box-sizing: border-box;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.band-value,
+.band-label,
+.band-copy {
+  display: block;
+}
+
+.band-value {
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.band-label {
+  margin-top: 4rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.band-copy {
+  margin-top: 4rpx;
+  font-size: 19rpx;
+  color: #64748b;
+}
+
 .prediction-card {
   padding: 22rpx;
+  border-left-width: 8rpx;
 }
 
 .prediction-head {
@@ -113,18 +187,57 @@
   background: #111827;
 }
 
+.prediction-card.band-elite {
+  border-left-color: #b45309;
+}
+
+.prediction-card.band-contender {
+  border-left-color: #2563eb;
+}
+
+.prediction-card.band-main {
+  border-left-color: #059669;
+}
+
+.prediction-card.band-watch {
+  border-left-color: #94a3b8;
+}
+
+.prediction-card.is-mine {
+  background: #f8fafc;
+  border-color: #2563eb;
+}
+
 .prediction-main {
   flex: 1;
   min-width: 0;
 }
 
+.prediction-title-line {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 0;
+}
+
 .prediction-name {
-  display: block;
+  display: inline-block;
+  flex: 0 1 auto;
   overflow: hidden;
   font-size: 28rpx;
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.mine-tag {
+  flex: 0 0 auto;
+  padding: 4rpx 10rpx;
+  border-radius: 999rpx;
+  font-size: 18rpx;
+  font-weight: 800;
+  color: #ffffff;
+  background: #2563eb;
 }
 
 .prediction-meta {
@@ -153,6 +266,24 @@
   margin-top: 4rpx;
   font-size: 20rpx;
   color: #94a3b8;
+}
+
+.day-match-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  margin-top: 20rpx;
+  padding-top: 18rpx;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.day-match-item {
+  padding: 12rpx 14rpx;
+  border-radius: 10rpx;
+  font-size: 21rpx;
+  line-height: 1.45;
+  color: #475569;
+  background: #f8fafc;
 }
 
 .prob-grid {

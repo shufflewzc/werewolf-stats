@@ -1,15 +1,58 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getSelectedScope, scopeParams } = require("../../utils/scope");
+const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+
+function parsePercent(value) {
+  const number = Number(String(value || "").replace("%", ""));
+  return Number.isFinite(number) ? number : 0;
+}
+
+function buildSummaryCards(payload, normalizedDimension) {
+  const insights = payload.insights || {};
+  const recentMatches = payload.recent_matches || [];
+  const dimensionRadar = normalizedDimension.radar || [];
+  const villagersRate = parsePercent(insights.villagers_win_rate);
+  const werewolvesRate = parsePercent(insights.werewolves_win_rate);
+  const strongerCamp = werewolvesRate >= villagersRate ? "狼人局" : "好人局";
+  const strongerRate = werewolvesRate >= villagersRate ? insights.werewolves_win_rate : insights.villagers_win_rate;
+  const recentWins = recentMatches.filter((item) => item.result_label === "胜" || item.result === "win").length;
+  const recentPoints = recentMatches.reduce((sum, item) => sum + Number(item.points_earned || 0), 0);
+  const bestDimension = dimensionRadar.reduce((best, item) => {
+    if (!best || Number(item.ratio || 0) > Number(best.ratio || 0)) {
+      return item;
+    }
+    return best;
+  }, null);
+  return [
+    {
+      label: "强势阵营",
+      value: strongerRate || "--",
+      copy: strongerCamp
+    },
+    {
+      label: "近期走势",
+      value: recentMatches.length ? `${recentWins}/${recentMatches.length}` : "--",
+      copy: recentMatches.length ? `近${recentMatches.length}局 ${recentPoints.toFixed(1)}分` : "暂无近期比赛"
+    },
+    {
+      label: "维度强项",
+      value: bestDimension ? bestDimension.display : "--",
+      copy: bestDimension ? bestDimension.label : "暂无维度数据"
+    }
+  ];
+}
 
 Page({
   data: {
     loading: true,
     error: "",
     playerId: "",
+    selectedScope: null,
+    needsCompetition: false,
     player: {},
     metrics: [],
     insights: {},
+    summaryCards: [],
     roles: [],
     recentMatches: [],
     dimension: {},
@@ -34,7 +77,20 @@ Page({
 
     this.setData({ loading: true, error: "" });
     try {
-      const selectedScope = getSelectedScope();
+      const selectedScope = getRequiredScope();
+      if (!selectedScope) {
+        this.setData(needsCompetitionState({
+          player: {},
+          metrics: [],
+          insights: {},
+          summaryCards: [],
+          roles: [],
+          recentMatches: [],
+          dimension: {},
+          dimensionAvailable: false
+        }));
+        return;
+      }
       const payload = await request(`/api/players/${encodeURIComponent(playerId)}`, scopeParams(selectedScope));
       const player = payload.player || {};
       const dimension = payload.dimension || {};
@@ -45,15 +101,19 @@ Page({
           width: Math.max(0, Math.min(100, Number(item.ratio || 0) * 100))
         }))
       };
+      const summaryCards = buildSummaryCards(payload, normalizedDimension);
       wx.setNavigationBarTitle({ title: player.name || "选手详情" });
       this.setData({
         loading: false,
+        selectedScope,
+        needsCompetition: false,
         player: {
           ...player,
           photoUrl: assetUrl(player.photo)
         },
         metrics: take(payload.metrics, 6),
         insights: payload.insights || {},
+        summaryCards,
         roles: take(payload.roles, 8),
         recentMatches: take(payload.recent_matches, 6),
         dimension: normalizedDimension,
@@ -65,5 +125,21 @@ Page({
         error: error.message || "选手详情加载失败"
       });
     }
+  },
+
+  goPlayers() {
+    wx.switchTab({ url: "/pages/players/players" });
+  },
+
+  goPredictions() {
+    wx.navigateTo({ url: "/pages/predictions/predictions" });
+  },
+
+  changeCompetition() {
+    goCompetitions();
+  },
+
+  goCompetitions() {
+    goCompetitions();
   }
 });

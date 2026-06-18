@@ -1,13 +1,60 @@
 <view class="page">
   <view class="hero">
     <text class="eyebrow">Account</text>
-    <text class="title">我的账号</text>
-    <text class="copy">使用微信登录后，会自动创建站内账号；网页端可通过本页扫码确认登录。</text>
+    <text class="title">我的赛事中心</text>
+    <text class="copy">登录、绑定选手、查看当前赛事和比赛日预测，都从这里进入。</text>
   </view>
 
   <view class="section" wx:if="{{error}}">
     <view class="error-card">
       <text>{{error}}</text>
+    </view>
+  </view>
+
+  <view class="section" wx:if="{{user}}">
+    <view class="center-card">
+      <view class="center-head">
+        <view>
+          <text class="center-kicker">当前状态</text>
+          <text class="center-title">{{centerStatus}}</text>
+        </view>
+        <button class="scope-button" bindtap="goCompetitions">{{selectedScope ? "切换赛事" : "选赛事"}}</button>
+      </view>
+
+      <view class="scope-mini" wx:if="{{selectedScope}}">
+        <text class="account-label">当前赛事</text>
+        <text class="account-name">{{selectedScope.competition}}</text>
+        <text class="account-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+      </view>
+
+      <view class="scope-mini" wx:else>
+        <text class="account-label">当前赛事</text>
+        <text class="account-name">尚未进入赛事</text>
+        <text class="account-meta">先选择赛事后，才能查看我的选手页和当日预测。</text>
+      </view>
+
+      <view class="my-prediction-row" wx:if="{{user.player_id}}">
+        <view class="list-main">
+          <text class="account-label">我的选手</text>
+          <text class="account-name">{{user.display_name}}</text>
+          <text class="account-meta">{{latestDay ? latestDay.played_on : "暂无比赛日"}} · {{centerCopy}}</text>
+        </view>
+        <view class="list-score">
+          <text class="score-value">{{myPredictionValue}}</text>
+          <text class="score-label">当日预测</text>
+        </view>
+      </view>
+
+      <view class="empty-inline" wx:else>
+        <text>{{centerCopy}}</text>
+      </view>
+
+      <view class="quick-actions">
+        <button class="primary-button" wx:if="{{user.player_id}}" bindtap="openMyPlayerPage">我的选手页</button>
+        <button class="primary-button" wx:else bindtap="goBindPlayer">绑定选手</button>
+        <button class="ghost-button" bindtap="openLatestDay">比赛日</button>
+        <button class="ghost-button" bindtap="openPrediction">当日预测</button>
+      </view>
     </view>
   </view>
 
@@ -18,9 +65,8 @@
       <text class="account-meta">@{{user.username}} · {{user.role}}</text>
       <text class="account-meta">绑定状态：{{user.wechat_bound ? "已绑定微信" : "未绑定微信"}}</text>
       <text class="account-meta">绑定选手：{{user.player_id || "未绑定"}}</text>
-      <button class="primary-button single-button" wx:if="{{user.player_id}}" bindtap="openMyPlayerPage">查看我的赛事选手页</button>
       <button class="primary-button single-button" loading="{{loading}}" bindtap="scanWebLogin">扫码登录网页端</button>
-      <button class="primary-button single-button" bindtap="goBindPlayer">搜索中文名绑定选手</button>
+      <button class="ghost-button single-button" bindtap="goBindPlayer">搜索中文名绑定选手</button>
       <button class="ghost-button single-button" bindtap="logout">退出本地登录</button>
     </view>
   </view>

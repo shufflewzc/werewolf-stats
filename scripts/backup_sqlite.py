@@ -63,7 +63,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv or sys.argv[1:])
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     label = timestamp_label()
     output_dir = args.output_dir.resolve()
     db_backup_path = output_dir / f"werewolf_stats-{label}.db"

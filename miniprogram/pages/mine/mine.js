@@ -5,7 +5,8 @@ const {
   loginWithWechat,
   saveProfile: saveProfileRequest
 } = require("../../utils/auth");
-const { getSelectedScope } = require("../../utils/scope");
+const { request } = require("../../utils/api");
+const { getSelectedScope, scopeParams } = require("../../utils/scope");
 
 const GENDER_VALUES = ["prefer_not_to_say", "male", "female", "other"];
 const GENDER_LABELS = ["不便透露", "男", "女", "其他"];
@@ -23,11 +24,18 @@ Page({
       bio: ""
     },
     genderLabels: GENDER_LABELS,
-    genderLabel: "不便透露"
+    genderLabel: "不便透露",
+    selectedScope: null,
+    latestDay: null,
+    myPrediction: null,
+    myPredictionValue: "--",
+    centerStatus: "未登录",
+    centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和当日预测。"
   },
 
   onShow() {
     this.refreshUser(getCurrentUser());
+    this.loadMyCenter();
   },
 
   refreshUser(user) {
@@ -45,12 +53,65 @@ Page({
     });
   },
 
+  async loadMyCenter() {
+    const user = getCurrentUser();
+    const selectedScope = getSelectedScope();
+    let centerStatus = "未登录";
+    let centerCopy = "登录并绑定选手后，这里会显示你的赛事入口和当日预测。";
+    if (user && user.player_id) {
+      centerStatus = "已绑定选手";
+      centerCopy = "可以直接进入我的选手页、比赛日详情和当日预测。";
+    } else if (user) {
+      centerStatus = "未绑定选手";
+      centerCopy = "绑定选手后，会显示你的赛事入口和当日预测。";
+    }
+    if (!selectedScope || !selectedScope.competition) {
+      this.setData({
+        selectedScope: null,
+        latestDay: null,
+        myPrediction: null,
+        myPredictionValue: "--",
+        centerStatus,
+        centerCopy: user ? "先进入一个赛事，再查看我的比赛日和预测。" : centerCopy
+      });
+      return;
+    }
+    let latestDay = null;
+    let myPrediction = null;
+    let myPredictionValue = "--";
+    try {
+      const dashboard = await request("/api/dashboard", scopeParams(selectedScope));
+      latestDay = (dashboard.match_days || [])[0] || null;
+      if (user && user.player_id && latestDay && latestDay.played_on) {
+        const predictionPayload = await request("/api/predictions", {
+          ...scopeParams(selectedScope),
+          played_on: latestDay.played_on
+        });
+        myPrediction = (predictionPayload.predictions || []).find(
+          (item) => item.player_id === user.player_id
+        ) || null;
+        myPredictionValue = myPrediction ? (myPrediction.expected_total || myPrediction.expected_points || "--") : "--";
+      }
+    } catch (error) {
+      centerCopy = error.message || "我的赛事数据加载失败。";
+    }
+    this.setData({
+      selectedScope,
+      latestDay,
+      myPrediction,
+      myPredictionValue,
+      centerStatus,
+      centerCopy
+    });
+  },
+
   async login() {
     this.setData({ loading: true, error: "" });
     try {
       const payload = await loginWithWechat("");
       this.setData({ loading: false });
       this.refreshUser(payload.user);
+      this.loadMyCenter();
       wx.showToast({ title: payload.created ? "已创建账号" : "登录成功", icon: "success" });
     } catch (error) {
       this.setData({ loading: false, error: error.message || "微信登录失败" });
@@ -59,7 +120,14 @@ Page({
 
   logout() {
     clearAuth();
-    this.setData({ user: null, error: "" });
+    this.setData({
+      user: null,
+      error: "",
+      myPrediction: null,
+      myPredictionValue: "--",
+      centerStatus: "未登录",
+      centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和当日预测。"
+    });
   },
 
   updateProfileField(event) {
@@ -83,6 +151,7 @@ Page({
       const payload = await saveProfileRequest(this.data.profile);
       this.setData({ loading: false });
       this.refreshUser(payload.user);
+      this.loadMyCenter();
       wx.showToast({ title: "资料已保存", icon: "success" });
     } catch (error) {
       this.setData({ loading: false, error: error.message || "资料保存失败" });
@@ -125,6 +194,32 @@ Page({
       return;
     }
     wx.navigateTo({ url: "/pages/player-bind/player-bind" });
+  },
+
+  goCompetitions() {
+    wx.switchTab({ url: "/pages/competitions/competitions" });
+  },
+
+  openLatestDay() {
+    const latestDay = this.data.latestDay;
+    if (!latestDay || !latestDay.played_on) {
+      this.goCompetitions();
+      return;
+    }
+    wx.navigateTo({
+      url: `/pages/day-detail/day-detail?played_on=${encodeURIComponent(latestDay.played_on)}`
+    });
+  },
+
+  openPrediction() {
+    const latestDay = this.data.latestDay;
+    if (latestDay && latestDay.played_on) {
+      wx.navigateTo({
+        url: `/pages/predictions/predictions?played_on=${encodeURIComponent(latestDay.played_on)}`
+      });
+      return;
+    }
+    wx.navigateTo({ url: "/pages/predictions/predictions" });
   },
 
   openMyPlayerPage() {

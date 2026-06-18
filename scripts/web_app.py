@@ -68,12 +68,18 @@ from sqlite_store import (
     DB_PATH,
     add_ai_job_step,
     connect_read_db,
+    connect_write_db,
     connection_backend,
+    cleanup_expired_logs,
     create_ai_job,
     database_is_initialized,
     delete_session,
     delete_sessions_for_username,
     load_access_overview,
+    load_operational_overview,
+    load_audit_logs,
+    load_log_cleanup_state,
+    load_request_trace,
     load_ai_conversations,
     load_ai_jobs,
     load_session_username,
@@ -85,11 +91,13 @@ from sqlite_store import (
     save_membership_requests,
     save_meta_value,
     save_repository_data,
+    record_audit_log,
     record_access_log,
     record_ai_conversation,
     update_ai_job_status,
     save_users,
 )
+from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
 from validate_data import validate_repository
 from web_authz import (
     ADMIN_USERNAME,
@@ -168,6 +176,9 @@ AI_PLAYER_SEASON_SUMMARY_KEY_PREFIX = "ai_player_season_summary:"
 AI_TEAM_SEASON_SUMMARY_KEY_PREFIX = "ai_team_season_summary:"
 AI_PROMPT_TEMPLATES_KEY = "ai_prompt_templates"
 DASHBOARD_ACTIVITY_SETTINGS_KEY = "dashboard_activity_settings"
+PREDICTION_MODEL_SETTINGS_KEY = "prediction_model_settings"
+IMPORT_BATCHES_META_KEY = "import_batches"
+IMPORT_BATCH_SNAPSHOT_KEY_PREFIX = "import_batch_snapshot:"
 PLAYER_ACHIEVEMENT_RULES_KEY = "player_achievement_rules"
 PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "player_manual_achievements:"
 TEAM_ACHIEVEMENT_RULES_KEY = "team_achievement_rules"
@@ -181,8 +192,79 @@ WEB_LOGIN_META_PREFIX = "web_login:"
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1" if WEB_LOGIN_BASE_URL.startswith("https://") else "0").strip() != "0"
 LOGIN_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("LOGIN_RATE_LIMIT_WINDOW_SECONDS", "900"))
 LOGIN_RATE_LIMIT_MAX_FAILURES = int(os.getenv("LOGIN_RATE_LIMIT_MAX_FAILURES", "8"))
+REQUEST_RATE_LIMIT_ENABLED = os.getenv("REQUEST_RATE_LIMIT_ENABLED", "1").strip() != "0"
+REQUEST_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("REQUEST_RATE_LIMIT_WINDOW_SECONDS", "60"))
+REQUEST_RATE_LIMIT_DEFAULT_MAX = int(os.getenv("REQUEST_RATE_LIMIT_DEFAULT_MAX", "120"))
+REQUEST_RATE_LIMIT_SENSITIVE_MAX = int(os.getenv("REQUEST_RATE_LIMIT_SENSITIVE_MAX", "30"))
+IDEMPOTENCY_PROTECTION_ENABLED = os.getenv("IDEMPOTENCY_PROTECTION_ENABLED", "1").strip() != "0"
+IDEMPOTENCY_PROTECTION_TTL_SECONDS = int(os.getenv("IDEMPOTENCY_PROTECTION_TTL_SECONDS", "8"))
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
 LOGIN_FAILURES: dict[str, list[float]] = {}
+REQUEST_RATE_LIMITS: dict[str, list[float]] = {}
+REQUEST_RATE_LIMIT_LOCK = threading.RLock()
+IDEMPOTENCY_FINGERPRINTS: dict[str, float] = {}
+IDEMPOTENCY_LOCK = threading.RLock()
+REQUEST_CONTEXT_LOCAL = threading.local()
+SLOW_REQUEST_THRESHOLD_MS = int(os.getenv("SLOW_REQUEST_THRESHOLD_MS", "1500"))
+STRUCTURED_ERROR_TRACEBACK = os.getenv("STRUCTURED_ERROR_TRACEBACK", "").strip() == "1"
+SECURITY_HEADERS_ENABLED = os.getenv("SECURITY_HEADERS_ENABLED", "1").strip() != "0"
+CSRF_PROTECTION_ENABLED = os.getenv("CSRF_PROTECTION_ENABLED", "1").strip() != "0"
+CONTENT_SECURITY_POLICY = os.getenv(
+    "CONTENT_SECURITY_POLICY",
+    (
+        "default-src 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'; "
+        "img-src 'self' data: blob: https:; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net; "
+        "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+        "font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; "
+        "connect-src 'self'; "
+        "upgrade-insecure-requests"
+    ),
+)
+
+DEFAULT_PREDICTION_MODEL_SETTINGS: dict[str, Any] = {
+    "model_version": "result_weighted_v6",
+    "score_uplift": 0.92,
+    "score_bonus": 0.0,
+    "camp_win_rate_priors": {
+        "werewolves": 0.90,
+        "villagers": 0.42,
+        "third_party": 0.35,
+    },
+    "camp_win_rate_floors": {
+        "werewolves": 0.90,
+        "villagers": 0.30,
+        "third_party": 0.22,
+    },
+    "camp_base_point_floors": {
+        "werewolves": 0.25,
+        "villagers": 0.85,
+        "third_party": 0.45,
+    },
+    "camp_expected_point_caps": {
+        "werewolves": 5.20,
+    },
+    "day_total": {
+        "elite_threshold": 12.0,
+        "elite_min": 12.0,
+        "elite_max": 12.6,
+        "elite_anchor": 10.5,
+        "elite_slope": 0.55,
+        "middle_slots": 4,
+        "middle_caps": [11.4, 10.2, 9.2, 8.2],
+        "middle_min": 7.05,
+        "middle_slope": 0.55,
+        "main_min": 5.05,
+        "main_max": 6.95,
+        "main_slope": 0.45,
+    },
+}
+
+IMPORT_BATCH_LIST_LIMIT = int(os.getenv("IMPORT_BATCH_LIST_LIMIT", "50"))
 USERNAME_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{2,31}$")
 SLUG_SANITIZE_PATTERN = re.compile(r"[^a-z0-9_-]+")
 MATCH_ID_PATTERN = re.compile(r"^[a-z0-9]{1,6}-[a-z0-9]{1,8}-\d{6}-\d{2}$")
@@ -202,6 +284,16 @@ VALIDATED_DATA_CACHE: dict[str, Any] = {
     "db_mtime_ns": None,
     "cached_at": 0.0,
     "data": None,
+}
+PREDICTION_API_CACHE_TTL_SECONDS = int(os.getenv("PREDICTION_API_CACHE_TTL_SECONDS", "120"))
+PREDICTION_API_CACHE_MAX_ENTRIES = int(os.getenv("PREDICTION_API_CACHE_MAX_ENTRIES", "80"))
+PREDICTION_API_CACHE_LOCK = threading.RLock()
+PREDICTION_API_CACHE: dict[tuple[str, ...], dict[str, Any]] = {}
+PREDICTION_API_CACHE_METRICS: dict[str, int] = {
+    "hits": 0,
+    "misses": 0,
+    "sets": 0,
+    "invalidations": 0,
 }
 PLAYER_ACHIEVEMENT_METRIC_OPTIONS = {
     "rank": "个人积分排名",
@@ -400,6 +492,7 @@ class RequestContext:
     now_label: str
     remote_addr: str = ""
     request_id: str = ""
+    session_token: str = ""
 
 
 class RequestBodyTooLarge(ValueError):
@@ -416,6 +509,31 @@ def china_now_label() -> str:
 
 def china_today_label() -> str:
     return china_now().strftime("%Y-%m-%d")
+
+
+def audit_action(
+    ctx: RequestContext,
+    action: str,
+    *,
+    target_type: str = "",
+    target_id: str = "",
+    summary: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    try:
+        record_audit_log(
+            request_id=ctx.request_id,
+            username=str((ctx.current_user or {}).get("username") or ""),
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            summary=summary,
+            ip_address=ctx.remote_addr,
+            created_at=ctx.now_label,
+            metadata=metadata or {},
+        )
+    except Exception as exc:
+        print(f"审计日志写入失败 request_id={ctx.request_id}: {exc}", file=sys.stderr)
 
 
 def normalize_openai_compatible_base_url(base_url: str) -> str:
@@ -542,6 +660,81 @@ def save_dashboard_activity_settings(mode: str, items: list[dict[str, str]]) -> 
         ][:8],
     }
     save_meta_value(DASHBOARD_ACTIVITY_SETTINGS_KEY, json.dumps(payload, ensure_ascii=False))
+
+
+def _clamp_float(value: Any, default: float, minimum: float, maximum: float) -> float:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = default
+    return max(minimum, min(maximum, number))
+
+
+def _merge_prediction_model_settings(raw_settings: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw_settings = raw_settings if isinstance(raw_settings, dict) else {}
+    defaults = DEFAULT_PREDICTION_MODEL_SETTINGS
+    day_defaults = defaults["day_total"]
+    raw_day = raw_settings.get("day_total") if isinstance(raw_settings.get("day_total"), dict) else {}
+    result: dict[str, Any] = {
+        "model_version": str(raw_settings.get("model_version") or defaults["model_version"]),
+        "score_uplift": _clamp_float(raw_settings.get("score_uplift"), defaults["score_uplift"], 0.50, 1.50),
+        "score_bonus": _clamp_float(raw_settings.get("score_bonus"), defaults["score_bonus"], -3.0, 3.0),
+        "camp_win_rate_priors": {},
+        "camp_win_rate_floors": {},
+        "camp_base_point_floors": {},
+        "camp_expected_point_caps": {},
+        "day_total": {
+            "elite_threshold": _clamp_float(raw_day.get("elite_threshold"), day_defaults["elite_threshold"], 0.0, 50.0),
+            "elite_min": _clamp_float(raw_day.get("elite_min"), day_defaults["elite_min"], 0.0, 50.0),
+            "elite_max": _clamp_float(raw_day.get("elite_max"), day_defaults["elite_max"], 0.0, 50.0),
+            "elite_anchor": _clamp_float(raw_day.get("elite_anchor"), day_defaults["elite_anchor"], 0.0, 50.0),
+            "elite_slope": _clamp_float(raw_day.get("elite_slope"), day_defaults["elite_slope"], 0.0, 2.0),
+            "middle_slots": int(_clamp_float(raw_day.get("middle_slots"), day_defaults["middle_slots"], 0, 12)),
+            "middle_caps": [],
+            "middle_min": _clamp_float(raw_day.get("middle_min"), day_defaults["middle_min"], 0.0, 50.0),
+            "middle_slope": _clamp_float(raw_day.get("middle_slope"), day_defaults["middle_slope"], 0.0, 2.0),
+            "main_min": _clamp_float(raw_day.get("main_min"), day_defaults["main_min"], 0.0, 50.0),
+            "main_max": _clamp_float(raw_day.get("main_max"), day_defaults["main_max"], 0.0, 50.0),
+            "main_slope": _clamp_float(raw_day.get("main_slope"), day_defaults["main_slope"], 0.0, 2.0),
+        },
+    }
+    for group_name in ("camp_win_rate_priors", "camp_win_rate_floors"):
+        raw_group = raw_settings.get(group_name) if isinstance(raw_settings.get(group_name), dict) else {}
+        for camp, default in defaults[group_name].items():
+            result[group_name][camp] = _clamp_float(raw_group.get(camp), default, 0.0, 1.0)
+    raw_base_floors = raw_settings.get("camp_base_point_floors") if isinstance(raw_settings.get("camp_base_point_floors"), dict) else {}
+    for camp, default in defaults["camp_base_point_floors"].items():
+        result["camp_base_point_floors"][camp] = _clamp_float(raw_base_floors.get(camp), default, 0.0, 20.0)
+    raw_caps = raw_settings.get("camp_expected_point_caps") if isinstance(raw_settings.get("camp_expected_point_caps"), dict) else {}
+    for camp, default in defaults["camp_expected_point_caps"].items():
+        result["camp_expected_point_caps"][camp] = _clamp_float(raw_caps.get(camp), default, 0.0, 50.0)
+    raw_middle_caps = raw_day.get("middle_caps")
+    if not isinstance(raw_middle_caps, list):
+        raw_middle_caps = day_defaults["middle_caps"]
+    middle_slots = max(0, int(result["day_total"]["middle_slots"]))
+    for index in range(max(middle_slots, len(day_defaults["middle_caps"]))):
+        default = day_defaults["middle_caps"][min(index, len(day_defaults["middle_caps"]) - 1)]
+        raw_value = raw_middle_caps[index] if index < len(raw_middle_caps) else default
+        result["day_total"]["middle_caps"].append(_clamp_float(raw_value, default, 0.0, 50.0))
+    return result
+
+
+def load_prediction_model_settings() -> dict[str, Any]:
+    raw_value = load_meta_value(PREDICTION_MODEL_SETTINGS_KEY) or ""
+    if not raw_value.strip():
+        return _merge_prediction_model_settings()
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return _merge_prediction_model_settings()
+    return _merge_prediction_model_settings(parsed)
+
+
+def save_prediction_model_settings(settings: dict[str, Any]) -> dict[str, Any]:
+    normalized = _merge_prediction_model_settings(settings)
+    save_meta_value(PREDICTION_MODEL_SETTINGS_KEY, json.dumps(normalized, ensure_ascii=False))
+    invalidate_prediction_api_cache()
+    return normalized
 
 
 def render_ai_prompt_template(
@@ -901,6 +1094,64 @@ def invalidate_validated_data_cache() -> None:
         VALIDATED_DATA_CACHE["db_mtime_ns"] = None
         VALIDATED_DATA_CACHE["cached_at"] = 0.0
         VALIDATED_DATA_CACHE["data"] = None
+    invalidate_prediction_api_cache()
+
+
+def invalidate_prediction_api_cache() -> None:
+    with PREDICTION_API_CACHE_LOCK:
+        PREDICTION_API_CACHE.clear()
+        PREDICTION_API_CACHE_METRICS["invalidations"] += 1
+
+
+def get_prediction_api_cache(cache_key: tuple[str, ...]) -> dict[str, Any] | None:
+    if PREDICTION_API_CACHE_TTL_SECONDS <= 0:
+        return None
+    with PREDICTION_API_CACHE_LOCK:
+        cached = PREDICTION_API_CACHE.get(cache_key)
+        if not cached:
+            PREDICTION_API_CACHE_METRICS["misses"] += 1
+            return None
+        if time.monotonic() - float(cached.get("cached_at") or 0.0) > PREDICTION_API_CACHE_TTL_SECONDS:
+            PREDICTION_API_CACHE.pop(cache_key, None)
+            PREDICTION_API_CACHE_METRICS["misses"] += 1
+            return None
+        PREDICTION_API_CACHE_METRICS["hits"] += 1
+        return deepcopy(cached["payload"])
+
+
+def set_prediction_api_cache(cache_key: tuple[str, ...], payload: dict[str, Any]) -> None:
+    if PREDICTION_API_CACHE_TTL_SECONDS <= 0:
+        return
+    with PREDICTION_API_CACHE_LOCK:
+        if len(PREDICTION_API_CACHE) >= max(1, PREDICTION_API_CACHE_MAX_ENTRIES):
+            oldest_key = min(
+                PREDICTION_API_CACHE,
+                key=lambda key: float(PREDICTION_API_CACHE[key].get("cached_at") or 0.0),
+            )
+            PREDICTION_API_CACHE.pop(oldest_key, None)
+        PREDICTION_API_CACHE[cache_key] = {
+            "cached_at": time.monotonic(),
+            "payload": deepcopy(payload),
+        }
+        PREDICTION_API_CACHE_METRICS["sets"] += 1
+
+
+def get_prediction_api_cache_metrics() -> dict[str, Any]:
+    with PREDICTION_API_CACHE_LOCK:
+        hits = int(PREDICTION_API_CACHE_METRICS.get("hits") or 0)
+        misses = int(PREDICTION_API_CACHE_METRICS.get("misses") or 0)
+        total_reads = hits + misses
+        return {
+            "enabled": PREDICTION_API_CACHE_TTL_SECONDS > 0,
+            "ttl_seconds": PREDICTION_API_CACHE_TTL_SECONDS,
+            "max_entries": PREDICTION_API_CACHE_MAX_ENTRIES,
+            "entries": len(PREDICTION_API_CACHE),
+            "hits": hits,
+            "misses": misses,
+            "sets": int(PREDICTION_API_CACHE_METRICS.get("sets") or 0),
+            "invalidations": int(PREDICTION_API_CACHE_METRICS.get("invalidations") or 0),
+            "hit_rate": safe_rate(hits, total_reads),
+        }
 
 
 def get_cached_validated_data() -> dict[str, Any] | None:
@@ -1171,6 +1422,186 @@ def record_login_failure(remote_addr: str, username: str) -> None:
 
 def clear_login_failures(remote_addr: str, username: str) -> None:
     LOGIN_FAILURES.pop(login_rate_limit_key(remote_addr, username), None)
+
+
+SENSITIVE_RATE_LIMIT_PATHS = {
+    "/api/miniprogram/login",
+    "/api/miniprogram/profile",
+    "/api/miniprogram/player-search",
+    "/api/miniprogram/bind-player",
+    "/api/miniprogram/web-login-confirm",
+    "/api/web-login/status",
+    "/login",
+}
+
+
+def request_rate_limit_key(ctx: RequestContext) -> str:
+    user_part = str((ctx.current_user or {}).get("username") or "").strip()
+    identity = user_part or (ctx.remote_addr or "unknown").strip() or "unknown"
+    return f"{identity}:{ctx.method}:{ctx.path}"
+
+
+def request_rate_limit_for_path(ctx: RequestContext) -> int:
+    if ctx.path in SENSITIVE_RATE_LIMIT_PATHS:
+        return max(1, REQUEST_RATE_LIMIT_SENSITIVE_MAX)
+    if ctx.path.startswith("/api/miniprogram/"):
+        return max(1, REQUEST_RATE_LIMIT_SENSITIVE_MAX)
+    if ctx.path.startswith("/api/"):
+        return max(1, REQUEST_RATE_LIMIT_DEFAULT_MAX)
+    return 0
+
+
+def request_rate_limited(ctx: RequestContext) -> tuple[bool, int]:
+    if not REQUEST_RATE_LIMIT_ENABLED:
+        return False, 0
+    max_requests = request_rate_limit_for_path(ctx)
+    if max_requests <= 0:
+        return False, 0
+    now = time.time()
+    cutoff = now - max(1, REQUEST_RATE_LIMIT_WINDOW_SECONDS)
+    key = request_rate_limit_key(ctx)
+    with REQUEST_RATE_LIMIT_LOCK:
+        attempts = [item for item in REQUEST_RATE_LIMITS.get(key, []) if item >= cutoff]
+        limited = len(attempts) >= max_requests
+        if not limited:
+            attempts.append(now)
+        REQUEST_RATE_LIMITS[key] = attempts
+        if len(REQUEST_RATE_LIMITS) > 5000:
+            empty_keys = [
+                item_key
+                for item_key, values in REQUEST_RATE_LIMITS.items()
+                if not any(value >= cutoff for value in values)
+            ]
+            for item_key in empty_keys[:1000]:
+                REQUEST_RATE_LIMITS.pop(item_key, None)
+    retry_after = max(1, int(REQUEST_RATE_LIMIT_WINDOW_SECONDS))
+    return limited, retry_after
+
+
+def rate_limit_response(ctx: RequestContext, start_response, retry_after: int):
+    headers = [("Retry-After", str(max(1, retry_after)))]
+    if ctx.path.startswith("/api/"):
+        return start_response_json(
+            start_response,
+            "429 Too Many Requests",
+            {"error": "请求过于频繁，请稍后再试。"},
+            headers=headers,
+        )
+    return start_response_html(
+        start_response,
+        "429 Too Many Requests",
+        layout("请求过于频繁", '<div class="alert alert-warning">请求过于频繁，请稍后再试。</div>', ctx),
+        headers=headers,
+    )
+
+
+IDEMPOTENCY_PROTECTED_POST_PATHS = {
+    "/api/miniprogram/profile",
+    "/api/miniprogram/bind-player",
+    "/api/miniprogram/web-login-confirm",
+    "/matches/new",
+    "/dimension-stats",
+    "/prediction-admin",
+    "/profile",
+    "/bindings",
+    "/team-center",
+    "/team-admin",
+    "/guilds",
+    "/accounts",
+    "/permissions",
+    "/ai-admin",
+    "/access-stats",
+    "/achievement-rules",
+    "/team-achievement-rules",
+    "/series-manage",
+}
+
+
+def should_check_idempotency(ctx: RequestContext) -> bool:
+    if not IDEMPOTENCY_PROTECTION_ENABLED:
+        return False
+    if ctx.method != "POST":
+        return False
+    if ctx.path in {"/login", "/logout", "/api/miniprogram/login"}:
+        return False
+    if ctx.path in IDEMPOTENCY_PROTECTED_POST_PATHS:
+        return True
+    if ctx.path.startswith("/matches/") and ctx.path.endswith("/edit"):
+        return True
+    if ctx.path.startswith("/players/"):
+        return True
+    if ctx.path.startswith("/teams/"):
+        return True
+    return False
+
+
+def idempotency_fingerprint(ctx: RequestContext) -> str:
+    identity = str((ctx.current_user or {}).get("username") or "").strip() or (ctx.remote_addr or "unknown")
+    form_payload = {
+        key: values
+        for key, values in sorted(ctx.form.items())
+        if key not in {"_csrf_token", "danger_confirmation"}
+    }
+    file_payload = {
+        key: [
+            {
+                "filename": item.filename,
+                "content_type": item.content_type,
+                "size": len(item.data),
+            }
+            for item in values
+        ]
+        for key, values in sorted(ctx.files.items())
+    }
+    raw_payload = json.dumps(
+        {
+            "identity": identity,
+            "method": ctx.method,
+            "path": ctx.path,
+            "query": {key: values for key, values in sorted(ctx.query.items())},
+            "form": form_payload,
+            "files": file_payload,
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+
+
+def duplicate_write_request(ctx: RequestContext) -> bool:
+    if not should_check_idempotency(ctx):
+        return False
+    ttl = max(1, IDEMPOTENCY_PROTECTION_TTL_SECONDS)
+    now = time.time()
+    cutoff = now - ttl
+    fingerprint = idempotency_fingerprint(ctx)
+    with IDEMPOTENCY_LOCK:
+        expired_keys = [
+            key
+            for key, seen_at in IDEMPOTENCY_FINGERPRINTS.items()
+            if seen_at < cutoff
+        ]
+        for key in expired_keys[:1000]:
+            IDEMPOTENCY_FINGERPRINTS.pop(key, None)
+        if fingerprint in IDEMPOTENCY_FINGERPRINTS:
+            return True
+        IDEMPOTENCY_FINGERPRINTS[fingerprint] = now
+    return False
+
+
+def duplicate_write_response(ctx: RequestContext, start_response):
+    if ctx.path.startswith("/api/"):
+        return start_response_json(
+            start_response,
+            "409 Conflict",
+            {"error": "请求已提交，请勿重复操作。"},
+        )
+    return start_response_html(
+        start_response,
+        "409 Conflict",
+        layout("请勿重复提交", '<div class="alert alert-warning">请求已提交，请勿重复操作；如果页面没有变化，请刷新后再试。</div>', ctx),
+    )
 
 
 def hash_password(password: str) -> tuple[str, str]:
@@ -1618,12 +2049,157 @@ def build_request_id(environ: dict[str, Any]) -> str:
     return "req_" + secrets.token_hex(12)
 
 
+def _log_text(value: Any, limit: int = 500) -> str:
+    text = str(value or "").replace("\n", "\\n").replace("\r", "\\r")
+    if len(text) > limit:
+        return text[:limit] + "..."
+    return text
+
+
+def emit_structured_log(event: str, level: str = "info", **fields: Any) -> None:
+    payload: dict[str, Any] = {
+        "event": event,
+        "level": level,
+        "time": china_now_label(),
+    }
+    for key, value in fields.items():
+        if value is None:
+            continue
+        if isinstance(value, (str, int, float, bool)):
+            payload[key] = _log_text(value) if isinstance(value, str) else value
+        else:
+            payload[key] = _log_text(value)
+    print(json.dumps(payload, ensure_ascii=False, sort_keys=True), file=sys.stderr)
+
+
+def build_request_log_fields(
+    ctx: RequestContext | None,
+    environ: dict[str, Any],
+    *,
+    request_id: str,
+    status_code: int = 0,
+    duration_ms: int = 0,
+) -> dict[str, Any]:
+    return {
+        "request_id": request_id,
+        "method": ctx.method if ctx else str(environ.get("REQUEST_METHOD") or ""),
+        "path": ctx.path if ctx else str(environ.get("PATH_INFO") or ""),
+        "status_code": status_code,
+        "duration_ms": duration_ms,
+        "query_string": str(environ.get("QUERY_STRING") or "")[:500],
+        "username": str(((ctx.current_user or {}).get("username") if ctx else "") or ""),
+        "ip_address": str(environ.get("REMOTE_ADDR") or ""),
+        "user_agent": str(environ.get("HTTP_USER_AGENT") or "")[:500],
+    }
+
+
 def wrap_start_response_with_request_id(start_response, request_id: str):
     def wrapped_start_response(status, headers, exc_info=None):
         next_headers = with_request_id_header(list(headers or []), request_id)
         if exc_info is not None:
             return start_response(status, next_headers, exc_info)
         return start_response(status, next_headers)
+
+    return wrapped_start_response
+
+
+def _header_lookup(headers: list[tuple[str, str]], name: str) -> str:
+    normalized_name = name.lower()
+    for header_name, header_value in headers:
+        if header_name.lower() == normalized_name:
+            return header_value
+    return ""
+
+
+def _append_header_if_missing(headers: list[tuple[str, str]], name: str, value: str) -> None:
+    if not _header_lookup(headers, name):
+        headers.append((name, value))
+
+
+def with_security_headers(headers: list[tuple[str, str]] | None) -> list[tuple[str, str]]:
+    normalized_headers = list(headers or [])
+    if not SECURITY_HEADERS_ENABLED:
+        return normalized_headers
+    content_type = _header_lookup(normalized_headers, "Content-Type").lower()
+    _append_header_if_missing(normalized_headers, "X-Content-Type-Options", "nosniff")
+    _append_header_if_missing(normalized_headers, "X-Frame-Options", "DENY")
+    _append_header_if_missing(normalized_headers, "Referrer-Policy", "strict-origin-when-cross-origin")
+    _append_header_if_missing(
+        normalized_headers,
+        "Permissions-Policy",
+        "camera=(), microphone=(), geolocation=(), payment=(), usb=(), bluetooth=()",
+    )
+    _append_header_if_missing(normalized_headers, "Cross-Origin-Opener-Policy", "same-origin")
+    _append_header_if_missing(normalized_headers, "Cross-Origin-Resource-Policy", "same-origin")
+    if content_type.startswith("text/html") and CONTENT_SECURITY_POLICY.strip():
+        _append_header_if_missing(normalized_headers, "Content-Security-Policy", CONTENT_SECURITY_POLICY.strip())
+    return normalized_headers
+
+
+def wrap_start_response_with_security_headers(start_response):
+    def wrapped_start_response(status, headers, exc_info=None):
+        next_headers = with_security_headers(list(headers or []))
+        if exc_info is not None:
+            return start_response(status, next_headers, exc_info)
+        return start_response(status, next_headers)
+
+    return wrapped_start_response
+
+
+def wrap_start_response_with_access_log(start_response, ctx: RequestContext, environ: dict[str, Any], started_at: float):
+    should_log = not ctx.path.startswith("/assets/") and ctx.path not in {"/healthz", "/readyz"}
+    logged = False
+
+    def wrapped_start_response(status, headers, exc_info=None):
+        nonlocal logged
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        if should_log and not logged:
+            logged = True
+            try:
+                status_code = int(str(status or "0").split(" ", 1)[0] or 0)
+            except ValueError:
+                status_code = 0
+            try:
+                record_access_log(
+                    path=ctx.path,
+                    method=ctx.method,
+                    status_code=status_code,
+                    duration_ms=duration_ms,
+                    query_string=str(environ.get("QUERY_STRING") or ""),
+                    username=str((ctx.current_user or {}).get("username") or ""),
+                    ip_address=str(environ.get("REMOTE_ADDR") or ""),
+                    user_agent=str(environ.get("HTTP_USER_AGENT") or ""),
+                    created_at=ctx.now_label,
+                    request_id=ctx.request_id,
+                )
+            except Exception as exc:
+                emit_structured_log(
+                    "access_log.write_failed",
+                    "error",
+                    **build_request_log_fields(
+                        ctx,
+                        environ,
+                        request_id=ctx.request_id,
+                        status_code=status_code,
+                        duration_ms=duration_ms,
+                    ),
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+            fields = build_request_log_fields(
+                ctx,
+                environ,
+                request_id=ctx.request_id,
+                status_code=status_code,
+                duration_ms=duration_ms,
+            )
+            if status_code >= 500:
+                emit_structured_log("request.error_status", "error", **fields)
+            elif SLOW_REQUEST_THRESHOLD_MS > 0 and duration_ms >= SLOW_REQUEST_THRESHOLD_MS:
+                emit_structured_log("request.slow", "warning", **fields, threshold_ms=SLOW_REQUEST_THRESHOLD_MS)
+        if exc_info is not None:
+            return start_response(status, headers, exc_info)
+        return start_response(status, headers)
 
     return wrapped_start_response
 
@@ -1638,23 +2214,97 @@ def with_request_id_header(
     return normalized_headers
 
 
+def csrf_token_for_session(session_token: str) -> str:
+    normalized = str(session_token or "").strip()
+    if not normalized:
+        return ""
+    return hmac.new(normalized.encode("utf-8"), b"werewolf-stats-csrf-v1", hashlib.sha256).hexdigest()
+
+
+def csrf_token_for_context(ctx: RequestContext | None) -> str:
+    if not ctx or not ctx.current_user:
+        return ""
+    return csrf_token_for_session(ctx.session_token)
+
+
+def inject_csrf_token(body: str, ctx: RequestContext | None) -> str:
+    token = csrf_token_for_context(ctx)
+    if not token:
+        return body
+    hidden_input = f'<input type="hidden" name="_csrf_token" value="{escape(token)}">'
+
+    def add_token(match: re.Match[str]) -> str:
+        return match.group(0) + hidden_input
+
+    return re.sub(
+        r'(<form\b[^>]*method=["\']?post["\']?[^>]*>)',
+        add_token,
+        body,
+        flags=re.IGNORECASE,
+    )
+
+
+def csrf_error_response(ctx: RequestContext, start_response):
+    emit_structured_log(
+        "csrf.validation_failed",
+        "warning",
+        request_id=ctx.request_id,
+        method=ctx.method,
+        path=ctx.path,
+        username=str((ctx.current_user or {}).get("username") or ""),
+        ip_address=ctx.remote_addr,
+    )
+    return start_response_html(
+        start_response,
+        "403 Forbidden",
+        layout(
+            "请求已过期",
+            '<div class="alert alert-danger">页面安全令牌已过期，请返回刷新页面后重试。</div>',
+            ctx,
+        ),
+    )
+
+
+def should_check_csrf(ctx: RequestContext) -> bool:
+    if not CSRF_PROTECTION_ENABLED:
+        return False
+    if ctx.method != "POST":
+        return False
+    if not ctx.current_user:
+        return False
+    if ctx.path.startswith("/api/"):
+        return False
+    return True
+
+
+def validate_csrf_token(ctx: RequestContext) -> bool:
+    if not should_check_csrf(ctx):
+        return True
+    expected = csrf_token_for_context(ctx)
+    provided = form_value(ctx.form, "_csrf_token").strip() or form_value(ctx.query, "_csrf_token").strip()
+    if not expected or not provided:
+        return False
+    return hmac.compare_digest(expected, provided)
+
+
 def start_response_html(
     start_response,
     status: str,
     body: str,
     headers: list[tuple[str, str]] | None = None,
     request_id: str = "",
+    ctx: RequestContext | None = None,
 ):
     extra_headers = with_request_id_header(headers, request_id)
+    if ctx is None:
+        ctx = getattr(REQUEST_CONTEXT_LOCAL, "ctx", None)
+    body = inject_csrf_token(body, ctx)
     payload = body.encode("utf-8")
     start_response(
         status,
         [
             ("Content-Type", "text/html; charset=utf-8"),
             ("Content-Length", str(len(payload))),
-            ("X-Content-Type-Options", "nosniff"),
-            ("X-Frame-Options", "DENY"),
-            ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ] + extra_headers,
     )
     return [payload]
@@ -1674,8 +2324,6 @@ def start_response_json(
         [
             ("Content-Type", "application/json; charset=utf-8"),
             ("Content-Length", str(len(body))),
-            ("X-Content-Type-Options", "nosniff"),
-            ("Referrer-Policy", "strict-origin-when-cross-origin"),
         ] + extra_headers,
     )
     return [body]
@@ -1789,6 +2437,10 @@ def is_management_path(path: str) -> bool:
         "/ai-conversations",
         "/ai-jobs",
         "/access-stats",
+        "/access-logs",
+        "/ops",
+        "/audit-logs",
+        "/request-trace",
         "/achievement-rules",
         "/team-achievement-rules",
         "/permissions",
@@ -1813,6 +2465,10 @@ def build_nav_link(label: str, href: str, active: bool = False) -> str:
         f'<a class="nav-link nav-pill px-0{" is-active" if active else ""}" '
         f'href="{escape(href)}">{escape(label)}</a>'
     )
+
+
+def build_nav_group_label(label: str) -> str:
+    return f'<span class="nav-group-label">{escape(label)}</span>'
 
 
 def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
@@ -1841,10 +2497,12 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
         admin_nav_links = [
+            build_nav_group_label("工作台"),
             build_nav_link("控制台总览", "/profile", ctx.path == "/profile"),
             build_nav_link("战队认领", "/team-center", ctx.path == "/team-center"),
         ]
         if can_manage_matches(ctx.current_user):
+            admin_nav_links.append(build_nav_group_label("赛事运营"))
             admin_nav_links.append(
                 build_nav_link(
                     "比赛管理",
@@ -1865,6 +2523,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                 )
             )
         if is_admin_user(ctx.current_user):
+            admin_nav_links.append(build_nav_group_label("系统管理"))
             admin_nav_links.append(
                 build_nav_link(
                     "AI 管理",
@@ -1873,7 +2532,16 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                 )
             )
             admin_nav_links.append(
-                build_nav_link("访问统计", "/access-stats", ctx.path == "/access-stats")
+                build_nav_link("访问统计", "/access-stats", ctx.path in {"/access-stats", "/access-logs"})
+            )
+            admin_nav_links.append(
+                build_nav_link("运维总览", "/ops", ctx.path == "/ops")
+            )
+            admin_nav_links.append(
+                build_nav_link("操作审计", "/audit-logs", ctx.path == "/audit-logs")
+            )
+            admin_nav_links.append(
+                build_nav_link("请求排障", "/request-trace", ctx.path == "/request-trace")
             )
             admin_nav_links.append(
                 build_nav_link("成就规则", "/achievement-rules", ctx.path == "/achievement-rules")
@@ -1925,13 +2593,62 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
     if is_admin_layout:
         current_scope = get_user_region_label(ctx.current_user) or "未绑定地区"
         admin_status = f"""
-        <div class="admin-console-strip">
+        <div class="admin-console-strip mb-3">
           <div class="admin-console-copy">
             <span class="admin-console-label">Workspace</span>
             <strong>{escape(title)}</strong>
             <span>{escape(current_scope)}</span>
           </div>
           {admin_return_link}
+        </div>
+        """
+    topbar_html = f"""
+        <div class="topbar shadow-sm px-3 py-2 py-lg-2 mb-4">
+          <div class="d-flex flex-column flex-xl-row justify-content-between gap-2 align-items-xl-center">
+            <div>
+              <div class="brand-kicker">{brand_kicker}</div>
+              <div class="brand-title">{brand_title}</div>
+              <div class="small text-secondary">{brand_copy}</div>
+            </div>
+            <div class="topbar-actions d-flex flex-wrap align-items-center gap-2 gap-xl-3">
+              <nav class="primary-nav d-flex flex-wrap gap-2">{''.join(nav_links)}</nav>
+              {user_html}
+            </div>
+          </div>
+        </div>
+    """
+    content_html = f"""
+        {topbar_html}
+        {admin_status}
+        {alert_html}
+        {body}
+    """
+    if is_admin_layout:
+        content_html = f"""
+        <div class="admin-layout">
+          <aside class="admin-sidebar">
+            <div class="admin-sidebar-brand">
+              <div class="brand-kicker">{brand_kicker}</div>
+              <div class="brand-title">{brand_title}</div>
+              <div class="small text-secondary">{brand_copy}</div>
+            </div>
+            <nav class="admin-sidebar-nav primary-nav d-flex flex-column gap-1">{''.join(nav_links)}</nav>
+            <div class="admin-sidebar-footer">
+              {admin_return_link}
+            </div>
+          </aside>
+          <main class="admin-main">
+            <div class="admin-topbar">
+              <div>
+                <div class="admin-console-label">当前页面</div>
+                <h1>{escape(title)}</h1>
+                <div class="small text-secondary">{escape(get_user_region_label(ctx.current_user) or "未绑定地区")}</div>
+              </div>
+              {user_html}
+            </div>
+            {alert_html}
+            {body}
+          </main>
         </div>
         """
 
@@ -4350,7 +5067,293 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         background: linear-gradient(135deg, rgba(255, 250, 235, 0.96), rgba(255, 244, 214, 0.92));
         color: #9a6700;
       }}
+      body.app-admin {{
+        --admin-bg: #f8fafc;
+        --admin-surface: #ffffff;
+        --admin-surface-muted: #f1f5f9;
+        --admin-ink: #0f172a;
+        --admin-muted: #64748b;
+        --admin-line: #dbe4ee;
+        --admin-line-strong: #cbd5e1;
+        --admin-primary: #1e40af;
+        --admin-primary-soft: #dbeafe;
+        --admin-accent: #f59e0b;
+        background: var(--admin-bg);
+        color: var(--admin-ink);
+      }}
+      body.app-admin::before,
+      body.app-admin::after {{
+        display: none;
+      }}
+      body.app-admin .shell {{
+        max-width: 1480px;
+      }}
+      body.app-admin .topbar,
+      body.app-admin .panel,
+      body.app-admin .form-panel,
+      body.app-admin .table-responsive,
+      body.app-admin .team-link-card,
+      body.app-admin .stat-card {{
+        background: var(--admin-surface);
+        border: 1px solid var(--admin-line);
+        border-radius: 8px;
+        box-shadow: none;
+        backdrop-filter: none;
+        -webkit-backdrop-filter: none;
+      }}
+      body.app-admin .topbar {{
+        top: 0;
+        border-top: 0;
+        border-radius: 0 0 8px 8px;
+        background: rgba(255, 255, 255, 0.96);
+        box-shadow: 0 1px 0 rgba(15, 23, 42, 0.04);
+      }}
+      body.app-admin .brand-kicker {{
+        margin-bottom: 0.25rem;
+        border-radius: 6px;
+        background: var(--admin-primary-soft);
+        color: var(--admin-primary);
+        letter-spacing: 0;
+      }}
+      body.app-admin .brand-kicker::before {{
+        display: none;
+      }}
+      body.app-admin .brand-title,
+      body.app-admin .nav-link,
+      body.app-admin .section-title {{
+        color: var(--admin-ink);
+      }}
+      body.app-admin .text-secondary,
+      body.app-admin .small,
+      body.app-admin .section-copy,
+      body.app-admin .form-label {{
+        color: var(--admin-muted) !important;
+      }}
+      body.app-admin .primary-nav {{
+        align-items: center;
+        row-gap: 0.45rem !important;
+      }}
+      body.app-admin .nav-group-label {{
+        align-self: center;
+        color: var(--admin-muted);
+        font-size: 0.72rem;
+        font-weight: 700;
+        padding: 0 0.25rem;
+      }}
+      body.app-admin .nav-pill {{
+        min-height: 2rem;
+        border-radius: 6px;
+        background: transparent;
+        border-color: transparent;
+        color: #334155;
+        font-size: 0.86rem;
+        padding: 0.36rem 0.58rem !important;
+      }}
+      body.app-admin .nav-pill:hover {{
+        background: var(--admin-surface-muted);
+        border-color: var(--admin-line);
+      }}
+      body.app-admin .nav-pill.is-active {{
+        background: var(--admin-primary);
+        border-color: var(--admin-primary);
+        color: #ffffff;
+      }}
+      body.app-admin .hero {{
+        background: var(--admin-surface);
+        border: 1px solid var(--admin-line);
+        border-radius: 8px;
+        box-shadow: none;
+        color: var(--admin-ink);
+        padding: 1.1rem 1.25rem !important;
+      }}
+      body.app-admin .hero::before,
+      body.app-admin .hero::after {{
+        display: none;
+      }}
+      body.app-admin .hero .display-6 {{
+        font-size: 1.45rem;
+        line-height: 1.25;
+        margin-bottom: 0.35rem !important;
+      }}
+      body.app-admin .hero .eyebrow {{
+        margin-bottom: 0.35rem !important;
+      }}
+      body.app-admin .hero-copy,
+      body.app-admin .hero p,
+      body.app-admin .opacity-75 {{
+        color: var(--admin-muted) !important;
+      }}
+      body.app-admin .chip,
+      body.app-admin .hero .chip {{
+        background: var(--admin-surface-muted);
+        border-color: var(--admin-line);
+        color: #334155;
+        border-radius: 6px;
+      }}
+      body.app-admin .form-control,
+      body.app-admin .form-select {{
+        background: #ffffff;
+        border-color: var(--admin-line-strong);
+        border-radius: 6px;
+        color: var(--admin-ink);
+        box-shadow: none;
+      }}
+      body.app-admin .form-control:focus,
+      body.app-admin .form-select:focus {{
+        background: #ffffff;
+        border-color: var(--admin-primary);
+        box-shadow: 0 0 0 0.18rem rgba(30, 64, 175, 0.14);
+        color: var(--admin-ink);
+      }}
+      body.app-admin .btn-outline-dark,
+      body.app-admin .btn-light {{
+        background: #ffffff;
+        border-color: var(--admin-line-strong);
+        color: #334155;
+        border-radius: 6px;
+      }}
+      body.app-admin .btn-outline-dark:hover,
+      body.app-admin .btn-light:hover {{
+        background: var(--admin-surface-muted);
+        border-color: var(--admin-primary);
+        color: var(--admin-primary);
+      }}
+      body.app-admin .btn-dark {{
+        background: var(--admin-primary);
+        border-color: var(--admin-primary);
+        border-radius: 6px;
+      }}
+      body.app-admin .table {{
+        color: var(--admin-ink);
+        font-size: 0.9rem;
+        margin-bottom: 0;
+      }}
+      body.app-admin .table thead th {{
+        background: var(--admin-surface-muted);
+        color: #475569;
+        border-bottom: 1px solid var(--admin-line-strong);
+        font-size: 0.78rem;
+        font-weight: 700;
+        white-space: nowrap;
+      }}
+      body.app-admin .table tbody td {{
+        border-color: var(--admin-line);
+        vertical-align: middle;
+      }}
+      body.app-admin .table tbody tr:hover {{
+        background: #f8fafc;
+      }}
+      body.app-admin .alert {{
+        border: 1px solid rgba(245, 158, 11, 0.26) !important;
+        background: #fffbeb;
+        color: #92400e;
+        border-radius: 8px;
+      }}
+      body.app-admin .admin-console-strip {{
+        background: var(--admin-surface);
+        border: 1px solid var(--admin-line);
+        border-radius: 8px;
+        box-shadow: none;
+      }}
+      body.app-admin .admin-console-label {{
+        color: var(--admin-primary);
+        letter-spacing: 0;
+      }}
+      body.app-admin .container-fluid {{
+        padding-top: 0 !important;
+      }}
+      body.app-admin .admin-layout {{
+        display: grid;
+        grid-template-columns: 248px minmax(0, 1fr);
+        gap: 1rem;
+        align-items: start;
+        min-height: calc(100vh - 1rem);
+      }}
+      body.app-admin .admin-sidebar {{
+        position: sticky;
+        top: 0;
+        min-height: calc(100vh - 1rem);
+        display: flex;
+        flex-direction: column;
+        gap: 1rem;
+        padding: 1rem;
+        background: var(--admin-surface);
+        border: 1px solid var(--admin-line);
+        border-top: 0;
+        border-radius: 0 0 8px 8px;
+      }}
+      body.app-admin .admin-sidebar-brand {{
+        padding-bottom: 0.8rem;
+        border-bottom: 1px solid var(--admin-line);
+      }}
+      body.app-admin .admin-sidebar-nav {{
+        flex: 1 1 auto;
+        overflow-y: auto;
+        padding-right: 0.15rem;
+      }}
+      body.app-admin .admin-sidebar .nav-group-label {{
+        margin-top: 0.7rem;
+        padding: 0.45rem 0.55rem 0.15rem;
+        text-transform: none;
+      }}
+      body.app-admin .admin-sidebar .nav-group-label:first-child {{
+        margin-top: 0;
+      }}
+      body.app-admin .admin-sidebar .nav-pill {{
+        width: 100%;
+        justify-content: flex-start;
+        padding: 0.48rem 0.62rem !important;
+      }}
+      body.app-admin .admin-sidebar-footer {{
+        padding-top: 0.8rem;
+        border-top: 1px solid var(--admin-line);
+      }}
+      body.app-admin .admin-main {{
+        min-width: 0;
+        padding: 1rem 0 1.5rem;
+      }}
+      body.app-admin .admin-topbar {{
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+        margin-bottom: 1rem;
+        padding: 0.85rem 1rem;
+        background: var(--admin-surface);
+        border: 1px solid var(--admin-line);
+        border-radius: 8px;
+      }}
+      body.app-admin .admin-topbar h1 {{
+        margin: 0;
+        color: var(--admin-ink);
+        font-size: 1.08rem;
+        font-weight: 800;
+        line-height: 1.25;
+      }}
+      body.app-admin .admin-topbar .account-actions {{
+        justify-content: flex-end;
+      }}
       @media (max-width: 991.98px) {{
+        body.app-admin .admin-layout {{
+          display: block;
+          min-height: auto;
+        }}
+        body.app-admin .admin-sidebar {{
+          position: relative;
+          top: auto;
+          min-height: auto;
+          margin-bottom: 1rem;
+        }}
+        body.app-admin .admin-main {{
+          padding-top: 0;
+        }}
+        body.app-admin .admin-topbar {{
+          align-items: flex-start;
+          flex-direction: column;
+        }}
+        body.app-admin .admin-topbar .account-actions {{
+          justify-content: flex-start;
+        }}
         .dashboard-hero .hero-layout,
         .dashboard-grid,
         .player-showcase-grid,
@@ -4415,6 +5418,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         }}
         .primary-nav .nav-pill {{
           flex: 1 1 calc(50% - 0.5rem);
+        }}
+        body.app-admin .admin-sidebar .nav-pill {{
+          flex: 0 0 auto;
         }}
         .account-actions {{
           justify-content: flex-start;
@@ -4555,22 +5561,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
   <body class="{body_class}">
     <div class="container-fluid px-2 px-md-3 px-xl-3 py-2">
       <div class="shell mx-auto">
-        <div class="topbar shadow-sm px-3 py-2 py-lg-2 mb-4">
-          <div class="d-flex flex-column flex-xl-row justify-content-between gap-2 align-items-xl-center">
-            <div>
-              <div class="brand-kicker">{brand_kicker}</div>
-              <div class="brand-title">{brand_title}</div>
-              <div class="small text-secondary">{brand_copy}</div>
-            </div>
-            <div class="topbar-actions d-flex flex-wrap align-items-center gap-2 gap-xl-3">
-              <nav class="primary-nav d-flex flex-wrap gap-2">{''.join(nav_links)}</nav>
-              {user_html}
-            </div>
-          </div>
-        </div>
-        {admin_status}
-        {alert_html}
-        {body}
+        {content_html}
       </div>
     </div>
     <script>
@@ -4656,6 +5647,127 @@ def save_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> 
         save_repository_data(backup_data, backup_users)
         invalidate_validated_data_cache()
         raise
+
+
+def _load_import_batches() -> list[dict[str, Any]]:
+    raw_value = load_meta_value(IMPORT_BATCHES_META_KEY) or ""
+    if not raw_value.strip():
+        return []
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    batches = [item for item in parsed if isinstance(item, dict)]
+    return batches[:IMPORT_BATCH_LIST_LIMIT]
+
+
+def _save_import_batches(batches: list[dict[str, Any]]) -> None:
+    save_meta_value(
+        IMPORT_BATCHES_META_KEY,
+        json.dumps(batches[:IMPORT_BATCH_LIST_LIMIT], ensure_ascii=False),
+    )
+
+
+def create_import_batch(
+    *,
+    ctx: RequestContext,
+    action: str,
+    label: str,
+    filename: str = "",
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    data = load_validated_data()
+    users = load_users()
+    batch_id = "imp_" + china_now().strftime("%Y%m%d_%H%M%S_") + secrets.token_hex(3)
+    snapshot = {
+        "data": data,
+        "users": users,
+    }
+    save_meta_value(
+        IMPORT_BATCH_SNAPSHOT_KEY_PREFIX + batch_id,
+        json.dumps(snapshot, ensure_ascii=False),
+    )
+    batches = _load_import_batches()
+    batches.insert(
+        0,
+        {
+            "batch_id": batch_id,
+            "action": action,
+            "label": label,
+            "filename": filename,
+            "status": "running",
+            "created_at": ctx.now_label,
+            "created_by": (ctx.current_user or {}).get("username") or "unknown",
+            "completed_at": "",
+            "rolled_back_at": "",
+            "rolled_back_by": "",
+            "summary": "导入处理中",
+            "metadata": metadata or {},
+        },
+    )
+    _save_import_batches(batches)
+    return batch_id
+
+
+def update_import_batch(
+    batch_id: str,
+    *,
+    status: str,
+    summary: str = "",
+    metadata: dict[str, Any] | None = None,
+    ctx: RequestContext | None = None,
+) -> None:
+    batches = _load_import_batches()
+    for item in batches:
+        if item.get("batch_id") != batch_id:
+            continue
+        item["status"] = status
+        if summary:
+            item["summary"] = summary
+        if metadata:
+            next_metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+            next_metadata.update(metadata)
+            item["metadata"] = next_metadata
+        if status in {"succeeded", "failed"}:
+            item["completed_at"] = ctx.now_label if ctx else china_now_label()
+        if status == "rolled_back":
+            item["rolled_back_at"] = ctx.now_label if ctx else china_now_label()
+            item["rolled_back_by"] = ((ctx.current_user or {}).get("username") if ctx else "") or "unknown"
+        break
+    _save_import_batches(batches)
+
+
+def load_import_batches() -> list[dict[str, Any]]:
+    return _load_import_batches()
+
+
+def rollback_import_batch(batch_id: str, ctx: RequestContext) -> tuple[bool, str]:
+    batches = _load_import_batches()
+    batch = next((item for item in batches if item.get("batch_id") == batch_id), None)
+    if not batch:
+        return False, "没有找到这个导入批次。"
+    if batch.get("status") == "rolled_back":
+        return False, "这个导入批次已经回滚过。"
+    if batch.get("status") != "succeeded":
+        return False, "只有成功完成的导入批次可以回滚。"
+    raw_snapshot = load_meta_value(IMPORT_BATCH_SNAPSHOT_KEY_PREFIX + batch_id) or ""
+    if not raw_snapshot.strip():
+        return False, "没有找到这个批次的回滚快照。"
+    try:
+        snapshot = json.loads(raw_snapshot)
+    except json.JSONDecodeError:
+        return False, "这个批次的回滚快照已损坏。"
+    data = snapshot.get("data")
+    users = snapshot.get("users")
+    if not isinstance(data, dict) or not isinstance(users, list):
+        return False, "这个批次的回滚快照格式无效。"
+    errors = save_repository_state(data, users)
+    if errors:
+        return False, "回滚保存失败：" + "；".join(errors[:3])
+    update_import_batch(batch_id, status="rolled_back", summary=f"已回滚：{batch.get('summary') or batch_id}", ctx=ctx)
+    return True, f"已回滚导入批次 {batch_id}。"
 
 
 def get_user_player(data: dict[str, Any], user: dict[str, Any] | None) -> dict[str, Any] | None:
@@ -11488,6 +12600,14 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
                 }
             )
         save_team_manual_achievements(team_id, items)
+        audit_action(
+            ctx,
+            "team.manual_achievements_update",
+            target_type="team",
+            target_id=team_id,
+            summary=f"更新战队 {team_id} 的手动成就标签",
+            metadata={"item_count": len(items)},
+        )
         return redirect(start_response, append_alert_query(redirect_path, "手动战队成就标签已保存。"))
 
     if not competition_name or not season_name:
@@ -11517,6 +12637,14 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
             season_name,
             summary_content,
             "管理员手动编辑",
+        )
+        audit_action(
+            ctx,
+            "team.ai_summary_save",
+            target_type="team",
+            target_id=team_id,
+            summary=f"手动保存战队 {team_id} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name},
         )
         return redirect(
             start_response,
@@ -11620,6 +12748,14 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
             season_name,
             report_text,
             model,
+        )
+        audit_action(
+            ctx,
+            "team.ai_summary_generate",
+            target_type="team",
+            target_id=team_id,
+            summary=f"生成战队 {team_id} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name, "model": model},
         )
     except ValueError as exc:
         return redirect(
@@ -12351,6 +13487,14 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
                 }
             )
         save_player_manual_achievements(player_id, items)
+        audit_action(
+            ctx,
+            "player.manual_achievements_update",
+            target_type="player",
+            target_id=player_id,
+            summary=f"更新选手 {player_id} 的手动成就标签",
+            metadata={"item_count": len(items)},
+        )
         return redirect(start_response, append_alert_query(redirect_path, "手动成就标签已保存。"))
 
     if not competition_name or not season_name:
@@ -12380,6 +13524,14 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
             season_name,
             summary_content,
             "管理员手动编辑",
+        )
+        audit_action(
+            ctx,
+            "player.ai_summary_save",
+            target_type="player",
+            target_id=player_id,
+            summary=f"手动保存选手 {player_id} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name},
         )
         return redirect(
             start_response,
@@ -12458,6 +13610,14 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
             season_name,
             report_text,
             model,
+        )
+        audit_action(
+            ctx,
+            "player.ai_summary_generate",
+            target_type="player",
+            target_id=player_id,
+            summary=f"生成选手 {player_id} 的 AI 赛季总结",
+            metadata={"competition_name": competition_name, "season_name": season_name, "model": model},
         )
     except ValueError as exc:
         return redirect(
@@ -12800,6 +13960,24 @@ def get_ai_jobs_page(ctx: RequestContext, alert: str = "") -> str:
 
 def get_access_stats_page(ctx: RequestContext, alert: str = "") -> str:
     from web.features.ai_admin import get_access_stats_page as impl
+
+    return impl(ctx, alert)
+
+
+def get_ops_page(ctx: RequestContext, alert: str = "") -> str:
+    from web.features.ai_admin import get_ops_page as impl
+
+    return impl(ctx, alert)
+
+
+def get_audit_logs_page(ctx: RequestContext, alert: str = "") -> str:
+    from web.features.ai_admin import get_audit_logs_page as impl
+
+    return impl(ctx, alert)
+
+
+def get_request_trace_page(ctx: RequestContext, alert: str = "") -> str:
+    from web.features.ai_admin import get_request_trace_page as impl
 
     return impl(ctx, alert)
 
@@ -13649,6 +14827,9 @@ def login_page(ctx: RequestContext, alert: str = "") -> str:
 
 def build_context(environ: dict[str, Any]) -> RequestContext:
     query, form, files = get_request_data(environ)
+    jar = parse_cookies(environ)
+    session_cookie = jar.get(SESSION_COOKIE)
+    session_token = session_cookie.value if session_cookie else ""
     return RequestContext(
         method=environ.get("REQUEST_METHOD", "GET").upper(),
         path=environ.get("PATH_INFO", "/"),
@@ -13659,6 +14840,7 @@ def build_context(environ: dict[str, Any]) -> RequestContext:
         now_label=china_now_label(),
         remote_addr=str(environ.get("REMOTE_ADDR") or ""),
         request_id=build_request_id(environ),
+        session_token=session_token,
     )
 
 
@@ -14166,7 +15348,40 @@ def handle_ai_jobs(ctx: RequestContext, start_response):
 
 
 def handle_access_stats(ctx: RequestContext, start_response):
-    return start_response_html(start_response, "200 OK", get_access_stats_page(ctx))
+    from web.features.ai_admin import handle_access_stats as impl
+
+    return impl(ctx, start_response)
+
+
+def handle_ops(ctx: RequestContext, start_response):
+    return start_response_html(start_response, "200 OK", get_ops_page(ctx))
+
+
+def handle_ops_api(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "ops api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    if not is_admin_user(ctx.current_user):
+        return start_response_json(
+            start_response,
+            "403 Forbidden",
+            {"error": "只有管理员可以查看运维状态。"},
+        )
+    from web.features.ai_admin import build_ops_payload
+
+    return start_response_json(start_response, "200 OK", build_ops_payload())
+
+
+def handle_audit_logs(ctx: RequestContext, start_response):
+    return start_response_html(start_response, "200 OK", get_audit_logs_page(ctx))
+
+
+def handle_request_trace(ctx: RequestContext, start_response):
+    return start_response_html(start_response, "200 OK", get_request_trace_page(ctx))
 
 
 def handle_ai_conversations(ctx: RequestContext, start_response):
@@ -14302,6 +15517,14 @@ def handle_player_edit(ctx: RequestContext, start_response, player_id: str):
             "200 OK",
             get_player_edit_page(ctx, player_id, alert="保存失败：" + "；".join(errors[:3])),
         )
+    audit_action(
+        ctx,
+        "player.profile_update",
+        target_type="player",
+        target_id=player_id,
+        summary=f"管理员更新选手 {player_id} 的资料",
+        metadata={"display_name": display_name, "photo_updated": bool(new_photo)},
+    )
     next_path = form_value(ctx.query, "next").strip() or f"/players/{player_id}"
     return redirect(start_response, next_path)
 
@@ -14360,6 +15583,14 @@ def handle_team_logo_update(ctx: RequestContext, start_response, team_id: str):
             "200 OK",
             get_team_page(ctx, team_id, alert="保存失败：" + "；".join(errors[:3])),
         )
+    audit_action(
+        ctx,
+        "team.logo_update",
+        target_type="team",
+        target_id=team_id,
+        summary=f"更新战队 {team.get('name') or team_id} 的队标",
+        metadata={"logo": new_logo},
+    )
     next_path = form_value(ctx.form, "next").strip() or f"/teams/{team_id}"
     return redirect(start_response, next_path)
 
@@ -14423,8 +15654,48 @@ def handle_match_api(ctx: RequestContext, start_response, match_id: str):
     return impl(ctx, start_response, match_id)
 
 
-def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
-    from web.features.match_page import PREDICTION_BUCKETS, build_match_score_predictions
+def parse_api_pagination(ctx: RequestContext, *, default_limit: int = 0, max_limit: int = 100) -> tuple[int, int] | None:
+    raw_limit = form_value(ctx.query, "limit").strip()
+    if not raw_limit:
+        return None
+    try:
+        limit = int(raw_limit)
+    except ValueError:
+        limit = default_limit
+    try:
+        offset = int(form_value(ctx.query, "offset").strip() or "0")
+    except ValueError:
+        offset = 0
+    limit = max(1, min(max_limit, limit or default_limit or max_limit))
+    return max(0, offset), limit
+
+
+def paginate_api_items(items: list[dict[str, Any]], ctx: RequestContext, *, max_limit: int = 100) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    pagination = parse_api_pagination(ctx, max_limit=max_limit)
+    total = len(items)
+    if pagination is None:
+        return items, {
+            "offset": 0,
+            "limit": total,
+            "total": total,
+            "has_more": False,
+        }
+    offset, limit = pagination
+    end = min(total, offset + limit)
+    return items[offset:end], {
+        "offset": offset,
+        "limit": limit,
+        "total": total,
+        "has_more": end < total,
+    }
+
+
+def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
+    from web.features.match_page import (
+        PREDICTION_BUCKETS,
+        build_match_score_predictions,
+        build_score_prediction_context_cache,
+    )
 
     data = load_validated_data()
     competition_names = sorted({get_match_competition_name(match) for match in data.get("matches", [])})
@@ -14434,6 +15705,7 @@ def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
     selected_region = form_value(ctx.query, "region").strip() or None
     selected_series_slug = form_value(ctx.query, "series").strip() or None
     requested_match_id = form_value(ctx.query, "match_id").strip()
+    requested_played_on = form_value(ctx.query, "played_on").strip()
     scoped_matches = [
         match
         for match in data.get("matches", [])
@@ -14449,14 +15721,49 @@ def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         ),
         reverse=True,
     )
-    selected_match = None
+    day_options_by_date: dict[str, dict[str, Any]] = {}
+    for match in scoped_matches:
+        played_on = str(match.get("played_on") or "").strip()
+        if not played_on:
+            continue
+        option = day_options_by_date.setdefault(
+            played_on,
+            {
+                "played_on": played_on,
+                "match_count": 0,
+                "player_entry_count": 0,
+                "match_ids": [],
+                "label": played_on,
+            },
+        )
+        option["match_count"] += 1
+        option["player_entry_count"] += len(
+            [
+                participant
+                for participant in match.get("players", [])
+                if str(participant.get("player_id") or "").strip()
+            ]
+        )
+        option["match_ids"].append(str(match.get("match_id") or ""))
+    day_options = [
+        day_options_by_date[played_on]
+        for played_on in sort_match_days_by_relevance(list(day_options_by_date), china_today_label())
+    ]
+    selected_played_on = requested_played_on
     if requested_match_id:
-        selected_match = next(
+        requested_match = next(
             (match for match in scoped_matches if str(match.get("match_id") or "") == requested_match_id),
             None,
         )
-    if not selected_match and scoped_matches:
-        selected_match = scoped_matches[0]
+        if requested_match:
+            selected_played_on = str(requested_match.get("played_on") or "").strip()
+    if not selected_played_on and day_options:
+        selected_played_on = str(day_options[0].get("played_on") or "")
+    selected_day_matches = [
+        match
+        for match in scoped_matches
+        if str(match.get("played_on") or "").strip() == selected_played_on
+    ]
 
     def match_option(match: dict[str, Any]) -> dict[str, Any]:
         match_id = str(match.get("match_id") or "")
@@ -14480,24 +15787,160 @@ def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "label": " · ".join(part for part in label_parts if part),
         }
 
-    predictions: list[dict[str, Any]] = []
-    selected_payload = None
-    if selected_match:
-        match_id = str(selected_match.get("match_id") or "")
-        competition_name = get_match_competition_name(selected_match)
-        season_name = str(selected_match.get("season") or "").strip()
-        predictions = build_match_score_predictions(
+    aggregated_by_player: dict[str, dict[str, Any]] = {}
+    confidence_weight = {"偏低": 1, "中等": 2, "较高": 3}
+    score_prediction_context_cache = (
+        build_score_prediction_context_cache(
             data,
-            selected_match,
+            selected_competition or "",
+            selected_season or "",
+            [str(match.get("match_id") or "") for match in selected_day_matches],
+        )
+        if selected_day_matches
+        else None
+    )
+    for match in selected_day_matches:
+        competition_name = get_match_competition_name(match)
+        season_name = str(match.get("season") or "").strip()
+        match_predictions = build_match_score_predictions(
+            data,
+            match,
             competition_name,
             season_name,
             selected_region,
             selected_series_slug,
+            score_prediction_context_cache,
         )
-        selected_payload = match_option(selected_match)
+        match_label = match_option(match)["label"]
+        for item in match_predictions:
+            player_id = str(item.get("player_id") or "").strip()
+            if not player_id:
+                continue
+            entry = aggregated_by_player.setdefault(
+                player_id,
+                {
+                    "player_id": player_id,
+                    "player_name": item.get("player_name") or player_id,
+                    "team_name": item.get("team_name") or "",
+                    "win_rate": item.get("win_rate") or "",
+                    "confidence_score": 0,
+                    "confidence_count": 0,
+                    "match_count": 0,
+                    "expected_total": 0.0,
+                    "seats": [],
+                    "match_labels": [],
+                },
+            )
+            expected_points = float(item.get("expected_points") or 0.0)
+            entry["expected_total"] += expected_points
+            entry["match_count"] += 1
+            entry["confidence_score"] += confidence_weight.get(str(item.get("confidence") or ""), 1)
+            entry["confidence_count"] += 1
+            if item.get("seat"):
+                entry["seats"].append(str(item.get("seat")))
+            entry["match_labels"].append(match_label)
+
+    prediction_settings = load_prediction_model_settings()
+
+    def calibrate_day_prediction_totals(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        day_settings = prediction_settings.get("day_total", {})
+        sorted_entries = sorted(
+            entries,
+            key=lambda item: (
+                -float(item.get("expected_total") or 0.0),
+                str(item.get("player_name") or ""),
+            ),
+        )
+        elite_threshold = float(day_settings.get("elite_threshold") or 12.0)
+        elite_min = float(day_settings.get("elite_min") or 12.0)
+        elite_max = float(day_settings.get("elite_max") or 12.6)
+        elite_anchor = float(day_settings.get("elite_anchor") or 10.5)
+        elite_slope = float(day_settings.get("elite_slope") or 0.55)
+        middle_slots = int(day_settings.get("middle_slots") or 4)
+        middle_caps = list(day_settings.get("middle_caps") or [11.4, 10.2, 9.2, 8.2])
+        middle_min = float(day_settings.get("middle_min") or 7.05)
+        middle_slope = float(day_settings.get("middle_slope") or 0.55)
+        main_min = float(day_settings.get("main_min") or 5.05)
+        main_max = float(day_settings.get("main_max") or 6.95)
+        main_slope = float(day_settings.get("main_slope") or 0.45)
+        has_elite_slot = bool(sorted_entries and float(sorted_entries[0].get("expected_total") or 0.0) >= elite_threshold)
+        middle_start = 1 if has_elite_slot else 0
+        for index, entry in enumerate(sorted_entries):
+            raw_total = float(entry.get("expected_total") or 0.0)
+            match_count = max(1, int(entry.get("match_count") or 0))
+            calibrated_total = raw_total
+            if has_elite_slot and index == 0:
+                calibrated_total = min(elite_max, max(elite_min, elite_anchor + (raw_total - elite_anchor) * elite_slope))
+            elif middle_start <= index < middle_start + middle_slots and raw_total >= 7.0:
+                middle_index = index - middle_start
+                middle_cap = middle_caps[min(middle_index, len(middle_caps) - 1)] if middle_caps else 8.2
+                calibrated_total = min(
+                    middle_cap,
+                    max(middle_min, 7.0 + (raw_total - 7.0) * middle_slope),
+                )
+            elif raw_total >= 5.0 or match_count >= 2:
+                calibrated_total = min(main_max, main_min + max(0.0, raw_total - 5.0) * main_slope)
+            elif raw_total > 0:
+                calibrated_total = main_min
+            entry["raw_expected_total"] = raw_total
+            entry["expected_total"] = round(calibrated_total, 2)
+        return sorted_entries
+
+    calibrated_entries = calibrate_day_prediction_totals(list(aggregated_by_player.values()))
+
+    def day_prediction_payload(entry: dict[str, Any]) -> dict[str, Any]:
+        match_count = max(1, int(entry.get("match_count") or 0))
+        confidence_average = float(entry.get("confidence_score") or 0.0) / max(1, int(entry.get("confidence_count") or 0))
+        if confidence_average >= 2.6:
+            confidence = "较高"
+        elif confidence_average >= 1.7:
+            confidence = "中等"
+        else:
+            confidence = "偏低"
+        expected_total = float(entry.get("expected_total") or 0.0)
+        return {
+            "player_id": entry["player_id"],
+            "player_name": entry["player_name"],
+            "team_name": entry["team_name"],
+            "win_rate": entry["win_rate"],
+            "confidence": confidence,
+            "match_count": match_count,
+            "seats": "、".join(entry.get("seats") or []),
+            "match_labels": entry.get("match_labels") or [],
+            "expected_points": f"{expected_total:.2f}",
+            "expected_total": f"{expected_total:.2f}",
+            "average_expected_points": f"{expected_total / match_count:.2f}",
+            "raw_expected_total": f"{float(entry.get('raw_expected_total') or expected_total):.2f}",
+        }
+
+    predictions = [
+        day_prediction_payload(entry)
+        for entry in sorted(
+            calibrated_entries,
+            key=lambda item: (
+                -float(item.get("expected_total") or 0.0),
+                str(item.get("player_name") or ""),
+            ),
+        )
+    ]
+    for index, prediction in enumerate(predictions):
+        prediction["rank"] = index + 1
+    prediction_band_summary = [
+        {"label": "12+", "copy": "高分区", "value": len([item for item in predictions if float(item.get("expected_total") or 0) >= 12])},
+        {"label": "7-12", "copy": "竞争区", "value": len([item for item in predictions if 7 <= float(item.get("expected_total") or 0) < 12])},
+        {"label": "5-7", "copy": "主体区", "value": len([item for item in predictions if 5 <= float(item.get("expected_total") or 0) < 7])},
+    ]
+    selected_day_payload = None
+    if selected_played_on:
+        selected_day_payload = {
+            "played_on": selected_played_on,
+            "label": f"{selected_played_on} 比赛日",
+            "match_count": len(selected_day_matches),
+            "player_entry_count": sum(len(match.get("players", [])) for match in selected_day_matches),
+            "matches": [match_option(match) for match in selected_day_matches],
+        }
 
     return {
-        "generated_at": ctx.now_label,
         "scope": {
             "label": selected_competition or "请先选择赛事",
             "selected_competition": selected_competition,
@@ -14505,11 +15948,53 @@ def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "selected_region": selected_region,
             "selected_series_slug": selected_series_slug,
         },
+        "days": day_options[:60],
+        "selected_day": selected_day_payload,
         "matches": [match_option(match) for match in scoped_matches[:60]],
-        "selected_match": selected_payload,
+        "selected_match": selected_day_matches[0] and match_option(selected_day_matches[0]) if selected_day_matches else None,
         "prediction_buckets": [{"key": key, "label": label} for key, label, _, _ in PREDICTION_BUCKETS],
         "predictions": predictions,
-        "notice": "预测仅用于赛前参考；未录入结果的比赛不会计入历史样本。",
+        "band_summary": prediction_band_summary,
+        "notice": "预测按比赛日汇总，预计总分为同一天所有对局预期分数相加；未录入结果的比赛不会计入历史样本。",
+    }
+
+
+def prediction_api_cache_key(ctx: RequestContext) -> tuple[str, ...]:
+    return (
+        form_value(ctx.query, "competition").strip(),
+        form_value(ctx.query, "season").strip(),
+        form_value(ctx.query, "region").strip(),
+        form_value(ctx.query, "series").strip(),
+        form_value(ctx.query, "played_on").strip(),
+        form_value(ctx.query, "match_id").strip(),
+    )
+
+
+def build_predictions_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    cache_key = prediction_api_cache_key(ctx)
+    base_payload = get_prediction_api_cache(cache_key)
+    cache_hit = base_payload is not None
+    if base_payload is None:
+        base_payload = build_predictions_api_base_payload(ctx)
+        set_prediction_api_cache(cache_key, base_payload)
+
+    predictions = list(base_payload.get("predictions") or [])
+    paged_predictions, prediction_pagination = paginate_api_items(predictions, ctx, max_limit=100)
+    focus_player_id = form_value(ctx.query, "focus_player_id").strip()
+    focused_prediction = next(
+        (prediction for prediction in predictions if str(prediction.get("player_id") or "") == focus_player_id),
+        None,
+    ) if focus_player_id else None
+    return {
+        **base_payload,
+        "generated_at": ctx.now_label,
+        "cache": {
+            "hit": cache_hit,
+            "ttl_seconds": PREDICTION_API_CACHE_TTL_SECONDS,
+        },
+        "predictions": paged_predictions,
+        "pagination": prediction_pagination,
+        "focused_prediction": focused_prediction,
     }
 
 
@@ -14560,16 +16045,113 @@ def handle_healthz(ctx: RequestContext, start_response):
     )
 
 
+READYZ_TABLES = [
+    "users",
+    "app_meta",
+    "ai_jobs",
+    "ai_job_steps",
+    "access_logs",
+    "audit_logs",
+    "ai_conversations",
+    "user_sessions",
+    "guilds",
+    "teams",
+    "team_members",
+    "players",
+    "matches",
+    "match_players",
+    "season_player_dimension_stats",
+    "season_team_dimension_stats",
+    "membership_requests",
+]
+
+
+def readyz_row_value(row: Any, key: str, index: int = 0) -> Any:
+    if row is None:
+        return None
+    if isinstance(row, dict):
+        return row.get(key)
+    try:
+        return row[key]
+    except (IndexError, TypeError, KeyError):
+        return row[index]
+
+
+def parse_readyz_schema_version(value: Any) -> int:
+    try:
+        return int(str(value or "0").strip() or "0")
+    except ValueError:
+        return 0
+
+
+def readyz_table_exists(connection: Any, table_name: str, backend: str) -> bool:
+    if backend == "postgres":
+        row = connection.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'public' AND table_name = ?
+            ) AS exists
+            """,
+            (table_name,),
+        ).fetchone()
+        return bool(readyz_row_value(row, "exists"))
+    row = connection.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (table_name,),
+    ).fetchone()
+    return bool(row)
+
+
+def readyz_schema_version(connection: Any) -> int:
+    row = connection.execute(
+        "SELECT meta_value FROM app_meta WHERE meta_key = ?",
+        (SCHEMA_VERSION_META_KEY,),
+    ).fetchone()
+    return parse_readyz_schema_version(readyz_row_value(row, "meta_value"))
+
+
+def run_readyz_write_check() -> str:
+    probe_key = "__readyz_write_probe__"
+    with connect_write_db() as connection:
+        try:
+            connection.execute(
+                """
+                INSERT INTO app_meta(meta_key, meta_value)
+                VALUES (?, ?)
+                ON CONFLICT(meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value
+                """,
+                (probe_key, china_now_label()),
+            )
+            connection.execute("DELETE FROM app_meta WHERE meta_key = ?", (probe_key,))
+            connection.commit()
+        except Exception:
+            rollback = getattr(connection, "rollback", None)
+            if rollback:
+                rollback()
+            raise
+    return "ok"
+
+
 def handle_readyz(ctx: RequestContext, start_response):
+    write_check_requested = (
+        form_value(ctx.query, "write").strip().lower() in {"1", "true", "yes"}
+        or form_value(ctx.query, "write_check").strip().lower() in {"1", "true", "yes"}
+        or os.getenv("READYZ_WRITE_CHECK", "").strip() == "1"
+    )
     checks: dict[str, Any] = {
         "backend": "",
         "db_path": str(DB_PATH),
         "db_exists": DB_PATH.exists(),
         "initialized": False,
+        "schema_version": 0,
+        "required_schema_version": REQUIRED_SCHEMA_VERSION,
+        "missing_tables": [],
+        "table_counts": {},
         "quick_check": "",
         "connectivity": False,
-        "users": None,
-        "matches": None,
+        "write_check": "skipped",
     }
     status = "200 OK"
     try:
@@ -14586,24 +16168,38 @@ def handle_readyz(ctx: RequestContext, start_response):
                 checks["quick_check"] = "not_applicable"
                 checks["db_path"] = ""
                 checks["db_exists"] = True
-            counts = connection.execute(
-                """
-                SELECT
-                    (SELECT COUNT(*) FROM users) AS users,
-                    (SELECT COUNT(*) FROM matches) AS matches
-                """
-            ).fetchone()
-            checks["users"] = int(counts["users"] or 0)
-            checks["matches"] = int(counts["matches"] or 0)
+            missing_tables = [
+                table_name
+                for table_name in READYZ_TABLES
+                if not readyz_table_exists(connection, table_name, backend)
+            ]
+            checks["missing_tables"] = missing_tables
+            if not missing_tables:
+                checks["schema_version"] = readyz_schema_version(connection)
+                table_counts: dict[str, int] = {}
+                for table_name in READYZ_TABLES:
+                    row = connection.execute(f'SELECT COUNT(*) AS count FROM "{table_name}"').fetchone()
+                    table_counts[table_name] = int(readyz_row_value(row, "count") or 0)
+                checks["table_counts"] = table_counts
     except Exception as exc:
         status = "503 Service Unavailable"
         checks["error"] = str(exc)
+    if write_check_requested and status == "200 OK":
+        try:
+            checks["write_check"] = run_readyz_write_check()
+        except Exception as exc:
+            status = "503 Service Unavailable"
+            checks["write_check"] = "failed"
+            checks["write_error"] = str(exc)
     ok = (
         status == "200 OK"
         and bool(checks["db_exists"])
         and bool(checks["connectivity"])
         and bool(checks["initialized"])
         and checks["quick_check"] in {"ok", "not_applicable"}
+        and not checks["missing_tables"]
+        and int(checks["schema_version"] or 0) >= REQUIRED_SCHEMA_VERSION
+        and checks["write_check"] in {"skipped", "ok"}
     )
     if not ok:
         status = "503 Service Unavailable"
@@ -14620,27 +16216,25 @@ def handle_readyz(ctx: RequestContext, start_response):
 
 
 def app(environ, start_response):
+    started_at = time.monotonic()
     request_id = build_request_id(environ)
     environ["werewolf.request_id"] = request_id
+    start_response = wrap_start_response_with_security_headers(start_response)
     start_response = wrap_start_response_with_request_id(start_response, request_id)
+    ctx: RequestContext | None = None
     try:
         ctx = build_context(environ)
+        REQUEST_CONTEXT_LOCAL.ctx = ctx
         request_id = ctx.request_id
         path = ctx.path
-        if not path.startswith("/assets/") and path not in {"/healthz", "/readyz"}:
-            try:
-                record_access_log(
-                    path=path,
-                    method=ctx.method,
-                    query_string=str(environ.get("QUERY_STRING") or ""),
-                    username=str((ctx.current_user or {}).get("username") or ""),
-                    ip_address=str(environ.get("REMOTE_ADDR") or ""),
-                    user_agent=str(environ.get("HTTP_USER_AGENT") or ""),
-                    created_at=ctx.now_label,
-                    request_id=ctx.request_id,
-                )
-            except Exception as exc:
-                print(f"访问日志写入失败 request_id={ctx.request_id}：", exc)
+        start_response = wrap_start_response_with_access_log(start_response, ctx, environ, started_at)
+        if not validate_csrf_token(ctx):
+            return csrf_error_response(ctx, start_response)
+        limited, retry_after = request_rate_limited(ctx)
+        if limited:
+            return rate_limit_response(ctx, start_response, retry_after)
+        if duplicate_write_request(ctx):
+            return duplicate_write_response(ctx, start_response)
 
         if path == "/":
             return redirect(start_response, "/dashboard")
@@ -14662,6 +16256,8 @@ def app(environ, start_response):
             return handle_miniprogram_web_login_confirm(ctx, start_response)
         if path == "/api/web-login/status":
             return handle_web_login_status(ctx, start_response)
+        if path == "/api/ops":
+            return handle_ops_api(ctx, start_response)
         if path == "/api/dashboard":
             return handle_dashboard_api(ctx, start_response)
         if path == "/api/competitions":
@@ -14889,11 +16485,26 @@ def app(environ, start_response):
             if admin_guard is not None:
                 return admin_guard
             return handle_ai_jobs(ctx, start_response)
-        if path == "/access-stats":
+        if path in {"/access-stats", "/access-logs"}:
             admin_guard = require_admin(ctx, start_response)
             if admin_guard is not None:
                 return admin_guard
             return handle_access_stats(ctx, start_response)
+        if path == "/ops":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_ops(ctx, start_response)
+        if path == "/audit-logs":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_audit_logs(ctx, start_response)
+        if path == "/request-trace":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_request_trace(ctx, start_response)
         if path == "/ai-conversations":
             admin_guard = require_admin(ctx, start_response)
             if admin_guard is not None:
@@ -14933,20 +16544,52 @@ def app(environ, start_response):
             "404 Not Found",
             layout("页面不存在", '<div class="alert alert-danger">你访问的页面不存在。</div>', ctx),
         )
-    except RequestBodyTooLarge:
+    except RequestBodyTooLarge as exc:
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        emit_structured_log(
+            "request.body_too_large",
+            "warning",
+            **build_request_log_fields(
+                ctx,
+                environ,
+                request_id=request_id,
+                status_code=413,
+                duration_ms=duration_ms,
+            ),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         return start_response_html(
             start_response,
             "413 Payload Too Large",
             f"<h1>上传内容过大</h1><p>请缩小文件后重试。</p><p>请求编号：{escape(request_id)}</p>",
         )
     except Exception as exc:
-        print(f"请求处理失败 request_id={request_id}：", repr(exc))
-        traceback.print_exc()
+        duration_ms = int((time.monotonic() - started_at) * 1000)
+        error_fields = build_request_log_fields(
+            ctx,
+            environ,
+            request_id=request_id,
+            status_code=500,
+            duration_ms=duration_ms,
+        )
+        if STRUCTURED_ERROR_TRACEBACK:
+            error_fields["traceback"] = traceback.format_exc()
+        emit_structured_log(
+            "request.exception",
+            "error",
+            **error_fields,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
         return start_response_html(
             start_response,
             "500 Internal Server Error",
             f"<h1>服务运行出错</h1><p>请稍后重试，或联系管理员查看服务日志。</p><p>请求编号：{escape(request_id)}</p>",
         )
+    finally:
+        if hasattr(REQUEST_CONTEXT_LOCAL, "ctx"):
+            delattr(REQUEST_CONTEXT_LOCAL, "ctx")
 
 
 def main() -> int:

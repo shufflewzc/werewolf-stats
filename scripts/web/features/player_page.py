@@ -47,6 +47,7 @@ safe_rate = legacy.safe_rate
 start_response_json = legacy.start_response_json
 summarize_dimension_rows = legacy.summarize_dimension_rows
 urlencode = legacy.urlencode
+paginate_api_items = legacy.paginate_api_items
 
 
 def _build_player_legacy_href(
@@ -848,6 +849,7 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
         for index, row in enumerate(displayed_rows)
     ]
     top_player = players[0] if players else None
+    paged_players, player_pagination = paginate_api_items(players, ctx, max_limit=100)
     return {
         "generated_at": china_now_label(),
         "scope": {
@@ -866,7 +868,8 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
             {"label": "总出场", "value": str(sum(player["games_played"] for player in players)), "copy": "所有选手的出场局数合计。"},
             {"label": "榜首选手", "value": top_player["display_name"] if top_player else "待录入", "copy": "按当前积分排行口径计算。"},
         ],
-        "players": players,
+        "players": paged_players,
+        "pagination": player_pagination,
     }
 
 

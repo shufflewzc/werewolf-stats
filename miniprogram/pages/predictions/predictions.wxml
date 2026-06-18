@@ -2,8 +2,8 @@
   <view class="hero">
     <text class="eyebrow">Score Forecast</text>
     <text class="title">胜率预测</text>
-    <text class="copy" wx:if="{{needsCompetition}}">必须先进入一个赛事，之后才能查看赛事内比赛的预测数据。</text>
-    <text class="copy" wx:else>{{scope.label || "当前赛事"}} · {{scope.selected_season || "当前赛季"}}</text>
+    <text class="copy" wx:if="{{needsCompetition}}">必须先进入一个赛事，之后才能查看赛事内比赛日总分预测。</text>
+    <text class="copy" wx:else>{{scope.label || "当前赛事"}} · {{scope.selected_season || "当前赛季"}} · 按比赛日汇总</text>
   </view>
 
   <view wx:if="{{loading}}" class="section">
@@ -16,6 +16,9 @@
   <view wx:elif="{{error}}" class="section">
     <view class="error-card">
       <text>{{error}}</text>
+      <view class="button-row">
+        <button class="ghost-button" bindtap="loadData">重试</button>
+      </view>
     </view>
   </view>
 
@@ -32,33 +35,62 @@
 
     <block wx:if="{{!needsCompetition}}">
       <view class="section">
-        <view class="section-head">
-          <text class="section-title">选择比赛</text>
-          <text class="section-note">{{matches.length}} 场</text>
-        </view>
-        <scroll-view class="match-strip" scroll-x="true" wx:if="{{matches.length}}">
-          <view
-            class="match-chip {{selectedMatch && selectedMatch.match_id === item.match_id ? 'is-active' : ''}}"
-            wx:for="{{matches}}"
-            wx:key="match_id"
-            data-match-id="{{item.match_id}}"
-            bindtap="chooseMatch"
-          >
-            <text class="match-chip-title">{{item.played_on || "未定日期"}}</text>
-            <text class="match-chip-copy">{{item.stage || "比赛"}} · {{item.player_count}} 人</text>
+        <view class="scope-bar">
+          <view class="scope-main">
+            <text class="scope-label">当前赛事</text>
+            <text class="scope-title">{{selectedScope.competition}}</text>
+            <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
           </view>
-        </scroll-view>
-        <view class="empty-card" wx:else>
-          <text class="empty-title">暂无可预测比赛</text>
-          <text class="empty-copy">录入比赛名单后，这里会显示预测入口。</text>
+          <button class="scope-button" bindtap="changeCompetition">切换</button>
         </view>
       </view>
 
-      <view class="section" wx:if="{{selectedMatch}}">
+      <view class="section">
+        <view class="section-head">
+          <text class="section-title">选择比赛日</text>
+          <text class="section-note">{{days.length}} 天</text>
+        </view>
+        <scroll-view class="match-strip" scroll-x="true" wx:if="{{days.length}}">
+          <view
+            class="match-chip {{selectedDay && selectedDay.played_on === item.played_on ? 'is-active' : ''}}"
+            wx:for="{{days}}"
+            wx:key="played_on"
+            data-played-on="{{item.played_on}}"
+            bindtap="chooseDay"
+          >
+            <text class="match-chip-title">{{item.played_on || "未定日期"}}</text>
+            <text class="match-chip-copy">{{item.match_count || 0}} 场 · {{item.player_entry_count || 0}} 人次</text>
+          </view>
+        </scroll-view>
+        <view class="empty-card" wx:else>
+          <text class="empty-title">暂无可预测比赛日</text>
+          <text class="empty-copy">录入当天赛程和名单后，这里会显示比赛日预测入口。</text>
+        </view>
+      </view>
+
+      <view class="section" wx:if="{{selectedDay}}">
         <view class="selected-match">
-          <text class="selected-label">当前比赛</text>
-          <text class="selected-title">{{selectedMatch.label || selectedMatch.match_id}}</text>
-          <text class="selected-copy">{{selectedMatch.table_label || selectedMatch.match_id}} · {{selectedMatch.player_count}} 名选手</text>
+          <text class="selected-label">当前比赛日</text>
+          <text class="selected-title">{{selectedDay.label || selectedDay.played_on}}</text>
+          <text class="selected-copy">{{selectedDay.match_count || 0}} 场比赛 · {{selectedDay.player_entry_count || 0}} 人次参赛</text>
+        </view>
+      </view>
+
+      <view class="section" wx:if="{{predictions.length}}">
+        <view class="forecast-summary">
+          <view class="my-forecast">
+            <text class="summary-label">我的位置</text>
+            <text class="summary-title">{{myPredictionText}}</text>
+            <text class="summary-copy" wx:if="{{myPrediction}}">{{myPrediction.player_name}} · {{myPrediction.team_name || "未绑定门派"}}</text>
+            <text class="summary-copy" wx:else>{{currentUser ? "去个人中心绑定选手后，这里会自动高亮。" : "登录并绑定选手后，这里会自动高亮。"}}</text>
+          </view>
+          <view class="band-grid">
+            <view class="band-stat" wx:for="{{bandSummary}}" wx:key="label">
+              <text class="band-value">{{item.value}}</text>
+              <text class="band-label">{{item.label}}</text>
+              <text class="band-copy">{{item.copy}}</text>
+            </view>
+          </view>
         </view>
       </view>
 
@@ -68,48 +100,42 @@
 
       <view class="section" wx:if="{{predictions.length}}">
         <view class="section-head">
-          <text class="section-title">选手预测</text>
-          <text class="section-note">{{predictions.length}} 人</text>
+          <text class="section-title">当日预计总分</text>
+          <text class="section-note">{{predictionVisibleCount}} / {{predictionTotalCount}} 人</text>
         </view>
         <view class="stack">
-          <view class="prediction-card" wx:for="{{predictions}}" wx:key="player_id">
+          <view class="prediction-card {{item.bandClass}} {{item.isMine ? 'is-mine' : ''}}" wx:for="{{predictions}}" wx:key="player_id">
             <view class="prediction-head" data-player-id="{{item.player_id}}" bindtap="openPlayer">
-              <view class="seat-pill">{{item.seat}}号</view>
+              <view class="seat-pill">{{item.rank}}</view>
               <view class="prediction-main">
-                <text class="prediction-name">{{item.player_name}}</text>
-                <text class="prediction-meta">{{item.team_name || "未绑定门派"}} · 本季胜率 {{item.win_rate}} · 置信度 {{item.confidence}}</text>
+                <view class="prediction-title-line">
+                  <text class="prediction-name">{{item.player_name}}</text>
+                  <text class="mine-tag" wx:if="{{item.isMine}}">我的</text>
+                </view>
+                <text class="prediction-meta">{{item.team_name || "未绑定门派"}} · 当日 {{item.match_count}} 场 · 场均 {{item.average_expected_points}} · 置信度 {{item.confidence}}</text>
               </view>
               <view class="expected-box">
-                <text class="expected-value">{{item.expected_points}}</text>
-                <text class="expected-label">均分</text>
+                <text class="expected-value">{{item.expected_total || item.expected_points}}</text>
+                <text class="expected-label">{{item.bandLabel}}</text>
               </view>
             </view>
 
-            <view class="prob-grid">
-              <view class="prob-item" wx:for="{{item.system}}" wx:for-item="prob" wx:key="key">
-                <text class="prob-label">系统 {{prob.label}}</text>
-                <text class="prob-value">{{prob.display}}</text>
+            <view class="day-match-list" wx:if="{{item.matchLabels.length}}">
+              <view class="day-match-item" wx:for="{{item.matchLabels}}" wx:for-item="label" wx:key="*this">
+                <text>{{label}}</text>
               </view>
-            </view>
-
-            <view class="manual-block">
-              <text class="manual-title">人工概率</text>
-              <view class="manual-grid" wx:if="{{item.manualFilled}}">
-                <view class="manual-item" wx:for="{{item.manual}}" wx:for-item="prob" wx:key="key">
-                  <text>{{prob.label}}</text>
-                  <text>{{prob.display}}</text>
-                </view>
-              </view>
-              <text class="manual-empty" wx:else>后台暂未填写人工概率</text>
             </view>
           </view>
         </view>
+        <view class="button-row" wx:if="{{predictionHasMore}}">
+          <button class="ghost-button" bindtap="loadMorePredictions">加载更多</button>
+        </view>
       </view>
 
-      <view class="section" wx:elif="{{selectedMatch}}">
+      <view class="section" wx:elif="{{selectedDay}}">
         <view class="empty-card">
           <text class="empty-title">暂无预测数据</text>
-          <text class="empty-copy">这场比赛还没有可计算的选手名单。</text>
+          <text class="empty-copy">这个比赛日还没有可计算的选手名单。</text>
         </view>
       </view>
     </block>

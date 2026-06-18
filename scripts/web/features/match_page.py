@@ -23,6 +23,7 @@ get_match_competition_name = legacy.get_match_competition_name
 get_match_score_model_label = legacy.get_match_score_model_label
 format_pct = legacy.format_pct
 get_player_dimension_history = legacy.get_player_dimension_history
+is_admin_user = legacy.is_admin_user
 is_placeholder_match = legacy.is_placeholder_match
 layout = legacy.layout
 load_validated_data = legacy.load_validated_data
@@ -44,6 +45,13 @@ PREDICTION_BUCKETS = [
     ("gt_7", "大于7分", ">", 7.0),
     ("gt_12", "大于12分", ">", 12.0),
     ("gt_14_5", "大于14.5分", ">", 14.5),
+]
+
+WIN_RESULT_POINTS = 5.0
+PREDICTION_SETTING_CAMPS = [
+    ("werewolves", "狼人"),
+    ("villagers", "好人"),
+    ("third_party", "第三方"),
 ]
 
 
@@ -90,6 +98,253 @@ def _collect_player_point_samples(
     return current_season_points, other_season_points
 
 
+def _is_win_result(participant: dict[str, Any]) -> bool:
+    return str(participant.get("result") or "").strip() == "win"
+
+
+def _base_points_without_result(participant: dict[str, Any]) -> float:
+    points = float(participant.get("points_earned") or 0.0)
+    result_points = float(participant.get("result_points") or 0.0)
+    if result_points:
+        return max(0.0, points - result_points)
+    if _is_win_result(participant):
+        return max(0.0, points - WIN_RESULT_POINTS)
+    return max(0.0, points)
+
+
+def _new_win_stats() -> dict[str, float]:
+    return {"games": 0.0, "wins": 0.0}
+
+
+def _add_win_stat(stats: dict[str, float], participant: dict[str, Any]) -> None:
+    stats["games"] = float(stats.get("games") or 0.0) + 1.0
+    if _is_win_result(participant):
+        stats["wins"] = float(stats.get("wins") or 0.0) + 1.0
+
+
+def _average(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
+
+
+def _smoothed_rate(stats: dict[str, float], prior: float = 0.5, prior_games: float = 4.0) -> float:
+    games = float(stats.get("games") or 0.0)
+    wins = float(stats.get("wins") or 0.0)
+    return (wins + prior * prior_games) / (games + prior_games) if games + prior_games > 0 else prior
+
+
+def _sample_reliability(games: float, full_games: float) -> float:
+    if full_games <= 0:
+        return 0.0
+    return max(0.0, min(1.0, float(games or 0.0) / full_games))
+
+
+def _weighted_average(items: list[tuple[float, float]]) -> float:
+    valid_items = [(value, weight) for value, weight in items if weight > 0]
+    total_weight = sum(weight for _, weight in valid_items)
+    if total_weight <= 0:
+        return 0.0
+    return sum(value * weight for value, weight in valid_items) / total_weight
+
+
+def _collect_prediction_context(
+    data: dict[str, Any],
+    player_id: str,
+    competition_name: str,
+    season_name: str,
+    current_match_id: str,
+) -> dict[str, Any]:
+    context: dict[str, Any] = {
+        "current_base_points": [],
+        "other_base_points": [],
+        "event_overall": _new_win_stats(),
+        "event_by_camp": {},
+        "player_overall": _new_win_stats(),
+        "player_current": _new_win_stats(),
+        "player_by_camp": {},
+    }
+    for match in data.get("matches", []):
+        if not _is_completed_prediction_match(match, current_match_id):
+            continue
+        match_competition = get_match_competition_name(match)
+        match_season = str(match.get("season") or "").strip()
+        is_current_scope = match_competition == competition_name and match_season == season_name
+        for participant in match.get("players", []):
+            camp = str(participant.get("camp") or "").strip()
+            if is_current_scope:
+                _add_win_stat(context["event_overall"], participant)
+                if camp:
+                    camp_stats = context["event_by_camp"].setdefault(camp, _new_win_stats())
+                    _add_win_stat(camp_stats, participant)
+            if str(participant.get("player_id") or "").strip() != player_id:
+                continue
+            if is_current_scope:
+                context["current_base_points"].append(_base_points_without_result(participant))
+                _add_win_stat(context["player_current"], participant)
+            else:
+                context["other_base_points"].append(_base_points_without_result(participant))
+            _add_win_stat(context["player_overall"], participant)
+            if camp:
+                player_camp_stats = context["player_by_camp"].setdefault(camp, _new_win_stats())
+                _add_win_stat(player_camp_stats, participant)
+    return context
+
+
+def _empty_prediction_context() -> dict[str, Any]:
+    return {
+        "current_points": [],
+        "other_points": [],
+        "current_base_points": [],
+        "other_base_points": [],
+        "event_overall": _new_win_stats(),
+        "event_by_camp": {},
+        "player_overall": _new_win_stats(),
+        "player_current": _new_win_stats(),
+        "player_by_camp": {},
+    }
+
+
+def _clone_win_stats(stats: dict[str, float]) -> dict[str, float]:
+    return {"games": float(stats.get("games") or 0.0), "wins": float(stats.get("wins") or 0.0)}
+
+
+def _prediction_history_index(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    current_match_id: str,
+) -> dict[str, dict[str, Any]]:
+    event_overall = _new_win_stats()
+    event_by_camp: dict[str, dict[str, float]] = {}
+    by_player: dict[str, dict[str, Any]] = {}
+    for match in data.get("matches", []):
+        if not _is_completed_prediction_match(match, current_match_id):
+            continue
+        match_competition = get_match_competition_name(match)
+        match_season = str(match.get("season") or "").strip()
+        is_current_scope = match_competition == competition_name and match_season == season_name
+        for participant in match.get("players", []):
+            camp = str(participant.get("camp") or "").strip()
+            if is_current_scope:
+                _add_win_stat(event_overall, participant)
+                if camp:
+                    _add_win_stat(event_by_camp.setdefault(camp, _new_win_stats()), participant)
+            player_id = str(participant.get("player_id") or "").strip()
+            if not player_id:
+                continue
+            context = by_player.setdefault(player_id, _empty_prediction_context())
+            points = float(participant.get("points_earned") or 0.0)
+            if is_current_scope:
+                context["current_points"].append(points)
+                context["current_base_points"].append(_base_points_without_result(participant))
+                _add_win_stat(context["player_current"], participant)
+            else:
+                context["other_points"].append(points)
+                context["other_base_points"].append(_base_points_without_result(participant))
+            _add_win_stat(context["player_overall"], participant)
+            if camp:
+                _add_win_stat(context["player_by_camp"].setdefault(camp, _new_win_stats()), participant)
+    for context in by_player.values():
+        context["event_overall"] = _clone_win_stats(event_overall)
+        context["event_by_camp"] = {
+            camp: _clone_win_stats(stats)
+            for camp, stats in event_by_camp.items()
+        }
+    by_player["__event__"] = {
+        "event_overall": _clone_win_stats(event_overall),
+        "event_by_camp": {
+            camp: _clone_win_stats(stats)
+            for camp, stats in event_by_camp.items()
+        },
+    }
+    return by_player
+
+
+def _prediction_context_from_index(index: dict[str, dict[str, Any]], player_id: str) -> dict[str, Any]:
+    context = index.get(player_id)
+    if context is not None:
+        return context
+    event_context = index.get("__event__", {})
+    context = _empty_prediction_context()
+    context["event_overall"] = _clone_win_stats(event_context.get("event_overall") or {})
+    context["event_by_camp"] = {
+        camp: _clone_win_stats(stats)
+        for camp, stats in (event_context.get("event_by_camp") or {}).items()
+    }
+    return context
+
+
+def _estimate_win_probability(
+    context: dict[str, Any],
+    participant_camp: str,
+    current_win_rate: float,
+    all_win_rate: float,
+    dimension: dict[str, float],
+    settings: dict[str, Any],
+) -> float:
+    camp_prior = settings.get("camp_win_rate_priors", {}).get(participant_camp, 0.5)
+    event_overall_stats = context["event_overall"]
+    event_overall_rate = _smoothed_rate(event_overall_stats, prior=0.5, prior_games=8.0)
+    camp_stats = context["event_by_camp"].get(participant_camp) or _new_win_stats()
+    event_camp_prior = (camp_prior * 0.65) + (event_overall_rate * 0.35)
+    event_camp_rate = _smoothed_rate(camp_stats, prior=event_camp_prior, prior_games=8.0)
+
+    player_current_stats = context["player_current"]
+    player_overall_stats = context["player_overall"]
+    player_camp_stats = context["player_by_camp"].get(participant_camp) or _new_win_stats()
+    player_current_rate = (
+        float(current_win_rate)
+        if float(player_current_stats.get("games") or 0.0) > 0
+        else _smoothed_rate(player_overall_stats, prior=event_camp_rate, prior_games=4.0)
+    )
+    if all_win_rate > 0 and float(player_overall_stats.get("games") or 0.0) <= 0:
+        player_current_rate = all_win_rate
+    player_camp_rate = _smoothed_rate(player_camp_stats, prior=event_camp_rate, prior_games=4.0)
+    dimension_rate = float(dimension.get("win_rate") or 0.0) if float(dimension.get("games") or 0.0) > 0 else event_camp_rate
+
+    if participant_camp:
+        items = [
+            (camp_prior, 0.18),
+            (event_camp_rate, 0.32 * max(0.45, _sample_reliability(camp_stats.get("games") or 0.0, 12.0))),
+            (player_camp_rate, 0.30 * max(0.35, _sample_reliability(player_camp_stats.get("games") or 0.0, 6.0))),
+            (player_current_rate, 0.20 * max(0.45, _sample_reliability(player_current_stats.get("games") or 0.0, 8.0))),
+            (dimension_rate, 0.10 * max(0.35, _sample_reliability(dimension.get("games") or 0.0, 8.0))),
+        ]
+    else:
+        items = [
+            (event_overall_rate, 0.35),
+            (player_current_rate, 0.40),
+            (dimension_rate, 0.25),
+        ]
+    win_rate_floor = settings.get("camp_win_rate_floors", {}).get(participant_camp, 0.05)
+    return max(win_rate_floor, min(0.99, _weighted_average(items)))
+
+
+def _estimate_base_points(
+    context: dict[str, Any],
+    dimension: dict[str, float],
+    all_avg: float,
+    all_win_rate: float,
+    expected_win_probability: float,
+    fallback_anchor: float,
+) -> float:
+    current_base_avg = _average(context["current_base_points"])
+    other_base_avg = _average(context["other_base_points"])
+    dimension_base_avg = max(0.0, float(dimension.get("avg_points") or 0.0) - WIN_RESULT_POINTS * float(dimension.get("win_rate") or 0.0))
+    all_base_avg = max(0.0, float(all_avg or 0.0) - WIN_RESULT_POINTS * float(all_win_rate or expected_win_probability))
+    candidates: list[tuple[float, float]] = []
+    if context["current_base_points"]:
+        candidates.append((current_base_avg, 1.0))
+    if dimension_base_avg > 0:
+        candidates.append((dimension_base_avg, 0.75))
+    if all_base_avg > 0:
+        candidates.append((all_base_avg, 0.45))
+    if context["other_base_points"]:
+        candidates.append((other_base_avg, 0.35))
+    if candidates:
+        return _weighted_average(candidates)
+    return max(0.0, fallback_anchor - WIN_RESULT_POINTS * expected_win_probability)
+
+
 def _find_player_row(
     data: dict[str, Any],
     player_id: str,
@@ -120,6 +375,61 @@ def _build_dimension_anchor(
         "avg_points": safe_rate(float(summary.get("daily_points") or 0.0), games),
         "win_rate": safe_rate(float(summary.get("wins") or 0.0), games),
         "mvp_rate": safe_rate(float(summary.get("mvp_count") or 0.0), games),
+    }
+
+
+def _dimension_anchor_from_rows(rows: list[dict[str, Any]]) -> dict[str, float]:
+    if not rows:
+        return {"games": 0.0, "avg_points": 0.0, "win_rate": 0.0, "mvp_rate": 0.0}
+    summary = summarize_dimension_rows(rows)
+    games = float(summary.get("games_played") or 0.0)
+    return {
+        "games": games,
+        "avg_points": safe_rate(float(summary.get("daily_points") or 0.0), games),
+        "win_rate": safe_rate(float(summary.get("wins") or 0.0), games),
+        "mvp_rate": safe_rate(float(summary.get("mvp_count") or 0.0), games),
+    }
+
+
+def build_score_prediction_context_cache(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    match_ids: list[str],
+) -> dict[str, Any]:
+    current_rows = {
+        row.get("player_id"): row
+        for row in build_player_rows(data, competition_name, season_name)
+        if int(row.get("games_played") or 0) > 0
+    }
+    all_rows = {
+        row.get("player_id"): row
+        for row in build_player_rows(data, None, None)
+        if int(row.get("games_played") or 0) > 0
+    }
+    dimension_rows_by_player: dict[str, list[dict[str, Any]]] = {}
+    for row in data.get("season_player_dimension_stats", []):
+        if row.get("competition_name") != competition_name or row.get("season_name") != season_name:
+            continue
+        player_id = str(row.get("player_id") or "").strip()
+        if player_id:
+            dimension_rows_by_player.setdefault(player_id, []).append(row)
+    dimensions = {
+        player_id: _dimension_anchor_from_rows(rows)
+        for player_id, rows in dimension_rows_by_player.items()
+    }
+    return {
+        "player_lookup": {player["player_id"]: player for player in data.get("players", [])},
+        "team_lookup": {team["team_id"]: team for team in data.get("teams", [])},
+        "settings": legacy.load_prediction_model_settings(),
+        "manual_predictions": load_manual_score_predictions(),
+        "current_rows": current_rows,
+        "all_rows": all_rows,
+        "dimensions": dimensions,
+        "history_indexes": {
+            match_id: _prediction_history_index(data, competition_name, season_name, match_id)
+            for match_id in match_ids
+        },
     }
 
 
@@ -208,13 +518,15 @@ def save_manual_score_predictions(payload: dict[str, dict[str, dict[str, float |
         if not clean_payload[normalized_match_id]:
             clean_payload.pop(normalized_match_id, None)
     legacy.save_meta_value("manual_score_predictions", json.dumps(clean_payload, ensure_ascii=False))
+    legacy.invalidate_prediction_api_cache()
 
 
 def apply_manual_score_predictions(
     predictions: list[dict[str, Any]],
     match_id: str,
+    all_manual: dict[str, dict[str, dict[str, float | None]]] | None = None,
 ) -> list[dict[str, Any]]:
-    manual_by_player = load_manual_score_predictions().get(match_id, {})
+    manual_by_player = (all_manual if all_manual is not None else load_manual_score_predictions()).get(match_id, {})
     for item in predictions:
         manual_values = normalize_manual_prediction(manual_by_player.get(str(item.get("player_id") or "")))
         manual_payload = []
@@ -239,34 +551,32 @@ def build_match_score_predictions(
     season_name: str,
     selected_region: str | None,
     selected_series_slug: str | None,
+    context_cache: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    player_lookup = {player["player_id"]: player for player in data.get("players", [])}
-    team_lookup = {team["team_id"]: team for team in data.get("teams", [])}
     current_match_id = str(match.get("match_id") or "")
-    stats_data = {
-        "teams": data.get("teams", []),
-        "players": data.get("players", []),
-        "matches": [
-            row
-            for row in data.get("matches", [])
-            if _is_completed_prediction_match(row, current_match_id)
-        ],
-    }
+    if context_cache is None:
+        context_cache = build_score_prediction_context_cache(data, competition_name, season_name, [current_match_id])
+    player_lookup = context_cache.get("player_lookup") or {player["player_id"]: player for player in data.get("players", [])}
+    team_lookup = context_cache.get("team_lookup") or {team["team_id"]: team for team in data.get("teams", [])}
+    settings = context_cache.get("settings") or legacy.load_prediction_model_settings()
+    current_rows = context_cache.get("current_rows") or {}
+    all_rows = context_cache.get("all_rows") or {}
+    dimensions = context_cache.get("dimensions") or {}
+    history_indexes = context_cache.get("history_indexes") or {}
+    history_index = history_indexes.get(current_match_id)
+    if history_index is None:
+        history_index = _prediction_history_index(data, competition_name, season_name, current_match_id)
     predictions: list[dict[str, Any]] = []
     for participant in sorted(match.get("players", []), key=lambda item: int(item.get("seat") or 0)):
         player_id = str(participant.get("player_id") or "").strip()
         if not player_id:
             continue
-        current_points, other_points = _collect_player_point_samples(
-            data,
-            player_id,
-            competition_name,
-            season_name,
-            current_match_id,
-        )
-        player_row = _find_player_row(stats_data, player_id, competition_name, season_name)
-        all_row = _find_player_row(stats_data, player_id, None, None)
-        dimension = _build_dimension_anchor(data, player_id, competition_name, season_name)
+        prediction_context = _prediction_context_from_index(history_index, player_id)
+        current_points = prediction_context.get("current_points") or []
+        other_points = prediction_context.get("other_points") or []
+        player_row = current_rows.get(player_id)
+        all_row = all_rows.get(player_id)
+        dimension = dimensions.get(player_id) or {"games": 0.0, "avg_points": 0.0, "win_rate": 0.0, "mvp_rate": 0.0}
         weighted_samples: list[tuple[float, float]] = [(value, 1.0) for value in current_points]
         weighted_samples.extend((value, 0.45) for value in other_points)
         current_avg = (
@@ -276,15 +586,39 @@ def build_match_score_predictions(
         )
         current_win_rate = float(player_row.get("win_rate") or 0.0) if player_row else 0.0
         all_avg = float(all_row.get("average_points") or 0.0) if all_row else 0.0
+        all_win_rate = float(all_row.get("win_rate") or 0.0) if all_row else 0.0
         anchor_candidates = [value for value in [current_avg, dimension["avg_points"], all_avg] if value > 0]
         anchor = sum(anchor_candidates) / len(anchor_candidates) if anchor_candidates else 7.0
-        adjusted_anchor = max(
-            0.0,
-            anchor
-            + (current_win_rate - 0.5) * 1.6
-            + (dimension["win_rate"] - 0.5) * 1.2
-            + dimension["mvp_rate"] * 2.0,
+        participant_camp = str(participant.get("camp") or "").strip()
+        expected_win_probability = _estimate_win_probability(
+            prediction_context,
+            participant_camp,
+            current_win_rate,
+            all_win_rate,
+            dimension,
+            settings,
         )
+        base_points_anchor = _estimate_base_points(
+            prediction_context,
+            dimension,
+            all_avg,
+            all_win_rate,
+            expected_win_probability,
+            anchor,
+        )
+        structured_anchor = max(
+            0.0,
+            base_points_anchor
+            + WIN_RESULT_POINTS * expected_win_probability
+            + float(dimension.get("mvp_rate") or 0.0) * 1.5,
+        )
+        camp_base_floor = settings.get("camp_base_point_floors", {}).get(participant_camp, 0.50)
+        camp_floor_anchor = camp_base_floor + WIN_RESULT_POINTS * expected_win_probability
+        structured_anchor = max(structured_anchor, camp_floor_anchor)
+        adjusted_anchor = (structured_anchor * float(settings.get("score_uplift") or 1.0)) + float(settings.get("score_bonus") or 0.0)
+        camp_cap = settings.get("camp_expected_point_caps", {}).get(participant_camp)
+        if camp_cap is not None:
+            adjusted_anchor = min(adjusted_anchor, camp_cap)
         pseudo_weight = max(0.8, min(3.0, (dimension["games"] * 0.18) + (1.0 if player_row else 0.0)))
         weighted_samples.append((adjusted_anchor, pseudo_weight))
         if not current_points and other_points:
@@ -316,18 +650,206 @@ def build_match_score_predictions(
                 "reference_samples": len(other_points),
                 "dimension_games": int(dimension["games"]),
                 "expected_points": f"{adjusted_anchor:.2f}",
+                "expected_win_rate": format_pct(expected_win_probability),
+                "base_points": f"{base_points_anchor:.2f}",
+                "prediction_model": settings.get("model_version") or "result_weighted",
                 "win_rate": format_pct(current_win_rate),
                 "confidence": confidence,
                 "probabilities": probabilities,
             }
         )
-    return apply_manual_score_predictions(predictions, current_match_id)
+    return apply_manual_score_predictions(predictions, current_match_id, context_cache.get("manual_predictions"))
 
 
 def _format_manual_input_value(value: float | None) -> str:
     if value is None:
         return ""
     return f"{float(value) * 100:.1f}".rstrip("0").rstrip(".")
+
+
+def _format_setting_number(value: Any, *, percent: bool = False) -> str:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        number = 0.0
+    if percent:
+        number *= 100.0
+    return f"{number:.2f}".rstrip("0").rstrip(".")
+
+
+def _parse_setting_number(
+    raw_value: str,
+    default: float,
+    *,
+    minimum: float,
+    maximum: float,
+    percent: bool = False,
+) -> float:
+    try:
+        value = float(str(raw_value or "").strip())
+    except ValueError:
+        value = default * 100.0 if percent else default
+    if percent:
+        value = value / 100.0
+    return max(minimum, min(maximum, value))
+
+
+def _prediction_settings_from_form(ctx: RequestContext, current_settings: dict[str, Any]) -> dict[str, Any]:
+    settings = {
+        "model_version": "result_weighted_custom",
+        "score_uplift": _parse_setting_number(
+            form_value(ctx.form, "score_uplift"),
+            float(current_settings.get("score_uplift") or 1.0),
+            minimum=0.5,
+            maximum=1.5,
+        ),
+        "score_bonus": _parse_setting_number(
+            form_value(ctx.form, "score_bonus"),
+            float(current_settings.get("score_bonus") or 0.0),
+            minimum=-3.0,
+            maximum=3.0,
+        ),
+        "camp_win_rate_priors": {},
+        "camp_win_rate_floors": {},
+        "camp_base_point_floors": {},
+        "camp_expected_point_caps": {},
+        "day_total": {},
+    }
+    for camp, _ in PREDICTION_SETTING_CAMPS:
+        settings["camp_win_rate_priors"][camp] = _parse_setting_number(
+            form_value(ctx.form, f"{camp}_win_prior"),
+            float(current_settings.get("camp_win_rate_priors", {}).get(camp, 0.5)),
+            minimum=0.0,
+            maximum=1.0,
+            percent=True,
+        )
+        settings["camp_win_rate_floors"][camp] = _parse_setting_number(
+            form_value(ctx.form, f"{camp}_win_floor"),
+            float(current_settings.get("camp_win_rate_floors", {}).get(camp, 0.0)),
+            minimum=0.0,
+            maximum=1.0,
+            percent=True,
+        )
+        settings["camp_base_point_floors"][camp] = _parse_setting_number(
+            form_value(ctx.form, f"{camp}_base_floor"),
+            float(current_settings.get("camp_base_point_floors", {}).get(camp, 0.0)),
+            minimum=0.0,
+            maximum=20.0,
+        )
+    settings["camp_expected_point_caps"]["werewolves"] = _parse_setting_number(
+        form_value(ctx.form, "werewolves_point_cap"),
+        float(current_settings.get("camp_expected_point_caps", {}).get("werewolves", 5.2)),
+        minimum=0.0,
+        maximum=50.0,
+    )
+    current_day = current_settings.get("day_total", {})
+    for key, default, minimum, maximum in [
+        ("elite_threshold", 12.0, 0.0, 50.0),
+        ("elite_min", 12.0, 0.0, 50.0),
+        ("elite_max", 12.6, 0.0, 50.0),
+        ("elite_anchor", 10.5, 0.0, 50.0),
+        ("elite_slope", 0.55, 0.0, 2.0),
+        ("middle_min", 7.05, 0.0, 50.0),
+        ("middle_slope", 0.55, 0.0, 2.0),
+        ("main_min", 5.05, 0.0, 50.0),
+        ("main_max", 6.95, 0.0, 50.0),
+        ("main_slope", 0.45, 0.0, 2.0),
+    ]:
+        settings["day_total"][key] = _parse_setting_number(
+            form_value(ctx.form, key),
+            float(current_day.get(key, default)),
+            minimum=minimum,
+            maximum=maximum,
+        )
+    settings["day_total"]["middle_slots"] = int(
+        _parse_setting_number(
+            form_value(ctx.form, "middle_slots"),
+            float(current_day.get("middle_slots", 4)),
+            minimum=0,
+            maximum=12,
+        )
+    )
+    raw_caps = form_value(ctx.form, "middle_caps")
+    parsed_caps = []
+    for value in raw_caps.replace("，", ",").split(","):
+        value = value.strip()
+        if not value:
+            continue
+        parsed_caps.append(_parse_setting_number(value, 8.2, minimum=0.0, maximum=50.0))
+    settings["day_total"]["middle_caps"] = parsed_caps or list(current_day.get("middle_caps") or [11.4, 10.2, 9.2, 8.2])
+    return settings
+
+
+def _prediction_model_settings_form_html(settings: dict[str, Any], can_edit: bool) -> str:
+    day = settings.get("day_total", {})
+    camp_rows = []
+    for camp, label in PREDICTION_SETTING_CAMPS:
+        camp_rows.append(
+            f"""
+            <tr>
+              <td>{escape(label)}</td>
+              <td><input class="form-control form-control-sm" type="number" step="0.1" min="0" max="100" name="{camp}_win_prior" value="{escape(_format_setting_number(settings.get('camp_win_rate_priors', {}).get(camp), percent=True))}" {'readonly' if not can_edit else ''}></td>
+              <td><input class="form-control form-control-sm" type="number" step="0.1" min="0" max="100" name="{camp}_win_floor" value="{escape(_format_setting_number(settings.get('camp_win_rate_floors', {}).get(camp), percent=True))}" {'readonly' if not can_edit else ''}></td>
+              <td><input class="form-control form-control-sm" type="number" step="0.01" min="0" name="{camp}_base_floor" value="{escape(_format_setting_number(settings.get('camp_base_point_floors', {}).get(camp)))}" {'readonly' if not can_edit else ''}></td>
+            </tr>
+            """
+        )
+    middle_caps_text = ", ".join(_format_setting_number(value) for value in day.get("middle_caps", []))
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <h2 class="section-title mb-2">模型参数</h2>
+          <p class="section-copy mb-0">这里控制小程序比赛日预测分布。修改后无需发版，前台接口会直接读取最新参数。</p>
+        </div>
+        <span class="chip">当前模型 {escape(str(settings.get('model_version') or 'result_weighted'))}</span>
+      </div>
+      <form method="post" action="/prediction-admin">
+        <input type="hidden" name="action" value="save_model_settings">
+        <div class="row g-3">
+          <div class="col-12 col-lg-3">
+            <label class="form-label">整体倍率</label>
+            <input class="form-control" type="number" step="0.01" min="0.5" max="1.5" name="score_uplift" value="{escape(_format_setting_number(settings.get('score_uplift')))}" {'readonly' if not can_edit else ''}>
+          </div>
+          <div class="col-12 col-lg-3">
+            <label class="form-label">整体加分</label>
+            <input class="form-control" type="number" step="0.01" min="-3" max="3" name="score_bonus" value="{escape(_format_setting_number(settings.get('score_bonus')))}" {'readonly' if not can_edit else ''}>
+          </div>
+          <div class="col-12 col-lg-3">
+            <label class="form-label">狼人单局上限</label>
+            <input class="form-control" type="number" step="0.01" min="0" name="werewolves_point_cap" value="{escape(_format_setting_number(settings.get('camp_expected_point_caps', {}).get('werewolves')))}" {'readonly' if not can_edit else ''}>
+          </div>
+          <div class="col-12 col-lg-3">
+            <label class="form-label">7-12 名额</label>
+            <input class="form-control" type="number" step="1" min="0" max="12" name="middle_slots" value="{escape(str(int(day.get('middle_slots') or 0)))}" {'readonly' if not can_edit else ''}>
+          </div>
+        </div>
+        <div class="table-responsive mt-3">
+          <table class="table align-middle">
+            <thead><tr><th>阵营</th><th>胜率先验 (%)</th><th>胜率下限 (%)</th><th>基础分下限</th></tr></thead>
+            <tbody>{''.join(camp_rows)}</tbody>
+          </table>
+        </div>
+        <div class="row g-3 mt-1">
+          <div class="col-6 col-lg-2"><label class="form-label">12+ 触发线</label><input class="form-control" type="number" step="0.01" name="elite_threshold" value="{escape(_format_setting_number(day.get('elite_threshold')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">12+ 最低</label><input class="form-control" type="number" step="0.01" name="elite_min" value="{escape(_format_setting_number(day.get('elite_min')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">12+ 上限</label><input class="form-control" type="number" step="0.01" name="elite_max" value="{escape(_format_setting_number(day.get('elite_max')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">高分锚点</label><input class="form-control" type="number" step="0.01" name="elite_anchor" value="{escape(_format_setting_number(day.get('elite_anchor')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">高分压缩</label><input class="form-control" type="number" step="0.01" name="elite_slope" value="{escape(_format_setting_number(day.get('elite_slope')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">7-12 上限序列</label><input class="form-control" name="middle_caps" value="{escape(middle_caps_text)}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">7-12 最低</label><input class="form-control" type="number" step="0.01" name="middle_min" value="{escape(_format_setting_number(day.get('middle_min')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">7-12 压缩</label><input class="form-control" type="number" step="0.01" name="middle_slope" value="{escape(_format_setting_number(day.get('middle_slope')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">主体区最低</label><input class="form-control" type="number" step="0.01" name="main_min" value="{escape(_format_setting_number(day.get('main_min')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">主体区上限</label><input class="form-control" type="number" step="0.01" name="main_max" value="{escape(_format_setting_number(day.get('main_max')))}" {'readonly' if not can_edit else ''}></div>
+          <div class="col-6 col-lg-2"><label class="form-label">主体区斜率</label><input class="form-control" type="number" step="0.01" name="main_slope" value="{escape(_format_setting_number(day.get('main_slope')))}" {'readonly' if not can_edit else ''}></div>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <button class="btn btn-dark" type="submit" {'disabled' if not can_edit else ''}>保存模型参数</button>
+          <span class="small text-secondary align-self-center">{'只有管理员可以修改全局模型。' if not can_edit else '保存后小程序预测榜立即生效。'}</span>
+        </div>
+      </form>
+    </section>
+    """
 
 
 def render_prediction_table_html(
@@ -849,6 +1371,8 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
     competition_name = get_match_competition_name(selected_match)
     if not can_manage_matches(ctx.current_user, data, competition_name):
         return layout("胜率预测后台", '<div class="alert alert-danger">你没有权限维护这场比赛的预测。</div>', ctx)
+    model_settings = legacy.load_prediction_model_settings()
+    model_settings_form = _prediction_model_settings_form_html(model_settings, is_admin_user(ctx.current_user))
     season_name = str(selected_match.get("season") or "").strip()
     context, error = _build_match_prediction_context(ctx, selected_match_id)
     if not context:
@@ -881,8 +1405,9 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">Prediction Admin</div>
       <h1 class="display-6 fw-semibold mb-3">胜率预测后台</h1>
-      <p class="mb-0 opacity-75">这里单独维护人工计算概率。保存后，前台预测页会同时展示系统概率和人工概率。</p>
+      <p class="mb-0 opacity-75">这里维护预测模型参数和单场人工概率。模型参数保存后，小程序比赛日预测榜会立即按新口径展示。</p>
     </section>
+    {model_settings_form}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <form method="get" action="/prediction-admin" class="row g-3 align-items-end">
         <div class="col-12 col-lg-8">
@@ -925,6 +1450,14 @@ def handle_prediction_admin(ctx: RequestContext, start_response):
         return legacy.redirect(start_response, "/login?next=/prediction-admin")
     if ctx.method == "GET":
         return legacy.start_response_html(start_response, "200 OK", get_prediction_admin_page(ctx))
+    action = form_value(ctx.form, "action").strip()
+    if action == "save_model_settings":
+        if not is_admin_user(ctx.current_user):
+            return legacy.start_response_html(start_response, "403 Forbidden", get_prediction_admin_page(ctx, "只有管理员可以修改全局预测模型。"))
+        current_settings = legacy.load_prediction_model_settings()
+        next_settings = _prediction_settings_from_form(ctx, current_settings)
+        legacy.save_prediction_model_settings(next_settings)
+        return legacy.redirect(start_response, f"/prediction-admin?alert={quote('预测模型参数已保存。')}")
     data = load_validated_data()
     match_id = form_value(ctx.form, "match_id").strip() or form_value(ctx.query, "match_id").strip()
     match = get_match_by_id(data.get("matches", []), match_id)

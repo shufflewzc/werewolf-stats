@@ -12,6 +12,7 @@ DEFAULT_PLAYER_PHOTO = legacy.DEFAULT_PLAYER_PHOTO
 DEFAULT_TEAM_LOGO = legacy.DEFAULT_TEAM_LOGO
 append_alert_query = legacy.append_alert_query
 append_user_player_binding = legacy.append_user_player_binding
+audit_action = legacy.audit_action
 build_guild_honor_rows = legacy.build_guild_honor_rows
 build_scoped_path = legacy.build_scoped_path
 build_team_serial = legacy.build_team_serial
@@ -950,14 +951,15 @@ def handle_guilds(ctx: RequestContext, start_response):
                     },
                 ),
             )
+        guild_id = build_unique_slug(
+            {guild["guild_id"] for guild in data.get("guilds", [])},
+            "guild",
+            name,
+            "guild",
+        )
         data.setdefault("guilds", []).append(
             {
-                "guild_id": build_unique_slug(
-                    {guild["guild_id"] for guild in data.get("guilds", [])},
-                    "guild",
-                    name,
-                    "guild",
-                ),
+                "guild_id": guild_id,
                 "name": name,
                 "short_name": short_name,
                 "logo": DEFAULT_TEAM_LOGO,
@@ -976,6 +978,14 @@ def handle_guilds(ctx: RequestContext, start_response):
                 "200 OK",
                 get_guilds_page(ctx, alert="创建门派失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "guild.create",
+            target_type="guild",
+            target_id=guild_id,
+            summary=f"创建门派 {name}",
+            metadata={"short_name": short_name, "manager_usernames": manager_usernames},
+        )
         return redirect(start_response, "/guilds")
 
     if action == "request_team_guild_join":
@@ -1036,7 +1046,16 @@ def handle_guilds(ctx: RequestContext, start_response):
                 "created_on": china_now_label(),
             }
         )
+        request_id = requests[-1]["request_id"]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "guild_join.request",
+            target_type="membership_request",
+            target_id=request_id,
+            summary=f"战队 {team['name']} 申请加入门派 {guild['name']}",
+            metadata={"team_id": team_id, "guild_id": guild_id},
+        )
         return start_response_html(
             start_response,
             "200 OK",
@@ -1133,6 +1152,14 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
                 start_response,
                 append_alert_query(redirect_path, "保存门派荣誉失败：" + "；".join(errors[:3])),
             )
+        audit_action(
+            ctx,
+            "guild.honors_update",
+            target_type="guild",
+            target_id=guild_id,
+            summary=f"更新门派 {guild.get('name') or guild_id} 的历届荣誉",
+            metadata={"honor_count": len(honors)},
+        )
         return redirect(
             start_response,
             append_alert_query(redirect_path, "门派历届荣誉已更新。"),
@@ -1166,6 +1193,18 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
         if action == "reject_guild_join":
             requests = [item for item in requests if item["request_id"] != request_id]
             save_membership_requests(requests)
+            audit_action(
+                ctx,
+                "guild_join.reject",
+                target_type="membership_request",
+                target_id=request_id,
+                summary=f"拒绝加入门派 {guild.get('name') or guild_id} 的申请",
+                metadata={
+                    "team_id": request_item.get("source_team_id"),
+                    "guild_id": guild_id,
+                    "username": request_item.get("username"),
+                },
+            )
             return redirect(
                 start_response,
                 append_alert_query(redirect_path, "申请已拒绝。"),
@@ -1193,6 +1232,14 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
             )
         requests = [item for item in requests if item["request_id"] != request_id]
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "guild_join.approve",
+            target_type="membership_request",
+            target_id=request_id,
+            summary=f"通过战队 {team['name']} 加入门派 {guild.get('name') or guild_id} 的申请",
+            metadata={"team_id": team["team_id"], "guild_id": guild_id},
+        )
         return redirect(
             start_response,
             append_alert_query(redirect_path, f"已通过 {team['name']} 的入门派申请。"),

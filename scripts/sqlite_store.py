@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
 from web_authz import DEFAULT_EVENT_MANAGER_PERMISSION_KEYS
 
 
@@ -20,6 +21,7 @@ DEFAULT_USER_PHOTO = "assets/players/default-player.svg"
 SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000"))
 SQLITE_JOURNAL_MODE = os.getenv("SQLITE_JOURNAL_MODE", "WAL").strip().upper()
 SQLITE_SYNCHRONOUS = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").strip().upper()
+LOG_CLEANUP_META_KEY = "log_cleanup:last_run"
 
 
 def normalize_stance_result(entry: dict[str, Any]) -> str:
@@ -199,11 +201,26 @@ def create_schema(connection: sqlite3.Connection) -> None:
             request_id TEXT NOT NULL DEFAULT '',
             path TEXT NOT NULL,
             method TEXT NOT NULL,
+            status_code INTEGER NOT NULL DEFAULT 0,
+            duration_ms INTEGER NOT NULL DEFAULT 0,
             query_string TEXT NOT NULL DEFAULT '',
             username TEXT NOT NULL DEFAULT '',
             ip_address TEXT NOT NULL DEFAULT '',
             user_agent TEXT NOT NULL DEFAULT '',
             created_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            audit_id TEXT PRIMARY KEY,
+            request_id TEXT NOT NULL DEFAULT '',
+            username TEXT NOT NULL DEFAULT '',
+            action TEXT NOT NULL,
+            target_type TEXT NOT NULL DEFAULT '',
+            target_id TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '',
+            ip_address TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            metadata_json TEXT NOT NULL DEFAULT '{}'
         );
 
         CREATE TABLE IF NOT EXISTS ai_conversations (
@@ -339,6 +356,18 @@ def create_schema(connection: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_access_logs_path_created_at
         ON access_logs(path, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at
+        ON audit_logs(created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_target
+        ON audit_logs(target_type, target_id, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_username
+        ON audit_logs(username, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id
+        ON audit_logs(request_id);
 
         CREATE INDEX IF NOT EXISTS idx_ai_conversations_created_at
         ON ai_conversations(created_at);
@@ -480,6 +509,34 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
     }
     if access_log_columns and "request_id" not in access_log_columns:
         connection.execute("ALTER TABLE access_logs ADD COLUMN request_id TEXT NOT NULL DEFAULT ''")
+    if access_log_columns and "status_code" not in access_log_columns:
+        connection.execute("ALTER TABLE access_logs ADD COLUMN status_code INTEGER NOT NULL DEFAULT 0")
+    if access_log_columns and "duration_ms" not in access_log_columns:
+        connection.execute("ALTER TABLE access_logs ADD COLUMN duration_ms INTEGER NOT NULL DEFAULT 0")
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_access_logs_status_created_at
+        ON access_logs(status_code, created_at)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_access_logs_duration_ms
+        ON access_logs(duration_ms)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_access_logs_request_id
+        ON access_logs(request_id)
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_request_id
+        ON audit_logs(request_id)
+        """
+    )
     guild_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(guilds)").fetchall()
     }
@@ -578,6 +635,14 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
     backfill_team_scopes(connection)
     backfill_match_awards(connection)
     backfill_team_claim_captains(connection)
+    connection.execute(
+        """
+        INSERT INTO app_meta (meta_key, meta_value)
+        VALUES (?, ?)
+        ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+        """,
+        (SCHEMA_VERSION_META_KEY, str(REQUIRED_SCHEMA_VERSION)),
+    )
 
 
 def migrate_season_team_dimension_stats_schema(connection: sqlite3.Connection) -> None:
@@ -841,6 +906,16 @@ def china_today_iso() -> str:
     return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8))).date().isoformat()
 
 
+def china_date_days_ago(days: int) -> str:
+    safe_days = max(0, int(days or 0))
+    return (
+        datetime.now(timezone.utc)
+        .astimezone(timezone(timedelta(hours=8)))
+        .date()
+        - timedelta(days=safe_days)
+    ).isoformat()
+
+
 def replace_repository_data(
     connection: Any,
     teams: list[dict[str, Any]],
@@ -1088,6 +1163,14 @@ def replace_repository_data(
             VALUES ('initialized', '1')
             ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
             """
+        )
+        connection.execute(
+            """
+            INSERT INTO app_meta (meta_key, meta_value)
+            VALUES (?, ?)
+            ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+            """,
+            (SCHEMA_VERSION_META_KEY, str(REQUIRED_SCHEMA_VERSION)),
         )
     if backend == "sqlite":
         connection.execute("PRAGMA foreign_keys = ON")
@@ -2010,6 +2093,8 @@ def record_access_log(
     *,
     path: str,
     method: str,
+    status_code: int = 0,
+    duration_ms: int = 0,
     query_string: str = "",
     username: str = "",
     ip_address: str = "",
@@ -2024,16 +2109,18 @@ def record_access_log(
             connection.execute(
                 """
                 INSERT INTO access_logs (
-                    log_id, request_id, path, method, query_string, username,
+                    log_id, request_id, path, method, status_code, duration_ms, query_string, username,
                     ip_address, user_agent, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     log_id,
                     str(request_id or "").strip()[:80],
                     str(path or "").strip() or "/",
                     str(method or "").strip().upper() or "GET",
+                    max(0, int(status_code or 0)),
+                    max(0, int(duration_ms or 0)),
                     str(query_string or "").strip(),
                     str(username or "").strip(),
                     str(ip_address or "").strip(),
@@ -2042,6 +2129,190 @@ def record_access_log(
                 ),
             )
     return log_id
+
+
+def record_audit_log(
+    *,
+    action: str,
+    target_type: str = "",
+    target_id: str = "",
+    summary: str = "",
+    username: str = "",
+    request_id: str = "",
+    ip_address: str = "",
+    created_at: str,
+    metadata: dict[str, Any] | None = None,
+) -> str:
+    audit_id = "audit_" + secrets.token_hex(12)
+    metadata_json = json.dumps(metadata or {}, ensure_ascii=False, sort_keys=True)
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            connection.execute(
+                """
+                INSERT INTO audit_logs (
+                    audit_id, request_id, username, action, target_type, target_id,
+                    summary, ip_address, created_at, metadata_json
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    audit_id,
+                    str(request_id or "").strip()[:80],
+                    str(username or "").strip()[:120],
+                    str(action or "").strip()[:120],
+                    str(target_type or "").strip()[:80],
+                    str(target_id or "").strip()[:160],
+                    str(summary or "").strip()[:1000],
+                    str(ip_address or "").strip(),
+                    created_at,
+                    metadata_json,
+                ),
+            )
+    return audit_id
+
+
+def load_audit_logs(limit: int = 100) -> list[dict[str, Any]]:
+    row_limit = max(1, min(int(limit), 500))
+    with connect_read_db() as connection:
+        require_initialized_database(connection)
+        rows = connection.execute(
+            """
+            SELECT audit_id, request_id, username, action, target_type, target_id,
+                   summary, ip_address, created_at, metadata_json
+            FROM audit_logs
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (row_limit,),
+        ).fetchall()
+    logs = []
+    for row in rows:
+        item = dict(row)
+        try:
+            item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+        except (TypeError, json.JSONDecodeError):
+            item["metadata"] = {}
+        logs.append(item)
+    return logs
+
+
+def _decode_audit_row(row: Any) -> dict[str, Any]:
+    item = dict(row)
+    try:
+        item["metadata"] = json.loads(item.pop("metadata_json") or "{}")
+    except (TypeError, json.JSONDecodeError):
+        item["metadata"] = {}
+    return item
+
+
+def load_request_trace(request_id: str) -> dict[str, Any]:
+    normalized_request_id = str(request_id or "").strip()[:80]
+    if not normalized_request_id:
+        return {"request_id": "", "access_logs": [], "audit_logs": []}
+    with connect_read_db() as connection:
+        require_initialized_database(connection)
+        access_rows = connection.execute(
+            """
+            SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
+                   ip_address, user_agent, created_at
+            FROM access_logs
+            WHERE request_id = ?
+            ORDER BY created_at DESC
+            LIMIT 20
+            """,
+            (normalized_request_id,),
+        ).fetchall()
+        audit_rows = connection.execute(
+            """
+            SELECT audit_id, request_id, username, action, target_type, target_id,
+                   summary, ip_address, created_at, metadata_json
+            FROM audit_logs
+            WHERE request_id = ?
+            ORDER BY created_at DESC
+            LIMIT 50
+            """,
+            (normalized_request_id,),
+        ).fetchall()
+    return {
+        "request_id": normalized_request_id,
+        "access_logs": [dict(row) for row in access_rows],
+        "audit_logs": [_decode_audit_row(row) for row in audit_rows],
+    }
+
+
+def cleanup_expired_logs(
+    *,
+    access_retention_days: int = 30,
+    audit_retention_days: int = 365,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    access_days = max(1, int(access_retention_days or 30))
+    audit_days = max(1, int(audit_retention_days or 365))
+    access_cutoff_date = china_date_days_ago(access_days)
+    audit_cutoff_date = china_date_days_ago(audit_days)
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            access_row = connection.execute(
+                "SELECT COUNT(*) AS count FROM access_logs WHERE substr(created_at, 1, 10) < ?",
+                (access_cutoff_date,),
+            ).fetchone()
+            audit_row = connection.execute(
+                "SELECT COUNT(*) AS count FROM audit_logs WHERE substr(created_at, 1, 10) < ?",
+                (audit_cutoff_date,),
+            ).fetchone()
+            deleted_access = int(access_row["count"] or 0)
+            deleted_audit = int(audit_row["count"] or 0)
+            if not dry_run:
+                connection.execute(
+                    "DELETE FROM access_logs WHERE substr(created_at, 1, 10) < ?",
+                    (access_cutoff_date,),
+                )
+                connection.execute(
+                    "DELETE FROM audit_logs WHERE substr(created_at, 1, 10) < ?",
+                    (audit_cutoff_date,),
+                )
+                summary = {
+                    "ran_at": datetime.now(timezone.utc)
+                    .astimezone(timezone(timedelta(hours=8)))
+                    .isoformat(timespec="seconds"),
+                    "access_retention_days": access_days,
+                    "audit_retention_days": audit_days,
+                    "access_cutoff_date": access_cutoff_date,
+                    "audit_cutoff_date": audit_cutoff_date,
+                    "deleted_access_logs": deleted_access,
+                    "deleted_audit_logs": deleted_audit,
+                    "dry_run": False,
+                }
+                connection.execute(
+                    """
+                    INSERT INTO app_meta (meta_key, meta_value)
+                    VALUES (?, ?)
+                    ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+                    """,
+                    (LOG_CLEANUP_META_KEY, json.dumps(summary, ensure_ascii=False, sort_keys=True)),
+                )
+    return {
+        "access_retention_days": access_days,
+        "audit_retention_days": audit_days,
+        "access_cutoff_date": access_cutoff_date,
+        "audit_cutoff_date": audit_cutoff_date,
+        "deleted_access_logs": deleted_access,
+        "deleted_audit_logs": deleted_audit,
+        "dry_run": bool(dry_run),
+    }
+
+
+def load_log_cleanup_state() -> dict[str, Any]:
+    raw_value = load_meta_value(LOG_CLEANUP_META_KEY)
+    if not raw_value:
+        return {}
+    try:
+        state = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {"raw": raw_value}
+    return state if isinstance(state, dict) else {"raw": raw_value}
 
 
 def load_access_overview(limit: int = 80) -> dict[str, Any]:
@@ -2060,6 +2331,28 @@ def load_access_overview(limit: int = 80) -> dict[str, Any]:
         unique_ip_row = connection.execute(
             "SELECT COUNT(DISTINCT ip_address) AS count FROM access_logs WHERE ip_address != ''"
         ).fetchone()
+        error_row = connection.execute(
+            "SELECT COUNT(*) AS count FROM access_logs WHERE status_code >= 400"
+        ).fetchone()
+        slow_row = connection.execute(
+            "SELECT COUNT(*) AS count FROM access_logs WHERE duration_ms >= 1000"
+        ).fetchone()
+        duration_row = connection.execute(
+            """
+            SELECT AVG(duration_ms) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms
+            FROM access_logs
+            WHERE duration_ms > 0
+            """
+        ).fetchone()
+        status_rows = connection.execute(
+            """
+            SELECT status_code, COUNT(*) AS count
+            FROM access_logs
+            GROUP BY status_code
+            ORDER BY count DESC, status_code ASC
+            LIMIT 10
+            """
+        ).fetchall()
         top_path_rows = connection.execute(
             """
             SELECT path, COUNT(*) AS visits, MAX(created_at) AS last_seen_at
@@ -2071,7 +2364,7 @@ def load_access_overview(limit: int = 80) -> dict[str, Any]:
         ).fetchall()
         recent_rows = connection.execute(
             """
-            SELECT log_id, request_id, path, method, query_string, username, ip_address,
+            SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username, ip_address,
                    user_agent, created_at
             FROM access_logs
             ORDER BY created_at DESC
@@ -2079,12 +2372,126 @@ def load_access_overview(limit: int = 80) -> dict[str, Any]:
             """,
             (row_limit,),
         ).fetchall()
+        slow_rows = connection.execute(
+            """
+            SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
+                   ip_address, user_agent, created_at
+            FROM access_logs
+            WHERE duration_ms > 0
+            ORDER BY duration_ms DESC, created_at DESC
+            LIMIT 10
+            """
+        ).fetchall()
+        error_rows = connection.execute(
+            """
+            SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
+                   ip_address, user_agent, created_at
+            FROM access_logs
+            WHERE status_code >= 400
+            ORDER BY created_at DESC
+            LIMIT 10
+            """
+        ).fetchall()
     return {
         "total_visits": int(total_row["count"] or 0),
         "today_visits": int(today_row["count"] or 0),
         "unique_ip_count": int(unique_ip_row["count"] or 0),
+        "error_count": int(error_row["count"] or 0),
+        "slow_count": int(slow_row["count"] or 0),
+        "avg_duration_ms": int(float(duration_row["avg_duration_ms"] or 0)),
+        "max_duration_ms": int(duration_row["max_duration_ms"] or 0),
+        "status_counts": [dict(row) for row in status_rows],
         "top_paths": [dict(row) for row in top_path_rows],
+        "slow_logs": [dict(row) for row in slow_rows],
+        "error_logs": [dict(row) for row in error_rows],
         "recent_logs": [dict(row) for row in recent_rows],
+    }
+
+
+def load_operational_overview(limit: int = 80) -> dict[str, Any]:
+    row_limit = max(1, min(int(limit), 300))
+    with connect_read_db() as connection:
+        require_initialized_database(connection)
+        api_total_row = connection.execute(
+            "SELECT COUNT(*) AS count FROM access_logs WHERE path LIKE '/api/%'"
+        ).fetchone()
+        api_today_row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM access_logs
+            WHERE path LIKE '/api/%' AND substr(created_at, 1, 10) = ?
+            """,
+            (china_today_iso(),),
+        ).fetchone()
+        api_error_row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM access_logs
+            WHERE path LIKE '/api/%' AND status_code >= 400
+            """
+        ).fetchone()
+        api_slow_row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM access_logs
+            WHERE path LIKE '/api/%' AND duration_ms >= 1000
+            """
+        ).fetchone()
+        api_duration_row = connection.execute(
+            """
+            SELECT AVG(duration_ms) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms
+            FROM access_logs
+            WHERE path LIKE '/api/%' AND duration_ms > 0
+            """
+        ).fetchone()
+        api_path_rows = connection.execute(
+            """
+            SELECT
+                path,
+                COUNT(*) AS visits,
+                AVG(duration_ms) AS avg_duration_ms,
+                MAX(duration_ms) AS max_duration_ms,
+                SUM(CASE WHEN status_code >= 400 THEN 1 ELSE 0 END) AS error_count,
+                SUM(CASE WHEN duration_ms >= 1000 THEN 1 ELSE 0 END) AS slow_count,
+                MAX(created_at) AS last_seen_at
+            FROM access_logs
+            WHERE path LIKE '/api/%'
+            GROUP BY path
+            ORDER BY max_duration_ms DESC, visits DESC
+            LIMIT 12
+            """
+        ).fetchall()
+        recent_api_rows = connection.execute(
+            """
+            SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
+                   ip_address, user_agent, created_at
+            FROM access_logs
+            WHERE path LIKE '/api/%'
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (row_limit,),
+        ).fetchall()
+        recent_problem_rows = connection.execute(
+            """
+            SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
+                   ip_address, user_agent, created_at
+            FROM access_logs
+            WHERE path LIKE '/api/%' AND (status_code >= 400 OR duration_ms >= 1000)
+            ORDER BY created_at DESC
+            LIMIT 20
+            """
+        ).fetchall()
+    return {
+        "api_total": int(api_total_row["count"] or 0),
+        "api_today": int(api_today_row["count"] or 0),
+        "api_error_count": int(api_error_row["count"] or 0),
+        "api_slow_count": int(api_slow_row["count"] or 0),
+        "api_avg_duration_ms": int(float(api_duration_row["avg_duration_ms"] or 0)),
+        "api_max_duration_ms": int(api_duration_row["max_duration_ms"] or 0),
+        "api_paths": [dict(row) for row in api_path_rows],
+        "recent_api_logs": [dict(row) for row in recent_api_rows],
+        "recent_problem_logs": [dict(row) for row in recent_problem_rows],
     }
 
 

@@ -37,7 +37,8 @@
 }
 
 .selected-label,
-.selected-title {
+.selected-title,
+.selected-meta {
   display: block;
 }
 
@@ -52,6 +53,12 @@
   font-weight: 800;
 }
 
+.selected-meta {
+  margin-top: 6rpx;
+  font-size: 22rpx;
+  color: #64748b;
+}
+
 .change-button {
   flex: 0 0 132rpx;
   width: 132rpx;
@@ -62,4 +69,105 @@
   color: #111827;
   background: #f8fafc;
   border: 1rpx solid #cbd5e1;
+}
+
+.workbench-card,
+.day-focus-card {
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.workbench-card {
+  padding: 24rpx;
+}
+
+.workbench-head,
+.my-player-card,
+.day-focus-card {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+}
+
+.workbench-head {
+  justify-content: space-between;
+}
+
+.workbench-kicker,
+.workbench-title {
+  display: block;
+}
+
+.workbench-kicker {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.workbench-title {
+  margin-top: 6rpx;
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.my-player-card {
+  margin-top: 20rpx;
+  padding: 20rpx;
+  border-radius: 12rpx;
+  background: #f8fafc;
+}
+
+.empty-inline {
+  margin-top: 20rpx;
+  padding: 20rpx;
+  border-radius: 12rpx;
+  font-size: 23rpx;
+  line-height: 1.5;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.prediction-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-top: 16rpx;
+  padding: 16rpx 18rpx;
+  border-radius: 12rpx;
+  background: #eff6ff;
+}
+
+.prediction-line-label,
+.prediction-line-value {
+  display: block;
+  font-size: 22rpx;
+}
+
+.prediction-line-label {
+  color: #475569;
+}
+
+.prediction-line-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-weight: 800;
+  color: #1d4ed8;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-focus-card {
+  min-height: 112rpx;
+  padding: 24rpx;
+}
+
+.day-focus-title {
+  display: block;
+  margin-top: 6rpx;
+  font-size: 34rpx;
+  font-weight: 800;
 }

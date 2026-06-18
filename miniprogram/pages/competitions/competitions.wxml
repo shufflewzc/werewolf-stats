@@ -34,6 +34,13 @@
         <text class="section-title">赛事站点</text>
         <text class="section-note">{{cards.length}} 个</text>
       </view>
+      <view class="scope-bar current-scope" wx:if="{{selectedScope && selectedScope.competition}}">
+        <view class="scope-main">
+          <text class="scope-label">当前已进入</text>
+          <text class="scope-title">{{selectedScope.competition}}</text>
+          <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+        </view>
+      </view>
       <view class="stack" wx:if="{{cards.length}}">
         <view class="competition-card" wx:for="{{cards}}" wx:key="competition_name" data-index="{{index}}" bindtap="chooseCompetition">
           <text class="card-kicker">{{item.region_name || "赛区"}} · {{item.series_name || "系列赛"}}</text>
@@ -53,7 +60,7 @@
               <text class="stat-label">对局</text>
             </view>
           </view>
-          <text class="enter-label">进入赛事</text>
+          <text class="enter-label">{{item.enterText}}</text>
         </view>
       </view>
       <view class="empty-card" wx:else>

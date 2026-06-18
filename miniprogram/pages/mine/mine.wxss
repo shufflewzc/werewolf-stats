@@ -1,10 +1,50 @@
 .account-card,
-.form-card {
+.form-card,
+.center-card {
   padding: 28rpx;
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
   background: #ffffff;
   box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.center-head,
+.my-prediction-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+}
+
+.center-kicker,
+.center-title {
+  display: block;
+}
+
+.center-kicker {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.center-title {
+  margin-top: 8rpx;
+  font-size: 36rpx;
+  font-weight: 800;
+}
+
+.scope-mini,
+.my-prediction-row,
+.empty-inline {
+  margin-top: 22rpx;
+  padding: 20rpx;
+  border-radius: 12rpx;
+  background: #f8fafc;
+}
+
+.empty-inline {
+  font-size: 23rpx;
+  line-height: 1.5;
+  color: #64748b;
 }
 
 .account-label,
@@ -65,5 +105,9 @@
 
 .single-button {
   width: 100%;
+  margin-top: 22rpx;
+}
+
+.quick-actions {
   margin-top: 22rpx;
 }

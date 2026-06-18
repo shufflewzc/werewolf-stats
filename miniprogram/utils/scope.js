@@ -32,6 +32,11 @@ function getSelectedScope() {
   return wx.getStorageSync(STORAGE_KEY) || null;
 }
 
+function getRequiredScope() {
+  const scope = getSelectedScope();
+  return scope && scope.competition ? scope : null;
+}
+
 function setSelectedScope(scope) {
   wx.setStorageSync(STORAGE_KEY, scope || null);
 }
@@ -52,10 +57,26 @@ function scopeParams(scope) {
   };
 }
 
+function needsCompetitionState(extra = {}) {
+  return Object.assign({
+    loading: false,
+    error: "",
+    selectedScope: null,
+    needsCompetition: true
+  }, extra);
+}
+
+function goCompetitions() {
+  wx.switchTab({ url: "/pages/competitions/competitions" });
+}
+
 module.exports = {
   buildScopeFromCompetition,
   clearSelectedScope,
+  getRequiredScope,
   getSelectedScope,
+  goCompetitions,
+  needsCompetitionState,
   scopeParams,
   setSelectedScope
 };

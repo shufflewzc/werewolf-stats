@@ -29,13 +29,18 @@ Page({
     this.setData({ loading: true, error: "" });
     try {
       const payload = await request("/api/competitions");
+      const selectedScope = getSelectedScope();
       this.setData({
         loading: false,
-        selectedScope: getSelectedScope(),
+        selectedScope,
         view: payload.view || "list",
         hero: payload.hero || {},
         metrics: take(payload.metrics, 4),
-        cards: payload.cards || []
+        cards: (payload.cards || []).map((card) => ({
+          ...card,
+          isSelected: Boolean(selectedScope && selectedScope.competition === card.competition_name),
+          enterText: selectedScope && selectedScope.competition === card.competition_name ? "重新进入当前赛事" : "进入赛事"
+        }))
       });
     } catch (error) {
       this.setData({

@@ -4,6 +4,7 @@ import web_app as legacy
 
 RequestContext = legacy.RequestContext
 DEFAULT_REGION_NAME = legacy.DEFAULT_REGION_NAME
+audit_action = legacy.audit_action
 build_competition_catalog_rows = legacy.build_competition_catalog_rows
 build_scoped_path = legacy.build_scoped_path
 build_series_manage_path = legacy.build_series_manage_path
@@ -408,6 +409,7 @@ def get_series_manage_page(
                           <input type="hidden" name="competition_name" value="{escape(selected_competition_name)}">
                           <input type="hidden" name="season_name" value="{escape(target_season_name)}">
                           <input type="hidden" name="next" value="{escape(current_form['next'])}">
+                          <input class="form-control mb-2" name="delete_confirmation" placeholder="输入 删除赛季 确认">
                           <button type="submit" class="btn btn-outline-danger"{delete_button_disabled}{delete_button_confirm}>强制删除当前赛季</button>
                         </form>
                         """
@@ -660,6 +662,8 @@ def handle_series_manage(ctx: RequestContext, start_response):
         next_path = form_value(ctx.form, "next").strip()
         if not is_admin_user(ctx.current_user):
             return start_response_html(start_response, "403 Forbidden", get_series_manage_page(ctx, alert="只有管理员可以强制删除赛季。"))
+        if form_value(ctx.form, "delete_confirmation").strip() != "删除赛季":
+            return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="强制删除赛季前，请在确认框输入：删除赛季。"))
         selected_entry = get_series_entry_by_competition(catalog, competition_name)
         if not selected_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="没有找到对应的地区系列赛。"))
@@ -691,6 +695,14 @@ def handle_series_manage(ctx: RequestContext, start_response):
         if errors:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="强制删除赛季失败：" + "；".join(errors[:3])))
         save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "season.delete",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"强制删除 {competition_name} / {season_name} 赛季",
+            metadata={"competition_name": competition_name, "season_name": season_name},
+        )
         return start_response_html(start_response, "200 OK", get_series_manage_page(RequestContext(method="GET", path=ctx.path, query={"competition_name": [competition_name], **({"next": [next_path]} if next_path else {})}, form={}, files={}, current_user=ctx.current_user, now_label=ctx.now_label), alert=f"{competition_name} / {season_name} 已强制删除，并清理了该赛季相关数据。"))
     series_name = form_value(ctx.form, "series_name").strip()
     series_code = form_value(ctx.form, "series_code").strip()

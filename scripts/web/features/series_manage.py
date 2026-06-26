@@ -125,6 +125,11 @@ def build_stage_window_form_values(entry: dict[str, str] | None = None) -> dict[
     return values
 
 
+def date_input_value(value: object) -> str:
+    label = format_datetime_local_label(str(value or ""))
+    return "" if label == "未设置" else label
+
+
 def collect_stage_windows_from_form(form: dict[str, list[str]]) -> list[dict[str, str]]:
     windows: list[dict[str, str]] = []
     for stage_key in STAGE_OPTIONS:
@@ -143,13 +148,13 @@ def validate_stage_windows(stage_windows: list[dict[str, str]]) -> str:
         start_at = str(window.get("start_at") or "").strip()
         end_at = str(window.get("end_at") or "").strip()
         if not start_at or not end_at:
-            return f"{stage_label} 需要同时填写开始时间和结束时间。"
+            return f"{stage_label} 需要同时填写开始日期和结束日期。"
         normalized_start = parse_china_datetime(start_at)
         normalized_end = parse_china_datetime(end_at)
         if not normalized_start or not normalized_end:
-            return f"{stage_label} 的起止时间格式无效。"
-        if normalized_start > normalized_end:
-            return f"{stage_label} 开始时间不能晚于结束时间。"
+            return f"{stage_label} 的起止日期格式无效。"
+        if normalized_start.date() > normalized_end.date():
+            return f"{stage_label} 开始日期不能晚于结束日期。"
     return ""
 
 
@@ -770,8 +775,8 @@ def get_series_manage_page(
             </div>
           </div>
           <div class="row g-3 mt-1">
-            <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">开始时间</div><div class="fw-semibold mt-1">{escape(format_datetime_local_label(selected_season_entry.get('start_at', '')))}</div></div></div>
-            <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">结束时间</div><div class="fw-semibold mt-1">{escape(format_datetime_local_label(selected_season_entry.get('end_at', '')))}</div></div></div>
+            <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">开始日期</div><div class="fw-semibold mt-1">{escape(format_datetime_local_label(selected_season_entry.get('start_at', '')))}</div></div></div>
+            <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">结束日期</div><div class="fw-semibold mt-1">{escape(format_datetime_local_label(selected_season_entry.get('end_at', '')))}</div></div></div>
             <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">状态</div><div class="fw-semibold mt-1">{escape(season_status_label(selected_season_entry))}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4"><div class="small text-secondary">赛季说明</div><div class="fw-semibold mt-1">{escape(selected_season_entry.get('notes') or '暂无赛季说明')}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_scoring_rule_summary(merge_scoring_rules(selected_entry.get('scoring_rule') if selected_entry else None, selected_season_entry.get('scoring_rule')))}</div></div>
@@ -794,7 +799,7 @@ def get_series_manage_page(
                   <div>
                     <div class="card-kicker mb-2">赛季档期</div>
                     <h2 class="h5 mb-2">{escape(season_entry['season_name'])}</h2>
-                    <div class="small-muted">起止时间 {escape(format_datetime_local_label(season_entry.get('start_at', '')))} - {escape(format_datetime_local_label(season_entry.get('end_at', '')))}</div>
+                    <div class="small-muted">起止日期 {escape(format_datetime_local_label(season_entry.get('start_at', '')))} - {escape(format_datetime_local_label(season_entry.get('end_at', '')))}</div>
                     <div class="small-muted mt-1">状态 {escape(season_status_label(season_entry))}</div>
                   </div>
                   <span class="chip">{'当前赛季' if season_entry['season_name'] == requested_season_name else escape(season_status_label(season_entry))}</span>
@@ -863,12 +868,12 @@ def get_series_manage_page(
                         <div class="fw-semibold mb-3">{escape(stage_label)}</div>
                         <div class="row g-2">
                           <div class="col-12 col-md-6">
-                            <label class="form-label">开始时间</label>
-                            <input class="form-control" name="stage_{escape(stage_key)}_start_at" type="datetime-local" value="{escape(season_form[f'stage_{stage_key}_start_at'])}">
+                            <label class="form-label">开始日期</label>
+                            <input class="form-control" name="stage_{escape(stage_key)}_start_at" type="date" value="{escape(date_input_value(season_form[f'stage_{stage_key}_start_at']))}">
                           </div>
                           <div class="col-12 col-md-6">
-                            <label class="form-label">结束时间</label>
-                            <input class="form-control" name="stage_{escape(stage_key)}_end_at" type="datetime-local" value="{escape(season_form[f'stage_{stage_key}_end_at'])}">
+                            <label class="form-label">结束日期</label>
+                            <input class="form-control" name="stage_{escape(stage_key)}_end_at" type="date" value="{escape(date_input_value(season_form[f'stage_{stage_key}_end_at']))}">
                           </div>
                         </div>
                       </div>
@@ -892,15 +897,15 @@ def get_series_manage_page(
                     <input type="hidden" name="next" value="{escape(current_form['next'])}">
                     <div class="row g-3">
                       <div class="col-12 col-md-4"><label class="form-label">赛季名称</label><input class="form-control" name="season_name" value="{escape(season_form['season_name'])}" placeholder="例如：2026春季联赛" required></div>
-                      <div class="col-12 col-md-4"><label class="form-label">开始时间</label><input class="form-control" name="start_at" type="datetime-local" value="{escape(season_form['start_at'])}" required></div>
-                      <div class="col-12 col-md-4"><label class="form-label">结束时间</label><input class="form-control" name="end_at" type="datetime-local" value="{escape(season_form['end_at'])}" required></div>
+                      <div class="col-12 col-md-4"><label class="form-label">开始日期</label><input class="form-control" name="start_at" type="date" value="{escape(date_input_value(season_form['start_at']))}" required></div>
+                      <div class="col-12 col-md-4"><label class="form-label">结束日期</label><input class="form-control" name="end_at" type="date" value="{escape(date_input_value(season_form['end_at']))}" required></div>
                       <div class="col-12"><label class="form-label">赛季说明</label><textarea class="form-control" name="notes" rows="3" placeholder="可写赛季定位、档期说明或补充备注。">{escape(season_form['notes'])}</textarea></div>
                       {render_scoring_rule_editor(season_form.get('scoring_rule'), 'season', allow_inherit=True, inherited_rule=(selected_entry or {}).get('scoring_rule'))}
                       <div class="col-12">
                         <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mt-2">
                           <div>
                             <h3 class="h5 mb-1">赛段时间</h3>
-                            <div class="small text-secondary">以下时间均按北京时间保存；赛事页会用当前北京时间自动显示赛段状态。</div>
+                            <div class="small text-secondary">以下日期均按北京时间保存；赛事页会按当天自动显示赛段状态。</div>
                           </div>
                         </div>
                       </div>

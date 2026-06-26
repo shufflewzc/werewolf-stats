@@ -9217,9 +9217,9 @@ def validate_season_catalog_form(
     normalized_start = parse_china_datetime(start_at)
     normalized_end = parse_china_datetime(end_at)
     if not normalized_start or not normalized_end:
-        return "请为赛季填写有效的起止时间。"
-    if normalized_start > normalized_end:
-        return "赛季开始时间不能晚于结束时间。"
+        return "请为赛季填写有效的起止日期。"
+    if normalized_start.date() > normalized_end.date():
+        return "赛季开始日期不能晚于结束日期。"
     return ""
 
 

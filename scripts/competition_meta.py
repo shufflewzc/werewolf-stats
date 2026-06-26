@@ -155,14 +155,14 @@ def normalize_datetime_local_value(value: str) -> str:
     parsed = parse_china_datetime(value)
     if not parsed:
         return ""
-    return parsed.strftime("%Y-%m-%dT%H:%M")
+    return parsed.strftime("%Y-%m-%d")
 
 
 def format_datetime_local_label(value: str) -> str:
     parsed = parse_china_datetime(value)
     if not parsed:
         return "未设置"
-    return parsed.strftime("%Y-%m-%d %H:%M")
+    return parsed.strftime("%Y-%m-%d")
 
 
 def build_competition_code(competition_name: str) -> str:
@@ -483,11 +483,14 @@ def get_season_status(entry: dict[str, Any], now: datetime | None = None) -> str
     current = now or china_now()
     start_at = parse_china_datetime(str(entry.get("start_at") or ""))
     end_at = parse_china_datetime(str(entry.get("end_at") or ""))
-    if start_at and current < start_at:
+    current_day = current.date()
+    start_day = start_at.date() if start_at else None
+    end_day = end_at.date() if end_at else None
+    if start_day and current_day < start_day:
         return "upcoming"
-    if end_at and current > end_at:
+    if end_day and current_day > end_day:
         return "ended"
-    if start_at or end_at:
+    if start_day or end_day:
         return "ongoing"
     return "draft"
 

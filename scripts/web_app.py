@@ -194,7 +194,7 @@ TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "team_manual_achievements:"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 WECHAT_MINIPROGRAM_APPID = os.getenv("WECHAT_MINIPROGRAM_APPID", "")
 WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
-WEB_LOGIN_BASE_URL = os.getenv("WEB_LOGIN_BASE_URL", "https://wolf.fakerclaw.indevs.in").rstrip("/")
+WEB_LOGIN_BASE_URL = os.getenv("WEB_LOGIN_BASE_URL", "https://wolf.metauniverse-cn.xyz").rstrip("/")
 WEB_LOGIN_TTL_SECONDS = int(os.getenv("WEB_LOGIN_TTL_SECONDS", "600"))
 WEB_LOGIN_META_PREFIX = "web_login:"
 COOKIE_SECURE = os.getenv("COOKIE_SECURE", "1" if WEB_LOGIN_BASE_URL.startswith("https://") else "0").strip() != "0"

@@ -6,8 +6,8 @@ const childProcess = require("child_process");
 
 const ROOT = path.resolve(__dirname, "..");
 const MINIPROGRAM_DIR = path.join(ROOT, "miniprogram");
-const EXPECTED_APPID = "wxc06350ee61b573c5";
-const EXPECTED_API_BASE_URL = "https://wolf.fakerclaw.indevs.in";
+const EXPECTED_APPID = "wx6299309f1691bf3e";
+const EXPECTED_API_BASE_URL = "https://wolf.metauniverse-cn.xyz";
 const REQUIRED_PAGE_EXTENSIONS = [".js", ".wxml", ".json"];
 
 const results = {

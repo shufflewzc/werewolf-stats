@@ -112,7 +112,7 @@ def check_wechat(report: ConfigReport, *, skip_wechat: bool) -> None:
 
 
 def check_https_and_cookie(report: ConfigReport) -> None:
-    base_url = env("WEB_LOGIN_BASE_URL", "https://wolf.fakerclaw.indevs.in")
+    base_url = env("WEB_LOGIN_BASE_URL", "https://wolf.metauniverse-cn.xyz")
     parsed = urlparse(base_url)
     if parsed.scheme != "https":
         report.fail("WEB_LOGIN_BASE_URL 必须使用 https://，否则网页登录和 Cookie 安全性不足。")

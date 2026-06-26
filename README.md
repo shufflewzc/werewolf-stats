@@ -374,7 +374,7 @@ DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats'
 ENABLE_POSTGRES_WRITES=1
 WECHAT_MINIPROGRAM_APPID='你的小程序AppID'
 WECHAT_MINIPROGRAM_SECRET='你的小程序Secret'
-WEB_LOGIN_BASE_URL='https://wolf.fakerclaw.indevs.in'
+WEB_LOGIN_BASE_URL='https://wolf.metauniverse-cn.xyz'
 COOKIE_SECURE=1
 ```
 
@@ -481,7 +481,7 @@ DATABASE_URL=postgresql://user:password@host:5432/werewolf_stats
 ENABLE_POSTGRES_WRITES=1
 WECHAT_MINIPROGRAM_APPID=你的小程序AppID
 WECHAT_MINIPROGRAM_SECRET=你的小程序Secret
-WEB_LOGIN_BASE_URL=https://wolf.fakerclaw.indevs.in
+WEB_LOGIN_BASE_URL=https://wolf.metauniverse-cn.xyz
 COOKIE_SECURE=1
 MAX_REQUEST_BODY_BYTES=52428800
 MAX_EXCEL_UPLOAD_BYTES=10485760
@@ -724,7 +724,7 @@ DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
 ENABLE_POSTGRES_WRITES=1 \
 WECHAT_MINIPROGRAM_APPID='你的 AppID' \
 WECHAT_MINIPROGRAM_SECRET='你的 Secret' \
-WEB_LOGIN_BASE_URL='https://wolf.fakerclaw.indevs.in' \
+WEB_LOGIN_BASE_URL='https://wolf.metauniverse-cn.xyz' \
 COOKIE_SECURE=1 \
 python3 scripts/pre_deploy_check.py
 ```
@@ -764,7 +764,7 @@ DATABASE_URL='postgresql://user:password@host:5432/werewolf_stats' \
 ENABLE_POSTGRES_WRITES=1 \
 WECHAT_MINIPROGRAM_APPID='你的 AppID' \
 WECHAT_MINIPROGRAM_SECRET='你的 Secret' \
-WEB_LOGIN_BASE_URL='https://wolf.fakerclaw.indevs.in' \
+WEB_LOGIN_BASE_URL='https://wolf.metauniverse-cn.xyz' \
 COOKIE_SECURE=1 \
 python3 scripts/production_config_check.py
 ```

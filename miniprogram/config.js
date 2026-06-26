@@ -1,5 +1,5 @@
 const apiPresets = {
-  production: "https://wolf.fakerclaw.indevs.in",
+  production: "https://wolf.metauniverse-cn.xyz",
   local: "http://127.0.0.1:8000"
 };
 

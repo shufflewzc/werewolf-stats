@@ -36,7 +36,7 @@ node scripts/check_miniprogram_release.js
 ```
 
 - 确认 `config.js` 使用 `activeApiEnv = "production"`，并且 `allowLocalApi = false`。
-- 当前正式接口地址为 `https://wolf.fakerclaw.indevs.in`。
+- 当前正式接口地址为 `https://wolf.metauniverse-cn.xyz`。
 - 在微信公众平台配置 request 合法域名。
 - 把 `project.config.json` 里的 `appid` 换成你的小程序 AppID。
 - 后端服务需要配置 `WECHAT_MINIPROGRAM_APPID` 和 `WECHAT_MINIPROGRAM_SECRET`，用于把 `wx.login` 的 code 换成 openid。

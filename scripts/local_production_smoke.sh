@@ -27,7 +27,7 @@ export PYTHON_BIN
 export HOST
 export PORT
 export ENABLE_POSTGRES_WRITES="${ENABLE_POSTGRES_WRITES:-1}"
-export WEB_LOGIN_BASE_URL="${WEB_LOGIN_BASE_URL:-https://wolf.fakerclaw.indevs.in}"
+export WEB_LOGIN_BASE_URL="${WEB_LOGIN_BASE_URL:-https://wolf.metauniverse-cn.xyz}"
 export COOKIE_SECURE="${COOKIE_SECURE:-1}"
 export WECHAT_MINIPROGRAM_APPID="${WECHAT_MINIPROGRAM_APPID:-local-smoke-appid}"
 export WECHAT_MINIPROGRAM_SECRET="${WECHAT_MINIPROGRAM_SECRET:-local-smoke-secret}"

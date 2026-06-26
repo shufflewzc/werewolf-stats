@@ -1,6 +1,7 @@
 <view class="page">
   <view class="detail-hero">
-    <image class="detail-avatar" src="{{player.photoUrl}}" mode="aspectFill"></image>
+    <image wx:if="{{player.photoUrl}}" class="detail-avatar" src="{{player.photoUrl}}" mode="aspectFill" binderror="onPlayerImageError"></image>
+    <view wx:else class="detail-avatar image-placeholder"></view>
     <view class="detail-main">
       <text class="detail-eyebrow">{{player.team_name || "未绑定门派"}}</text>
       <text class="detail-name">{{player.name || "选手详情"}}</text>

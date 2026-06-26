@@ -56,5 +56,13 @@ Page({
 
   goCompetitions() {
     goCompetitions();
+  },
+
+  onTeamImageError(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    this.setData({ [`teams[${index}].logoUrl`]: "" });
   }
 });

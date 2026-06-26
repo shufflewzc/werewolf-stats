@@ -139,6 +139,10 @@ Page({
     goCompetitions();
   },
 
+  onPlayerImageError() {
+    this.setData({ "player.photoUrl": "" });
+  },
+
   goCompetitions() {
     goCompetitions();
   }

@@ -190,6 +190,23 @@ page {
   border-radius: 50%;
 }
 
+.image-placeholder {
+  position: relative;
+  background: #e2e8f0;
+}
+
+.image-placeholder::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28rpx;
+  height: 28rpx;
+  border-radius: 8rpx;
+  background: #cbd5e1;
+  content: "";
+  transform: translate(-50%, -50%);
+}
+
 .list-main {
   flex: 1;
   min-width: 0;

@@ -20,6 +20,7 @@ CHINA_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_REGION_NAME = "广州"
 SERIES_CATALOG_META_KEY = "series_catalog"
 SEASON_CATALOG_META_KEY = "season_catalog"
+SCORING_RULE_TEMPLATES_META_KEY = "scoring_rule_templates"
 SCORING_RULE_COMPONENTS = (
     ("result_points", "胜负分"),
     ("vote_points", "投票分"),
@@ -631,6 +632,90 @@ def normalize_scoring_rule(value: Any, *, allow_inherit: bool = False) -> dict[s
         "version": version,
         "updated_at": str(value.get("updated_at") or "").strip(),
     }
+
+
+def build_scoring_rule_template_slug(name: str) -> str:
+    ascii_tokens = re.findall(r"[A-Za-z0-9]+", name)
+    if ascii_tokens:
+        return normalize_slug_fragment("-".join(ascii_tokens), "scoring-template")
+    initials = "".join(CHINESE_INITIAL_MAP.get(char, "") for char in name.strip())
+    initials = re.sub(r"(.)\1+", r"\1", initials)
+    return normalize_slug_fragment(initials or name, "scoring-template")
+
+
+def normalize_scoring_rule_template(entry: dict[str, Any]) -> dict[str, Any] | None:
+    name = str(entry.get("name") or "").strip()
+    rule = normalize_scoring_rule(entry.get("scoring_rule"))
+    if not name:
+        return None
+    slug = normalize_slug_fragment(
+        str(entry.get("slug") or "").strip() or build_scoring_rule_template_slug(name),
+        "scoring-template",
+    )
+    return {
+        "slug": slug,
+        "name": name,
+        "description": str(entry.get("description") or "").strip(),
+        "scoring_rule": rule,
+        "created_by": str(entry.get("created_by") or "system").strip() or "system",
+        "created_on": str(entry.get("created_on") or china_today_label()).strip()
+        or china_today_label(),
+        "updated_at": str(entry.get("updated_at") or "").strip(),
+    }
+
+
+def default_scoring_rule_templates() -> list[dict[str, Any]]:
+    jingcheng_rule = default_scoring_rule(SCORING_RULE_STRUCTURED)
+    jingcheng_rule["notes"] = "京城大师公开赛常用分项模板，可按实际规则继续调整。"
+    return [
+        normalize_scoring_rule_template(
+            {
+                "slug": "jingcheng-master-open",
+                "name": "京城大师公开赛模板",
+                "description": "适合京城大师公开赛这类需要按胜负、投票、行为、特殊和附加/罚分拆分录入的比赛。",
+                "scoring_rule": jingcheng_rule,
+                "created_by": "system",
+                "created_on": china_today_label(),
+            }
+        )
+    ]
+
+
+def load_scoring_rule_templates() -> list[dict[str, Any]]:
+    raw_value = load_meta_value(SCORING_RULE_TEMPLATES_META_KEY) or ""
+    raw_templates: Any = []
+    if raw_value:
+        try:
+            raw_templates = json.loads(raw_value)
+        except json.JSONDecodeError:
+            raw_templates = []
+    templates_by_slug: dict[str, dict[str, Any]] = {}
+    for template in default_scoring_rule_templates():
+        if template:
+            templates_by_slug[template["slug"]] = template
+    if isinstance(raw_templates, list):
+        for raw_entry in raw_templates:
+            if not isinstance(raw_entry, dict):
+                continue
+            template = normalize_scoring_rule_template(raw_entry)
+            if template:
+                templates_by_slug[template["slug"]] = template
+    return sorted(templates_by_slug.values(), key=lambda item: (item["name"], item["slug"]))
+
+
+def save_scoring_rule_templates(templates: list[dict[str, Any]]) -> None:
+    normalized_templates = [
+        template
+        for template in (
+            normalize_scoring_rule_template(item) if isinstance(item, dict) else None
+            for item in templates
+        )
+        if template
+    ]
+    save_meta_value(
+        SCORING_RULE_TEMPLATES_META_KEY,
+        json.dumps(normalized_templates, ensure_ascii=False, indent=2),
+    )
 
 
 def version_scoring_rule(

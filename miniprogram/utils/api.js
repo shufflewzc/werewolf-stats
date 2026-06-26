@@ -121,12 +121,22 @@ function buildApiError(response) {
   return error;
 }
 
-function buildNetworkError(error) {
-  const message = error && error.errMsg ? error.errMsg : "网络请求失败";
-  if (message.indexOf("url not in domain list") >= 0) {
-    return new ApiError("接口域名未加入微信小程序 request 合法域名，请检查公众平台配置。");
+function shortRequestTarget(options) {
+  const url = String((options && options.url) || "");
+  if (!url) {
+    return "";
   }
-  return new ApiError(message.indexOf("timeout") >= 0 ? "请求超时，请稍后重试。" : message, {
+  return url.replace(/^https?:\/\/[^/]+/i, "") || url;
+}
+
+function buildNetworkError(error, options) {
+  const message = error && error.errMsg ? error.errMsg : "网络请求失败";
+  const target = shortRequestTarget(options);
+  const suffix = target ? `：${target}` : "";
+  if (message.indexOf("url not in domain list") >= 0) {
+    return new ApiError(`接口域名未加入微信小程序 request 合法域名${suffix}，请检查公众平台配置。`);
+  }
+  return new ApiError(message.indexOf("timeout") >= 0 ? `请求超时${suffix}，请确认服务已启动后重试。` : message, {
     retryable: true
   });
 }
@@ -149,7 +159,7 @@ function wxRequest(options) {
         reject(buildApiError(response));
       },
       fail(error) {
-        reject(buildNetworkError(error));
+        reject(buildNetworkError(error, options));
       }
     }));
   });

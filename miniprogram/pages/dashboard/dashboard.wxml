@@ -116,7 +116,8 @@
       <view class="stack" wx:if="{{topTeams.length}}">
         <view class="list-card" wx:for="{{topTeams}}" wx:key="team_id">
           <text class="rank">{{item.rank}}</text>
-          <image class="logo" src="{{item.logoUrl}}" mode="aspectFill"></image>
+          <image wx:if="{{item.logoUrl}}" class="logo" src="{{item.logoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onTeamImageError"></image>
+          <view wx:else class="logo image-placeholder"></view>
           <view class="list-main">
             <text class="list-title">{{item.short_name || item.name}}</text>
             <text class="list-meta">胜率 {{item.win_rate}} · 出赛 {{item.matches_represented}} 场</text>
@@ -140,7 +141,8 @@
       <view class="stack" wx:if="{{topPlayers.length}}">
         <view class="list-card" wx:for="{{topPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
           <text class="rank">{{item.rank}}</text>
-          <image class="avatar" src="{{item.photoUrl}}" mode="aspectFill"></image>
+          <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onPlayerImageError"></image>
+          <view wx:else class="avatar image-placeholder"></view>
           <view class="list-main">
             <text class="list-title">{{item.display_name}}</text>
             <text class="list-meta">{{item.team_name}} · 出场 {{item.games_played}} 局</text>

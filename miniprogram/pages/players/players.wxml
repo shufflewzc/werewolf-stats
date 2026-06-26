@@ -62,7 +62,8 @@
         <view class="stack" wx:if="{{players.length}}">
           <view class="list-card player-row" wx:for="{{visiblePlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
             <text class="rank">{{item.rank}}</text>
-            <image class="avatar" src="{{item.photoUrl}}" mode="aspectFill"></image>
+            <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onPlayerImageError"></image>
+            <view wx:else class="avatar image-placeholder"></view>
             <view class="list-main">
               <text class="list-title">{{item.display_name}}</text>
               <text class="list-meta">{{item.team_name}} · {{item.record}} · 胜率 {{item.win_rate}}</text>

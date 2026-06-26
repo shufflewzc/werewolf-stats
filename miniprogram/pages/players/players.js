@@ -105,6 +105,17 @@ Page({
     wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
   },
 
+  onPlayerImageError(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    this.setData({
+      [`players[${index}].photoUrl`]: "",
+      [`visiblePlayers[${index}].photoUrl`]: ""
+    });
+  },
+
   loadMorePlayers() {
     const selectedScope = getRequiredScope();
     if (!selectedScope || !this.data.playerHasMore) {

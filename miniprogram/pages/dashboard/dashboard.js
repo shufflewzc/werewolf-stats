@@ -156,6 +156,22 @@ Page({
     wx.switchTab({ url: "/pages/mine/mine" });
   },
 
+  onTeamImageError(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    this.setData({ [`topTeams[${index}].logoUrl`]: "" });
+  },
+
+  onPlayerImageError(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    this.setData({ [`topPlayers[${index}].photoUrl`]: "" });
+  },
+
   goBindPlayer() {
     const currentUser = this.data.currentUser;
     if (!currentUser) {

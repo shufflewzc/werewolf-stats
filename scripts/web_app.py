@@ -59,6 +59,7 @@ from competition_meta import (
     infer_series_name_from_competition,
     list_seasons,
     load_season_catalog,
+    load_scoring_rule_templates,
     load_series_catalog,
     merge_scoring_rules,
     normalize_season_catalog_entry,
@@ -67,6 +68,7 @@ from competition_meta import (
     parse_china_datetime,
     resolve_scoring_rule_for_scope,
     save_season_catalog,
+    save_scoring_rule_templates,
     save_series_catalog,
     season_status_label,
     scoring_rule_component_fields,
@@ -15785,6 +15787,8 @@ def serve_asset(start_response, path: str):
             ("Content-Type", content_type),
             ("Content-Length", str(len(payload))),
             ("X-Content-Type-Options", "nosniff"),
+            ("Cross-Origin-Resource-Policy", "cross-origin"),
+            ("Access-Control-Allow-Origin", "*"),
         ],
     )
     return [payload]

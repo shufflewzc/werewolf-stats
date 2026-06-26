@@ -14,6 +14,7 @@ can_manage_competition_catalog = legacy.can_manage_competition_catalog
 can_manage_competition_seasons = legacy.can_manage_competition_seasons
 can_manage_series_entry = legacy.can_manage_series_entry
 china_today_label = legacy.china_today_label
+china_now = legacy.china_now
 escape = legacy.escape
 format_datetime_local_label = legacy.format_datetime_local_label
 form_value = legacy.form_value
@@ -25,6 +26,7 @@ is_admin_user = legacy.is_admin_user
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
 load_season_catalog = legacy.load_season_catalog
+load_scoring_rule_templates = legacy.load_scoring_rule_templates
 load_series_catalog = legacy.load_series_catalog
 load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
@@ -38,6 +40,7 @@ require_competition_season_manager = legacy.require_competition_season_manager
 save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
 save_season_catalog = legacy.save_season_catalog
+save_scoring_rule_templates = legacy.save_scoring_rule_templates
 save_series_catalog = legacy.save_series_catalog
 season_status_label = legacy.season_status_label
 scoring_rule_component_fields = legacy.scoring_rule_component_fields
@@ -282,12 +285,29 @@ def render_scoring_rule_summary(rule: dict[str, object] | None) -> str:
     """
 
 
+def build_scoring_template_option_tags(
+    templates: list[dict[str, object]],
+    selected_slug: str = "",
+) -> str:
+    options = ['<option value="">不套用模板，手动配置</option>']
+    for template in templates:
+        slug = str(template.get("slug") or "").strip()
+        name = str(template.get("name") or "").strip()
+        if not slug or not name:
+            continue
+        selected = " selected" if slug == selected_slug else ""
+        options.append(f'<option value="{escape(slug)}"{selected}>{escape(name)}</option>')
+    return "".join(options)
+
+
 def render_scoring_rule_editor(
     rule: dict[str, object] | None,
     prefix: str,
     *,
     allow_inherit: bool = False,
     inherited_rule: dict[str, object] | None = None,
+    templates: list[dict[str, object]] | None = None,
+    selected_template_slug: str = "",
 ) -> str:
     normalized_rule = normalize_scoring_rule(rule, allow_inherit=allow_inherit)
     inherited = bool(normalized_rule.get("inherit"))
@@ -353,6 +373,22 @@ def render_scoring_rule_editor(
             """
         )
     custom_count = len(custom_components)
+    template_select_html = ""
+    template_payload = {
+        str(template.get("slug") or ""): normalize_scoring_rule(template.get("scoring_rule"))
+        for template in (templates or [])
+        if isinstance(template, dict) and str(template.get("slug") or "").strip()
+    }
+    if templates:
+        template_select_html = f"""
+          <div class="col-12 col-md-6">
+            <label class="form-label">套用计分模板</label>
+            <select class="form-select" name="{escape(prefix)}_scoring_template" data-scoring-template-select>
+              {build_scoring_template_option_tags(templates, selected_template_slug)}
+            </select>
+            <div class="small text-secondary mt-2">选择后会自动填充下方计分方式和维度；保存前仍可继续微调。</div>
+          </div>
+        """
     custom_row_template = f"""
       <div class="team-link-card shadow-sm p-3 h-100">
         <input type="hidden" name="{escape(prefix)}_custom_key___INDEX__" value="__KEY__">
@@ -368,7 +404,7 @@ def render_scoring_rule_editor(
       </div>
     """
     return f"""
-    <div class="col-12">
+    <div class="col-12" data-scoring-rule-editor data-scoring-prefix="{escape(prefix)}">
       <div class="team-link-card shadow-sm p-4">
         <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
           <div>
@@ -378,6 +414,7 @@ def render_scoring_rule_editor(
         </div>
         <div class="row g-3">
           {inherit_html}
+          {template_select_html}
           <div class="col-12 col-md-6">
             <label class="form-label">计分方式</label>
             <select class="form-select" name="{escape(prefix)}_score_model">
@@ -413,7 +450,16 @@ def render_scoring_rule_editor(
         const addButton = editor.querySelector("[data-add-custom-score]");
         if (!list || !countInput || !addButton) return;
         const rowTemplate = {json.dumps(custom_row_template, ensure_ascii=False)};
+        const prefix = {json.dumps(prefix, ensure_ascii=False)};
+        const templates = {json.dumps(template_payload, ensure_ascii=False)};
+        const templateSelect = editor.querySelector("[data-scoring-template-select]");
         let nextIndex = Number.parseInt(countInput.value || "0", 10) || 0;
+        function getField(name) {{
+          return editor.querySelector("[name='" + prefix + "_" + name + "']");
+        }}
+        function syncCustomCount() {{
+          countInput.value = String(nextIndex);
+        }}
         function bindRemove(button) {{
           button.addEventListener("click", function() {{
             const row = button.closest("[data-custom-score-row]");
@@ -435,6 +481,54 @@ def render_scoring_rule_editor(
           list.appendChild(wrapper);
           bindRemove(wrapper.querySelector("[data-remove-custom-score]"));
         }});
+        function setChecked(field, checked) {{
+          if (field) field.checked = Boolean(checked);
+        }}
+        function setValue(field, value) {{
+          if (field) field.value = value == null ? "" : String(value);
+        }}
+        function addCustomComponent(component) {{
+          const index = nextIndex++;
+          const key = component.key || ("custom_" + Date.now().toString(36) + "_" + index);
+          const wrapper = document.createElement("div");
+          wrapper.className = "col-12 col-md-6 col-xl-4";
+          wrapper.setAttribute("data-custom-score-row", "");
+          wrapper.innerHTML = rowTemplate
+            .replaceAll("__INDEX__", String(index))
+            .replaceAll("__KEY__", key);
+          list.appendChild(wrapper);
+          bindRemove(wrapper.querySelector("[data-remove-custom-score]"));
+          setChecked(getField("custom_enabled_" + index), component.enabled !== false);
+          setValue(getField("custom_label_" + index), component.label || "");
+        }}
+        function applyTemplate(rule) {{
+          if (!rule || !Array.isArray(rule.components)) return;
+          setValue(getField("score_model"), rule.score_model || "standard");
+          setValue(getField("scoring_notes"), rule.notes || "");
+          const fixedKeys = new Set({json.dumps([key for key, _ in SCORING_RULE_COMPONENTS], ensure_ascii=False)});
+          const byKey = new Map();
+          rule.components.forEach(function(component) {{
+            if (component && component.key) byKey.set(component.key, component);
+          }});
+          fixedKeys.forEach(function(key) {{
+            const component = byKey.get(key) || {{}};
+            setChecked(getField("score_" + key + "_enabled"), component.enabled === true);
+            setValue(getField("score_" + key + "_label"), component.label || "");
+          }});
+          list.innerHTML = "";
+          nextIndex = 0;
+          rule.components.forEach(function(component) {{
+            if (!component || !component.key || fixedKeys.has(component.key)) return;
+            addCustomComponent(component);
+          }});
+          syncCustomCount();
+        }}
+        if (templateSelect) {{
+          templateSelect.addEventListener("change", function() {{
+            const rule = templates[templateSelect.value];
+            if (rule) applyTemplate(rule);
+          }});
+        }}
       }})();
     </script>
     """
@@ -448,6 +542,7 @@ def get_series_manage_page(
     data = load_validated_data()
     catalog = load_series_catalog(data)
     season_catalog = load_season_catalog(data)
+    scoring_templates = load_scoring_rule_templates()
     manageable_catalog = [entry for entry in catalog if can_manage_series_entry(ctx.current_user, entry)] if not is_admin_user(ctx.current_user) else catalog
     competition_rows = build_competition_catalog_rows(data, manageable_catalog)
     requested_competition_name = form_value(ctx.query, "competition_name").strip()
@@ -470,6 +565,10 @@ def get_series_manage_page(
         "hero_intro": "",
         "hero_note": "",
         "scoring_rule": normalize_scoring_rule({}),
+        "scoring_template": "",
+        "save_scoring_template": "",
+        "scoring_template_name": "",
+        "scoring_template_description": "",
         "original_competition_name": "",
         "next": form_value(ctx.query, "next").strip(),
         "edit_mode": requested_edit_mode,
@@ -851,7 +950,20 @@ def get_series_manage_page(
                   <div class="col-12 col-md-6"><label class="form-label">赛事页主标题</label><input class="form-control" name="hero_title" value="{escape(current_form['hero_title'])}" placeholder="留空则默认显示赛事页名称"></div>
                   <div class="col-12"><label class="form-label">赛事页导语</label><textarea class="form-control" name="hero_intro" rows="3" placeholder="展示在赛事页头部左侧，适合写当前赛事定位、浏览方式和亮点。">{escape(current_form['hero_intro'])}</textarea></div>
                   <div class="col-12"><label class="form-label">赛事页说明备注</label><textarea class="form-control" name="hero_note" rows="3" placeholder="展示在赛事页头部右侧信息卡，适合写这个赛区、本赛季或该赛事页的说明。">{escape(current_form['hero_note'])}</textarea></div>
-                  {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog')}
+                  {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog', templates=scoring_templates, selected_template_slug=current_form.get('scoring_template', ''))}
+                  <div class="col-12">
+                    <div class="team-link-card shadow-sm p-4">
+                      <div class="form-check">
+                        <input class="form-check-input" id="save_scoring_template" name="save_scoring_template" type="checkbox" value="1"{' checked' if current_form.get('save_scoring_template') else ''}>
+                        <label class="form-check-label" for="save_scoring_template">同时保存为计分模板</label>
+                      </div>
+                      <div class="row g-3 mt-1">
+                        <div class="col-12 col-md-5"><label class="form-label">模板名称</label><input class="form-control" name="scoring_template_name" value="{escape(current_form.get('scoring_template_name') or '')}" placeholder="例如：京城大师公开赛模板"></div>
+                        <div class="col-12 col-md-7"><label class="form-label">模板说明</label><input class="form-control" name="scoring_template_description" value="{escape(current_form.get('scoring_template_description') or '')}" placeholder="可写适用赛事、赛制或注意事项"></div>
+                      </div>
+                      <div class="small text-secondary mt-2">保存成模板后，新建其他地区赛事页时可以直接套用。</div>
+                    </div>
+                  </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-4">
                   <button type="submit" class="btn btn-dark">保存赛事页信息</button>
@@ -889,7 +1001,20 @@ def get_series_manage_page(
                   <div class="col-12 col-md-6"><label class="form-label">赛事页主标题</label><input class="form-control" name="hero_title" value="{escape(current_form['hero_title'])}" placeholder="留空则默认显示赛事页名称"></div>
                   <div class="col-12"><label class="form-label">赛事页导语</label><textarea class="form-control" name="hero_intro" rows="3" placeholder="展示在赛事页头部左侧，适合写当前赛事定位、浏览方式和亮点。">{escape(current_form['hero_intro'])}</textarea></div>
                   <div class="col-12"><label class="form-label">赛事页说明备注</label><textarea class="form-control" name="hero_note" rows="3" placeholder="展示在赛事页头部右侧信息卡，适合写这个赛区、本赛季或该赛事页的说明。">{escape(current_form['hero_note'])}</textarea></div>
-                  {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog')}
+                  {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog', templates=scoring_templates, selected_template_slug=current_form.get('scoring_template', ''))}
+                  <div class="col-12">
+                    <div class="team-link-card shadow-sm p-4">
+                      <div class="form-check">
+                        <input class="form-check-input" id="save_scoring_template" name="save_scoring_template" type="checkbox" value="1"{' checked' if current_form.get('save_scoring_template') else ''}>
+                        <label class="form-check-label" for="save_scoring_template">同时保存为计分模板</label>
+                      </div>
+                      <div class="row g-3 mt-1">
+                        <div class="col-12 col-md-5"><label class="form-label">模板名称</label><input class="form-control" name="scoring_template_name" value="{escape(current_form.get('scoring_template_name') or '')}" placeholder="例如：京城大师公开赛模板"></div>
+                        <div class="col-12 col-md-7"><label class="form-label">模板说明</label><input class="form-control" name="scoring_template_description" value="{escape(current_form.get('scoring_template_description') or '')}" placeholder="可写适用赛事、赛制或注意事项"></div>
+                      </div>
+                      <div class="small text-secondary mt-2">保存成模板后，新建其他地区赛事页时可以直接套用。</div>
+                    </div>
+                  </div>
                 </div>
                 <div class="d-flex flex-wrap gap-2 mt-4">
                   <button type="submit" class="btn btn-dark">保存系列赛目录</button>
@@ -1067,12 +1192,36 @@ def handle_series_manage(ctx: RequestContext, start_response):
     hero_intro = form_value(ctx.form, "hero_intro").strip()
     hero_note = form_value(ctx.form, "hero_note").strip()
     catalog_scoring_rule = collect_scoring_rule_from_form(ctx.form, "catalog")
+    selected_scoring_template = form_value(ctx.form, "catalog_scoring_template").strip()
+    save_as_scoring_template = form_value(ctx.form, "save_scoring_template").strip() in {"1", "true", "on", "yes"}
+    scoring_template_name = form_value(ctx.form, "scoring_template_name").strip()
+    scoring_template_description = form_value(ctx.form, "scoring_template_description").strip()
     original_competition_name = form_value(ctx.form, "original_competition_name").strip()
     next_path = form_value(ctx.form, "next").strip()
     edit_mode = form_value(ctx.form, "edit_mode").strip() or ("catalog" if original_competition_name else "create")
-    form_values = {"series_name": series_name, "series_code": series_code, "region_name": region_name, "competition_name": competition_name, "summary": summary, "page_badge": page_badge, "hero_title": hero_title, "hero_intro": hero_intro, "hero_note": hero_note, "catalog_scoring_rule": catalog_scoring_rule, "original_competition_name": original_competition_name, "next": next_path, "edit_mode": edit_mode}
+    form_values = {
+        "series_name": series_name,
+        "series_code": series_code,
+        "region_name": region_name,
+        "competition_name": competition_name,
+        "summary": summary,
+        "page_badge": page_badge,
+        "hero_title": hero_title,
+        "hero_intro": hero_intro,
+        "hero_note": hero_note,
+        "catalog_scoring_rule": catalog_scoring_rule,
+        "scoring_template": selected_scoring_template,
+        "save_scoring_template": "1" if save_as_scoring_template else "",
+        "scoring_template_name": scoring_template_name,
+        "scoring_template_description": scoring_template_description,
+        "original_competition_name": original_competition_name,
+        "next": next_path,
+        "edit_mode": edit_mode,
+    }
     error = legacy.validate_series_catalog_form(series_name, region_name, competition_name)
     error = error or validate_scoring_rule_labels(catalog_scoring_rule)
+    if save_as_scoring_template and not scoring_template_name:
+        error = error or "保存为计分模板时，需要填写模板名称。"
     if not error and original_competition_name and original_competition_name != competition_name:
         error = "已有赛事页名称暂不支持直接修改，请保留原名称并编辑页面信息。"
     existing_entry = get_series_entry_by_competition(catalog, original_competition_name) if original_competition_name else None
@@ -1096,4 +1245,31 @@ def handle_series_manage(ctx: RequestContext, start_response):
     updated_catalog = [item for item in catalog if item["competition_name"] != (original_competition_name or competition_name)]
     updated_catalog.append(new_entry)
     save_series_catalog(updated_catalog)
+    if save_as_scoring_template:
+        existing_templates = load_scoring_rule_templates()
+        matching_template = next(
+            (
+                template
+                for template in existing_templates
+                if str(template.get("name") or "").strip() == scoring_template_name
+            ),
+            None,
+        )
+        updated_templates = [
+            template
+            for template in existing_templates
+            if str(template.get("name") or "").strip() != scoring_template_name
+        ]
+        updated_templates.append(
+            {
+                "slug": str((matching_template or {}).get("slug") or ""),
+                "name": scoring_template_name,
+                "description": scoring_template_description,
+                "scoring_rule": catalog_scoring_rule,
+                "created_by": str((matching_template or {}).get("created_by") or (ctx.current_user["username"] if ctx.current_user else "system")),
+                "created_on": str((matching_template or {}).get("created_on") or china_today_label()),
+                "updated_at": china_now().replace(microsecond=0).isoformat(),
+            }
+        )
+        save_scoring_rule_templates(updated_templates)
     return start_response_html(start_response, "200 OK", get_series_manage_page(RequestContext(method="GET", path=ctx.path, query={"competition_name": [new_entry["competition_name"]], **({"next": [next_path]} if next_path else {})}, form={}, files={}, current_user=ctx.current_user, now_label=ctx.now_label), alert=(f"{competition_name} 的赛事页信息已更新。" if original_competition_name else f"{competition_name} 已写入系列赛目录。")))

@@ -51,7 +51,8 @@
       <view class="stack" wx:if="{{teams.length}}">
         <view class="list-card team-row" wx:for="{{teams}}" wx:key="team_id">
           <text class="rank">{{item.rank}}</text>
-          <image class="logo" src="{{item.logoUrl}}" mode="aspectFill"></image>
+          <image wx:if="{{item.logoUrl}}" class="logo" src="{{item.logoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onTeamImageError"></image>
+          <view wx:else class="logo image-placeholder"></view>
           <view class="list-main">
             <text class="list-title">{{item.short_name || item.name}}</text>
             <text class="list-meta">胜率 {{item.win_rate}} · {{item.wins}}胜{{item.losses}}负 · {{item.player_count}} 人</text>

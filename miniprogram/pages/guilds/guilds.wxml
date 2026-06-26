@@ -3,7 +3,7 @@
     <text class="eyebrow">Guilds</text>
     <text class="title">{{needsCompetition ? "先进入赛事" : (hero.title || "全部门派")}}</text>
     <text class="copy" wx:if="{{needsCompetition}}">必须先选择赛事，之后才能查看该赛事上下文里的门派与详情。</text>
-    <text class="copy" wx:else>{{hero.copy || "查看长期战队组织、赛季身份和荣誉归档。"}}</text>
+    <text class="copy" wx:else>{{hero.copy || "查看长期门派组织、赛季身份和荣誉归档。"}}</text>
   </view>
 
   <view wx:if="{{loading}}" class="section">
@@ -68,7 +68,7 @@
           <view class="guild-stats">
             <view>
               <text class="guild-stat-value">{{item.ongoing_team_count}}</text>
-              <text class="guild-stat-label">进行中战队</text>
+              <text class="guild-stat-label">进行中队伍</text>
             </view>
             <view>
               <text class="guild-stat-value">{{item.match_count}}</text>

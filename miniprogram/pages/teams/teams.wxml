@@ -1,14 +1,14 @@
 <view class="page">
   <view class="hero">
     <text class="eyebrow">Teams</text>
-    <text class="title">战队排行榜</text>
-    <text class="copy">{{scope.description || "查看战队积分、胜率和出赛表现。"}}</text>
+    <text class="title">门派排行榜</text>
+    <text class="copy">{{scope.description || "查看门派积分、胜率和出赛表现。"}}</text>
   </view>
 
   <view wx:if="{{loading}}" class="section">
     <view class="empty-card">
       <text class="empty-title">正在加载</text>
-      <text class="empty-copy">正在读取战队排行。</text>
+      <text class="empty-copy">正在读取门派排行。</text>
     </view>
   </view>
 
@@ -25,7 +25,7 @@
     <view class="section" wx:if="{{needsCompetition}}">
       <view class="empty-card">
         <text class="empty-title">先进入赛事</text>
-        <text class="empty-copy">选择赛事后，才能查看该赛事内的战队数据。</text>
+        <text class="empty-copy">选择赛事后，才能查看该赛事内的门派数据。</text>
         <view class="button-row">
           <button class="primary-button" bindtap="goCompetitions">去选择赛事</button>
         </view>
@@ -63,8 +63,8 @@
         </view>
       </view>
       <view class="empty-card" wx:else>
-        <text class="empty-title">暂无战队</text>
-        <text class="empty-copy">录入比赛结果后，这里会显示战队排行。</text>
+        <text class="empty-title">暂无门派</text>
+        <text class="empty-copy">录入比赛结果后，这里会显示门派排行。</text>
       </view>
     </view>
     </block>

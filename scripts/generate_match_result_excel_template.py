@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from io import BytesIO
+import json
 from pathlib import Path
 from shutil import copyfile
 from xml.sax.saxutils import escape
@@ -380,9 +382,21 @@ def build_formula_cell(
     column_refs: dict[str, str],
     max_row_number: int,
     cached_value: object = None,
+    score_component_keys: list[str] | None = None,
 ) -> FormulaCell | None:
-    role_ref = f"{column_refs['role']}{row_number}"
     match_ref = f"{column_refs['match_id']}{row_number}"
+    if field_name == "points_earned" and score_component_keys:
+        score_refs = [
+            f"{column_refs[key]}{row_number}"
+            for key in score_component_keys
+            if key in column_refs
+        ]
+        if score_refs:
+            formula = f'IF({match_ref}="","",ROUND(SUM({",".join(score_refs)}),2))'
+            cached_text = None if cached_value in (None, "") else str(cached_value)
+            return FormulaCell(formula=formula, cached_value=cached_text)
+
+    role_ref = f"{column_refs['role']}{row_number}"
     result_points_ref = f"{column_refs['result_points']}{row_number}"
     camp_ref = f"{column_refs['camp']}{row_number}"
     camp_range = f"${column_refs['camp']}$2:${column_refs['camp']}${max_row_number}"
@@ -413,6 +427,7 @@ def build_formula_cell(
 def build_sheet_rows(
     columns: list[tuple[str, str]],
     sample_rows: list[dict[str, object]],
+    score_component_keys: list[str] | None = None,
 ) -> list[list[object]]:
     column_refs = {
         field_name: excel_column_name(index)
@@ -426,13 +441,19 @@ def build_sheet_rows(
         row_values: list[object] = []
         for field_name, _label in columns:
             formula_cell = None
-            if {"match_id", "role", "result_points", "camp", "result"}.issubset(column_refs):
+            should_build_formula = (
+                field_name == "points_earned" and bool(score_component_keys)
+            ) or {"match_id", "role", "result_points", "camp", "result"}.issubset(
+                column_refs
+            )
+            if should_build_formula:
                 formula_cell = build_formula_cell(
                     field_name,
                     row_number,
                     column_refs,
                     max_row_number,
                     source_row.get(field_name),
+                    score_component_keys,
                 )
             row_values.append(formula_cell if formula_cell is not None else source_row.get(field_name, ""))
         rows.append(row_values)
@@ -467,10 +488,14 @@ def build_sheet_xml(columns: list[tuple[str, str]], rows: list[list[object]]) ->
 
 
 def workbook_xml(sheet_names: list[str]) -> str:
-    sheets_xml = "".join(
-        f'<sheet name="{escape(sheet_name)}" sheetId="{index}" r:id="rId{index}"/>'
-        for index, sheet_name in enumerate(sheet_names, start=1)
-    )
+    sheet_rows = []
+    for index, sheet_name in enumerate(sheet_names, start=1):
+        state_attribute = ' state="hidden"' if sheet_name.startswith("_") else ""
+        sheet_rows.append(
+            f'<sheet name="{escape(sheet_name)}" sheetId="{index}" '
+            f'r:id="rId{index}"{state_attribute}/>'
+        )
+    sheets_xml = "".join(sheet_rows)
     return f"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
  xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
@@ -553,18 +578,120 @@ def write_multi_sheet_workbook(
     sheets: list[tuple[str, list[tuple[str, str]], list[dict[str, object]]]],
 ) -> Path:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    with ZipFile(output_file, "w", compression=ZIP_DEFLATED) as archive:
+    output_file.write_bytes(build_multi_sheet_workbook_bytes(sheets))
+    return output_file
+
+
+def build_multi_sheet_workbook_bytes(
+    sheets: list[
+        tuple[
+            str,
+            list[tuple[str, str]],
+            list[dict[str, object]],
+            list[str] | None,
+        ]
+        | tuple[str, list[tuple[str, str]], list[dict[str, object]]]
+    ],
+) -> bytes:
+    buffer = BytesIO()
+    with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
         archive.writestr("[Content_Types].xml", content_types_xml(len(sheets)))
         archive.writestr("_rels/.rels", root_rels_xml())
-        archive.writestr("xl/workbook.xml", workbook_xml([sheet_name for sheet_name, _, _ in sheets]))
+        archive.writestr("xl/workbook.xml", workbook_xml([sheet[0] for sheet in sheets]))
         archive.writestr("xl/_rels/workbook.xml.rels", workbook_rels_xml(len(sheets)))
         archive.writestr("xl/styles.xml", styles_xml())
-        for index, (_sheet_name, columns, sample_rows) in enumerate(sheets, start=1):
+        for index, sheet in enumerate(sheets, start=1):
+            _sheet_name, columns, sample_rows = sheet[:3]
+            score_component_keys = sheet[3] if len(sheet) > 3 else None
             archive.writestr(
                 f"xl/worksheets/sheet{index}.xml",
-                build_sheet_xml(columns, build_sheet_rows(columns, sample_rows)),
+                build_sheet_xml(
+                    columns,
+                    build_sheet_rows(columns, sample_rows, score_component_keys),
+                ),
             )
-    return output_file
+    return buffer.getvalue()
+
+
+def build_dynamic_match_template_bytes(
+    competition_name: str,
+    season_name: str,
+    scoring_rule: dict[str, object],
+) -> bytes:
+    components = [
+        (
+            str(component.get("key") or "").strip(),
+            str(component.get("label") or "").strip(),
+        )
+        for component in scoring_rule.get("components", [])
+        if isinstance(component, dict)
+        and component.get("enabled", False)
+        and str(component.get("key") or "").strip()
+        and str(component.get("label") or "").strip()
+    ]
+    score_model = str(scoring_rule.get("score_model") or "standard")
+    columns = [
+        ("seat", "座位号"),
+        ("team_name", "战队名"),
+        ("player_name", "选手"),
+        ("match_id", "局号"),
+        ("group_label", "分组"),
+        ("role", "身份"),
+        *components,
+        ("points_earned", "单局积分"),
+        ("camp", "阵营"),
+        ("result", "结果"),
+        ("stance_result", "站边"),
+        ("competition_name", "赛事名称"),
+        ("season_name", "赛季"),
+        ("played_on", "日期"),
+        ("format", "板型"),
+        ("winning_camp", "胜利阵营"),
+        ("score_model", "积分模型"),
+        ("mvp_player_name", "MVP"),
+        ("svp_player_name", "SVP"),
+        ("scapegoat_player_name", "背锅"),
+        ("notes", "备注"),
+    ]
+    sample_rows = build_sample_rows(competition_name, season_name, score_model)
+    for row in sample_rows:
+        for key, _label in components:
+            row.setdefault(key, 0)
+        row["points_earned"] = round(
+            sum(float(row.get(key) or 0.0) for key, _label in components),
+            2,
+        )
+    metadata_rows = [
+        {"meta_key": "competition_name", "meta_value": competition_name},
+        {"meta_key": "season_name", "meta_value": season_name},
+        {
+            "meta_key": "scoring_rule_version",
+            "meta_value": str(scoring_rule.get("version") or 1),
+        },
+        {
+            "meta_key": "scoring_rule_json",
+            "meta_value": json.dumps(
+                scoring_rule,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ),
+        },
+    ]
+    return build_multi_sheet_workbook_bytes(
+        [
+            (
+                "records",
+                columns,
+                sample_rows,
+                [key for key, _label in components],
+            ),
+            (
+                "_scoring_meta",
+                [("meta_key", "meta_key"), ("meta_value", "meta_value")],
+                metadata_rows,
+            ),
+        ]
+    )
 
 
 def write_workbook(

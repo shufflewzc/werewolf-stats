@@ -1,16 +1,8 @@
 const { request } = require("../../utils/api");
-const { getCurrentUser } = require("../../utils/auth");
 const { createPagedState, nextPagedState } = require("../../utils/paging");
 const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
-
-function findMyPrediction(predictions, user) {
-  if (!user || !user.player_id) {
-    return null;
-  }
-  return (predictions || []).find((item) => item.player_id === user.player_id) || null;
-}
 
 Page({
   data: {
@@ -33,10 +25,7 @@ Page({
     visiblePredictions: [],
     predictionTotalCount: 0,
     predictionVisibleCount: 0,
-    predictionHasMore: false,
-    currentUser: null,
-    myPrediction: null,
-    myPredictionValue: "--"
+    predictionHasMore: false
   },
 
   onLoad(options) {
@@ -72,30 +61,24 @@ Page({
         visiblePredictions: [],
         predictionTotalCount: 0,
         predictionVisibleCount: 0,
-        predictionHasMore: false,
-        currentUser: getCurrentUser(),
-        myPrediction: null,
-        myPredictionValue: "--"
+        predictionHasMore: false
       }));
       return;
     }
     this.setData({ loading: true, error: "" });
     try {
       const params = scopeParams(selectedScope);
-      const currentUser = getCurrentUser();
       const [dayPayload, predictionPayload] = await Promise.all([
         request(`/api/days/${encodeURIComponent(playedOn)}`, params),
         request("/api/predictions", {
           ...params,
           played_on: playedOn,
           limit: PAGE_SIZE,
-          offset: 0,
-          focus_player_id: currentUser && currentUser.player_id ? currentUser.player_id : ""
+          offset: 0
         })
       ]);
       const predictions = predictionPayload.predictions || [];
       const playerLeaderboard = dayPayload.player_leaderboard || [];
-      const myPrediction = predictionPayload.focused_prediction || findMyPrediction(predictions, currentUser);
       const predictionPagination = predictionPayload.pagination || {};
       const pagedPlayers = createPagedState(playerLeaderboard);
       wx.setNavigationBarTitle({ title: `${playedOn} 比赛日` });
@@ -117,10 +100,7 @@ Page({
         visiblePredictions: predictions,
         predictionTotalCount: Number(predictionPagination.total || predictions.length),
         predictionVisibleCount: predictions.length,
-        predictionHasMore: Boolean(predictionPagination.has_more),
-        currentUser,
-        myPrediction,
-        myPredictionValue: myPrediction ? (myPrediction.expected_total || myPrediction.expected_points || "--") : "--"
+        predictionHasMore: Boolean(predictionPagination.has_more)
       });
     } catch (error) {
       this.setData({
@@ -152,13 +132,11 @@ Page({
     if (!selectedScope || !this.data.predictionHasMore) {
       return;
     }
-    const currentUser = getCurrentUser();
     request("/api/predictions", {
       ...scopeParams(selectedScope),
       played_on: this.data.playedOn,
       limit: PAGE_SIZE,
-      offset: this.data.predictionVisibleCount,
-      focus_player_id: currentUser && currentUser.player_id ? currentUser.player_id : ""
+      offset: this.data.predictionVisibleCount
     }).then((payload) => {
       const predictions = this.data.predictions.concat(payload.predictions || []);
       const pagination = payload.pagination || {};

@@ -69,14 +69,34 @@ def uses_structured_score_model(value: Any) -> bool:
 
 
 def normalize_score_breakdown(entry: dict[str, Any]) -> dict[str, float]:
-    return {
-        field_name: float(entry.get(field_name, 0.0) or 0.0)
-        for field_name in MATCH_SCORE_COMPONENT_FIELDS
-    }
+    raw_breakdown = entry.get("score_breakdown")
+    breakdown = {
+        str(field_name): float(value or 0.0)
+        for field_name, value in raw_breakdown.items()
+        if str(field_name).strip()
+    } if isinstance(raw_breakdown, dict) else {}
+    for field_name in MATCH_SCORE_COMPONENT_FIELDS:
+        breakdown[field_name] = float(
+            entry.get(field_name, breakdown.get(field_name, 0.0)) or 0.0
+        )
+    return breakdown
 
 
-def calculate_score_breakdown_total(entry: dict[str, Any]) -> float:
-    return round(sum(normalize_score_breakdown(entry).values()), 2)
+def calculate_score_breakdown_total(
+    entry: dict[str, Any],
+    scoring_rule: dict[str, Any] | None = None,
+) -> float:
+    breakdown = normalize_score_breakdown(entry)
+    component_keys = MATCH_SCORE_COMPONENT_FIELDS
+    if isinstance(scoring_rule, dict):
+        configured_keys = [
+            str(component.get("key") or "").strip()
+            for component in scoring_rule.get("components", [])
+            if isinstance(component, dict) and component.get("enabled", False)
+        ]
+        if configured_keys:
+            component_keys = configured_keys
+    return round(sum(float(breakdown.get(key, 0.0)) for key in component_keys), 2)
 
 
 def derive_match_awards(
@@ -300,6 +320,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             round INTEGER NOT NULL,
             game_no INTEGER NOT NULL,
             score_model TEXT NOT NULL DEFAULT 'standard',
+            scoring_rule_json TEXT NOT NULL DEFAULT '{}',
             exclude_from_team_scores INTEGER NOT NULL DEFAULT 0,
             played_on TEXT NOT NULL,
             group_label TEXT NOT NULL DEFAULT '',
@@ -329,6 +350,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             behavior_points REAL NOT NULL DEFAULT 0,
             special_points REAL NOT NULL DEFAULT 0,
             adjustment_points REAL NOT NULL DEFAULT 0,
+            score_breakdown_json TEXT NOT NULL DEFAULT '{}',
             points_available REAL NOT NULL,
             stance_pick TEXT NOT NULL,
             stance_correct INTEGER NOT NULL CHECK (stance_correct IN (0, 1)),
@@ -599,6 +621,10 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE matches ADD COLUMN score_model TEXT NOT NULL DEFAULT 'standard'"
         )
+    if "scoring_rule_json" not in match_columns:
+        connection.execute(
+            "ALTER TABLE matches ADD COLUMN scoring_rule_json TEXT NOT NULL DEFAULT '{}'"
+        )
     if "exclude_from_team_scores" not in match_columns:
         connection.execute(
             "ALTER TABLE matches ADD COLUMN exclude_from_team_scores INTEGER NOT NULL DEFAULT 0"
@@ -611,6 +637,10 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
             connection.execute(
                 f"ALTER TABLE match_players ADD COLUMN {column_name} REAL NOT NULL DEFAULT 0"
             )
+    if "score_breakdown_json" not in match_player_columns:
+        connection.execute(
+            "ALTER TABLE match_players ADD COLUMN score_breakdown_json TEXT NOT NULL DEFAULT '{}'"
+        )
     request_columns = {
         row["name"]
         for row in connection.execute("PRAGMA table_info(membership_requests)").fetchall()
@@ -1085,10 +1115,10 @@ def replace_repository_data(
             connection.execute(
                 """
                 INSERT INTO matches (
-                    match_id, competition_name, season, stage, round, game_no, score_model, exclude_from_team_scores, played_on, group_label, table_label, format,
+                    match_id, competition_name, season, stage, round, game_no, score_model, scoring_rule_json, exclude_from_team_scores, played_on, group_label, table_label, format,
                     duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     match["match_id"],
@@ -1098,6 +1128,7 @@ def replace_repository_data(
                     match["round"],
                     match["game_no"],
                     normalize_match_score_model(match.get("score_model")),
+                    json.dumps(match.get("scoring_rule") or {}, ensure_ascii=False),
                     1 if match.get("exclude_from_team_scores") else 0,
                     match["played_on"],
                     match.get("group_label", ""),
@@ -1115,7 +1146,7 @@ def replace_repository_data(
                 score_model = normalize_match_score_model(match.get("score_model"))
                 score_breakdown = normalize_score_breakdown(entry)
                 points_earned = (
-                    calculate_score_breakdown_total(entry)
+                    calculate_score_breakdown_total(entry, match.get("scoring_rule"))
                     if uses_structured_score_model(score_model)
                     else float(entry.get("points_earned", 0.0))
                 )
@@ -1124,9 +1155,9 @@ def replace_repository_data(
                     INSERT INTO match_players (
                         match_id, sort_order, player_id, team_id, seat, role, camp, survived, result,
                         points_earned, result_points, vote_points, behavior_points, special_points, adjustment_points,
-                        points_available, stance_pick, stance_correct, notes
+                        score_breakdown_json, points_available, stance_pick, stance_correct, notes
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         match["match_id"],
@@ -1144,6 +1175,7 @@ def replace_repository_data(
                         score_breakdown["behavior_points"],
                         score_breakdown["special_points"],
                         score_breakdown["adjustment_points"],
+                        json.dumps(score_breakdown, ensure_ascii=False),
                         float(entry.get("points_available", points_earned)),
                         to_legacy_stance_columns(
                             normalize_stance_result(entry),
@@ -1484,7 +1516,7 @@ def load_matches(connection: Any | None = None) -> list[dict[str, Any]]:
         require_initialized_database(connection)
         match_rows = connection.execute(
             """
-            SELECT match_id, competition_name, season, stage, round, game_no, score_model, exclude_from_team_scores, played_on, group_label, table_label, format,
+            SELECT match_id, competition_name, season, stage, round, game_no, score_model, scoring_rule_json, exclude_from_team_scores, played_on, group_label, table_label, format,
                    duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
             FROM matches
             ORDER BY played_on, round, game_no, match_id
@@ -1494,7 +1526,7 @@ def load_matches(connection: Any | None = None) -> list[dict[str, Any]]:
             """
             SELECT match_id, player_id, team_id, seat, role, camp, survived, result,
                    points_earned, result_points, vote_points, behavior_points, special_points, adjustment_points,
-                   points_available, stance_pick, stance_correct, notes
+                   score_breakdown_json, points_available, stance_pick, stance_correct, notes
             FROM match_players
             ORDER BY match_id, sort_order
             """
@@ -1502,10 +1534,16 @@ def load_matches(connection: Any | None = None) -> list[dict[str, Any]]:
 
         participants_by_match: dict[str, list[dict[str, Any]]] = {}
         for row in participant_rows:
-            score_breakdown = {
+            try:
+                score_breakdown = json.loads(row["score_breakdown_json"] or "{}")
+            except (TypeError, json.JSONDecodeError):
+                score_breakdown = {}
+            if not isinstance(score_breakdown, dict):
+                score_breakdown = {}
+            score_breakdown.update({
                 field_name: float(row[field_name] or 0.0)
                 for field_name in MATCH_SCORE_COMPONENT_FIELDS
-            }
+            })
             participants_by_match.setdefault(row["match_id"], []).append(
                 {
                     "player_id": row["player_id"],
@@ -1515,7 +1553,11 @@ def load_matches(connection: Any | None = None) -> list[dict[str, Any]]:
                     "camp": row["camp"],
                     "result": row["result"],
                     "points_earned": float(row["points_earned"]),
-                    **score_breakdown,
+                    **{
+                        field_name: score_breakdown.get(field_name, 0.0)
+                        for field_name in MATCH_SCORE_COMPONENT_FIELDS
+                    },
+                    "score_breakdown": score_breakdown,
                     "stance_result": normalize_stance_result(
                         {
                             "stance_pick": row["stance_pick"],
@@ -1535,6 +1577,7 @@ def load_matches(connection: Any | None = None) -> list[dict[str, Any]]:
                 "round": row["round"],
                 "game_no": row["game_no"],
                 "score_model": normalize_match_score_model(row["score_model"]),
+                "scoring_rule": json.loads(row["scoring_rule_json"] or "{}"),
                 "exclude_from_team_scores": bool(row["exclude_from_team_scores"]),
                 "played_on": row["played_on"],
                 "group_label": row["group_label"] or "",

@@ -42,10 +42,13 @@ from generate_stats import (
     safe_rate,
 )
 from competition_meta import (
+    MAX_SCORING_RULE_COMPONENTS,
+    SCORING_RULE_COMPONENTS,
     build_city_code,
     build_season_code,
     build_series_context_from_competition,
     canonicalize_match_ids,
+    default_scoring_rule,
     format_datetime_local_label,
     get_season_entry,
     get_season_entries_for_series,
@@ -57,12 +60,17 @@ from competition_meta import (
     list_seasons,
     load_season_catalog,
     load_series_catalog,
+    merge_scoring_rules,
     normalize_season_catalog_entry,
+    normalize_scoring_rule,
     normalize_series_catalog_entry,
     parse_china_datetime,
+    resolve_scoring_rule_for_scope,
     save_season_catalog,
     save_series_catalog,
     season_status_label,
+    scoring_rule_component_fields,
+    version_scoring_rule,
 )
 from sqlite_store import (
     DB_PATH,
@@ -1324,7 +1332,7 @@ MATCH_SCORE_MODEL_STANDARD = "standard"
 MATCH_SCORE_MODEL_JINGCHENG_DAILY = "jingcheng_daily"
 MATCH_SCORE_MODEL_OPTIONS = {
     MATCH_SCORE_MODEL_STANDARD: "通用总分录入",
-    MATCH_SCORE_MODEL_JINGCHENG_DAILY: "京城大师赛日报积分模型",
+    MATCH_SCORE_MODEL_JINGCHENG_DAILY: "分项自动汇总",
 }
 MATCH_SCORE_COMPONENT_FIELDS = [
     ("result_points", "胜负分"),
@@ -1359,14 +1367,35 @@ def parse_float_value(value: Any, default: float = 0.0) -> float:
 
 def normalize_score_breakdown(entry: dict[str, Any] | None) -> dict[str, float]:
     current = entry or {}
-    return {
-        field_name: parse_float_value(current.get(field_name), 0.0)
-        for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
-    }
+    raw_breakdown = current.get("score_breakdown")
+    breakdown = {
+        str(field_name): parse_float_value(value, 0.0)
+        for field_name, value in raw_breakdown.items()
+        if str(field_name).strip()
+    } if isinstance(raw_breakdown, dict) else {}
+    for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS:
+        breakdown[field_name] = parse_float_value(
+            current.get(field_name, breakdown.get(field_name)),
+            0.0,
+        )
+    return breakdown
 
 
-def calculate_score_breakdown_total(entry: dict[str, Any] | None) -> float:
-    return round(sum(normalize_score_breakdown(entry).values()), 2)
+def calculate_score_breakdown_total(
+    entry: dict[str, Any] | None,
+    scoring_rule: dict[str, Any] | None = None,
+) -> float:
+    breakdown = normalize_score_breakdown(entry)
+    component_keys = [field_name for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS]
+    if isinstance(scoring_rule, dict):
+        configured_keys = [
+            str(component.get("key") or "").strip()
+            for component in scoring_rule.get("components", [])
+            if isinstance(component, dict) and component.get("enabled", False)
+        ]
+        if configured_keys:
+            component_keys = configured_keys
+    return round(sum(float(breakdown.get(key, 0.0)) for key in component_keys), 2)
 
 
 def get_match_score_model_label(value: str | None) -> str:
@@ -14593,6 +14622,8 @@ def validate_match_awards(match: dict[str, Any]) -> str:
 
 def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any]) -> dict[str, Any]:
     score_model = normalize_match_score_model(form_value(form, "score_model"))
+    scoring_rule = existing_match.get("scoring_rule") or {}
+    configured_score_fields = scoring_rule_component_fields(scoring_rule)
     participants = []
     for index in range(len(existing_match["players"])):
         player_name = form_value(form, f"player_name_{index}").strip()
@@ -14606,12 +14637,22 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
             )
             for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
         }
+        for field_name, _ in configured_score_fields:
+            if field_name in score_breakdown:
+                continue
+            score_breakdown[field_name] = parse_float_value(
+                form_value(form, f"score_component_{field_name}_{index}", "0") or "0",
+                0.0,
+            )
         points_earned = parse_float_value(
             form_value(form, f"points_earned_{index}", "0") or "0",
             0.0,
         )
         if uses_structured_score_model(score_model):
-            points_earned = round(sum(score_breakdown.values()), 2)
+            points_earned = calculate_score_breakdown_total(
+                {"score_breakdown": score_breakdown},
+                scoring_rule,
+            )
         participants.append(
             {
                 "player_id": "",
@@ -14623,7 +14664,11 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
                 "camp": form_value(form, f"camp_{index}"),
                 "result": form_value(form, f"result_{index}"),
                 "points_earned": points_earned,
-                **score_breakdown,
+                **{
+                    field_name: score_breakdown.get(field_name, 0.0)
+                    for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+                },
+                "score_breakdown": score_breakdown,
                 "stance_result": form_value(form, f"stance_result_{index}", "none"),
                 "notes": form_value(form, f"notes_{index}"),
             }
@@ -14637,6 +14682,7 @@ def parse_match_form(form: dict[str, list[str]], existing_match: dict[str, Any])
         "round": int(form_value(form, "round", "0") or "0"),
         "game_no": int(form_value(form, "game_no", "0") or "0"),
         "score_model": score_model,
+        "scoring_rule": scoring_rule,
         "exclude_from_team_scores": form_value(form, "exclude_from_team_scores").strip()
         in {"1", "true", "on", "yes"},
         "played_on": form_value(form, "played_on").strip(),
@@ -14713,6 +14759,7 @@ def build_empty_match(competition_name: str = "", season_name: str = "") -> dict
         "round": 1,
         "game_no": 1,
         "score_model": MATCH_SCORE_MODEL_STANDARD,
+        "scoring_rule": {},
         "exclude_from_team_scores": False,
         "played_on": china_today_label(),
         "group_label": "A组",
@@ -14742,6 +14789,7 @@ def build_empty_match(competition_name: str = "", season_name: str = "") -> dict
                 "result": "win",
                 "points_earned": 0.0,
                 **build_empty_score_breakdown(),
+                "score_breakdown": build_empty_score_breakdown(),
                 "stance_result": "none",
                 "notes": "",
             }

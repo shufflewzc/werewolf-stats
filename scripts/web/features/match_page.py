@@ -31,6 +31,8 @@ normalize_match_score_model = legacy.normalize_match_score_model
 normalize_score_breakdown = legacy.normalize_score_breakdown
 normalize_stance_result = legacy.normalize_stance_result
 quote = legacy.quote
+resolve_scoring_rule_for_scope = legacy.resolve_scoring_rule_for_scope
+scoring_rule_component_fields = legacy.scoring_rule_component_fields
 start_response_json = legacy.start_response_json
 to_chinese_camp = legacy.to_chinese_camp
 urlencode = legacy.urlencode
@@ -940,6 +942,14 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
     score_model = normalize_match_score_model(match.get("score_model"))
     score_model_label = get_match_score_model_label(score_model)
     show_score_breakdown = uses_structured_score_model(score_model)
+    match_scoring_rule = match.get("scoring_rule") or resolve_scoring_rule_for_scope(
+        data, competition_name, season_name
+    )
+    scoring_rule_version = int(match_scoring_rule.get("version") or 1)
+    score_component_fields = (
+        scoring_rule_component_fields(match_scoring_rule)
+        or MATCH_SCORE_COMPONENT_FIELDS
+    ) if show_score_breakdown else []
     participant_by_id = {
         str(participant.get("player_id") or "").strip(): participant
         for participant in match["players"]
@@ -1051,7 +1061,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
         if show_score_breakdown:
             breakdown_cells = "".join(
                 f"<td>{score_breakdown[field_name]:.2f}</td>"
-                for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+                for field_name, _ in score_component_fields
             )
         participant_rows.append(
             f"""
@@ -1078,7 +1088,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
     if show_score_breakdown:
         breakdown_header_html = "".join(
             f"<th>{escape(field_label)}</th>"
-            for _, field_label in MATCH_SCORE_COMPONENT_FIELDS
+            for _, field_label in score_component_fields
         )
     predictions = build_match_score_predictions(
         data,
@@ -1122,7 +1132,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
             <span class="chip">编号 {escape(match['match_id'])}</span>
             <span class="chip">{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</span>
             <span class="chip">第 {match['round']} 轮</span>
-            <span class="chip">计分模型 {escape(score_model_label)}</span>
+            <span class="chip">计分模型 {escape(score_model_label)} · V{scoring_rule_version}</span>
             <a class="switcher-chip" href="{escape(build_match_day_path(match['played_on'], build_scoped_path('/matches/' + match_id, competition_name, season_name)))}">{escape(match['played_on'])}</a>
           </div>
           <div class="d-flex flex-wrap gap-2 mt-3">
@@ -1540,6 +1550,14 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
     score_model = normalize_match_score_model(match.get("score_model"))
     score_model_label = get_match_score_model_label(score_model)
     show_score_breakdown = uses_structured_score_model(score_model)
+    match_scoring_rule = match.get("scoring_rule") or resolve_scoring_rule_for_scope(
+        data, competition_name, season_name
+    )
+    scoring_rule_version = int(match_scoring_rule.get("version") or 1)
+    score_component_fields = (
+        scoring_rule_component_fields(match_scoring_rule)
+        or MATCH_SCORE_COMPONENT_FIELDS
+    ) if show_score_breakdown else []
     participants = []
     team_scores: dict[str, float] = {}
     participant_by_id = {}
@@ -1567,7 +1585,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
                 "stance": STANCE_OPTIONS.get(normalize_stance_result(participant), normalize_stance_result(participant)),
                 "points": round(float(participant.get("points_earned") or 0), 2),
                 "notes": participant.get("notes") or "",
-                "breakdown": {label: round(float(breakdown.get(field, 0.0)), 2) for field, label in MATCH_SCORE_COMPONENT_FIELDS} if show_score_breakdown else {},
+                "breakdown": {label: round(float(breakdown.get(field, 0.0)), 2) for field, label in score_component_fields} if show_score_breakdown else {},
             }
         )
 
@@ -1633,6 +1651,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
             "winning_camp": to_chinese_camp(match.get("winning_camp") or ""),
             "group_label": match.get("group_label") or "未设置",
             "score_model": score_model_label,
+            "score_rule_version": scoring_rule_version,
             "notes": match.get("notes") or "暂无备注。",
             "show_score_breakdown": show_score_breakdown,
         },
@@ -1654,7 +1673,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         "score_predictions": predictions,
         "prediction_buckets": [{"key": key, "label": label} for key, label, _, _ in PREDICTION_BUCKETS],
         "participants": participants,
-        "score_fields": [label for _, label in MATCH_SCORE_COMPONENT_FIELDS] if show_score_breakdown else [],
+        "score_fields": [label for _, label in score_component_fields] if show_score_breakdown else [],
     }
 
 

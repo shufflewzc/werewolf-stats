@@ -27,10 +27,8 @@ Page({
     genderLabel: "不便透露",
     selectedScope: null,
     latestDay: null,
-    myPrediction: null,
-    myPredictionValue: "--",
     centerStatus: "未登录",
-    centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和当日预测。"
+    centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。"
   },
 
   onShow() {
@@ -57,49 +55,33 @@ Page({
     const user = getCurrentUser();
     const selectedScope = getSelectedScope();
     let centerStatus = "未登录";
-    let centerCopy = "登录并绑定选手后，这里会显示你的赛事入口和当日预测。";
+    let centerCopy = "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。";
     if (user && user.player_id) {
       centerStatus = "已绑定选手";
-      centerCopy = "可以直接进入我的选手页、比赛日详情和当日预测。";
+      centerCopy = "可以直接进入我的选手页、比赛日详情和预测榜。";
     } else if (user) {
       centerStatus = "未绑定选手";
-      centerCopy = "绑定选手后，会显示你的赛事入口和当日预测。";
+      centerCopy = "绑定选手后，会显示你的赛事入口和个人选手页。";
     }
     if (!selectedScope || !selectedScope.competition) {
       this.setData({
         selectedScope: null,
         latestDay: null,
-        myPrediction: null,
-        myPredictionValue: "--",
         centerStatus,
-        centerCopy: user ? "先进入一个赛事，再查看我的比赛日和预测。" : centerCopy
+        centerCopy: user ? "先进入一个赛事，再查看我的比赛日和选手页。" : centerCopy
       });
       return;
     }
     let latestDay = null;
-    let myPrediction = null;
-    let myPredictionValue = "--";
     try {
       const dashboard = await request("/api/dashboard", scopeParams(selectedScope));
       latestDay = (dashboard.match_days || [])[0] || null;
-      if (user && user.player_id && latestDay && latestDay.played_on) {
-        const predictionPayload = await request("/api/predictions", {
-          ...scopeParams(selectedScope),
-          played_on: latestDay.played_on
-        });
-        myPrediction = (predictionPayload.predictions || []).find(
-          (item) => item.player_id === user.player_id
-        ) || null;
-        myPredictionValue = myPrediction ? (myPrediction.expected_total || myPrediction.expected_points || "--") : "--";
-      }
     } catch (error) {
       centerCopy = error.message || "我的赛事数据加载失败。";
     }
     this.setData({
       selectedScope,
       latestDay,
-      myPrediction,
-      myPredictionValue,
       centerStatus,
       centerCopy
     });
@@ -123,10 +105,8 @@ Page({
     this.setData({
       user: null,
       error: "",
-      myPrediction: null,
-      myPredictionValue: "--",
       centerStatus: "未登录",
-      centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和当日预测。"
+      centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。"
     });
   },
 

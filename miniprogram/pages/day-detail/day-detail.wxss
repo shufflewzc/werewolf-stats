@@ -1,33 +1,9 @@
-.day-summary-card,
 .competition-section,
 .match-card {
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
   background: #ffffff;
   box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
-}
-
-.day-summary-card {
-  display: flex;
-  align-items: center;
-  gap: 18rpx;
-  padding: 24rpx;
-}
-
-.summary-label,
-.summary-title {
-  display: block;
-}
-
-.summary-label {
-  font-size: 22rpx;
-  color: #64748b;
-}
-
-.summary-title {
-  margin-top: 8rpx;
-  font-size: 42rpx;
-  font-weight: 800;
 }
 
 .competition-section {

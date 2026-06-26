@@ -16,6 +16,7 @@ from xml.etree import ElementTree as ET
 from zipfile import BadZipFile, ZipFile
 
 import web_app as legacy
+from generate_match_result_excel_template import build_dynamic_match_template_bytes
 from sqlite_store import (
     clear_season_dimension_stats,
     clear_season_dimension_stats_for_day,
@@ -39,6 +40,7 @@ calculate_score_breakdown_total = legacy.calculate_score_breakdown_total
 can_manage_matches = legacy.can_manage_matches
 canonicalize_match_ids = legacy.canonicalize_match_ids
 create_import_batch = legacy.create_import_batch
+default_scoring_rule = legacy.default_scoring_rule
 ensure_placeholder_players_for_matches = legacy.ensure_placeholder_players_for_matches
 ensure_placeholder_users_for_player_ids = legacy.ensure_placeholder_users_for_player_ids
 file_value = legacy.file_value
@@ -58,6 +60,8 @@ MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 normalize_stance_result = legacy.normalize_stance_result
 normalize_match_score_model = legacy.normalize_match_score_model
+normalize_scoring_rule = legacy.normalize_scoring_rule
+normalize_score_breakdown = legacy.normalize_score_breakdown
 option_tags = legacy.option_tags
 parse_match_form = legacy.parse_match_form
 parse_float_value = legacy.parse_float_value
@@ -69,7 +73,9 @@ require_competition_manager = legacy.require_competition_manager
 resolve_match_entities = legacy.resolve_match_entities
 rollback_import_batch = legacy.rollback_import_batch
 save_repository_state = legacy.save_repository_state
+resolve_scoring_rule_for_scope = legacy.resolve_scoring_rule_for_scope
 safe_asset_path = legacy.safe_asset_path
+scoring_rule_component_fields = legacy.scoring_rule_component_fields
 ensure_team_asset_dirs = legacy.ensure_team_asset_dirs
 TEAM_UPLOAD_DIR = legacy.TEAM_UPLOAD_DIR
 ROOT_DIR = legacy.ROOT
@@ -379,8 +385,17 @@ def build_batch_create_form(
     """
 
 
-def build_excel_import_panel(values: dict[str, str] | None = None) -> str:
-    current = values or {"group_label": ""}
+def build_excel_import_panel(
+    ctx: RequestContext,
+    values: dict[str, str] | None = None,
+) -> str:
+    current = values or {
+        "group_label": "",
+        "competition_name": form_value(ctx.query, "competition").strip(),
+        "season": form_value(ctx.query, "season").strip(),
+    }
+    current.setdefault("competition_name", form_value(ctx.query, "competition").strip())
+    current.setdefault("season", form_value(ctx.query, "season").strip())
     try:
         data = load_validated_data()
         series_catalog = load_series_catalog(data)
@@ -394,6 +409,15 @@ def build_excel_import_panel(values: dict[str, str] | None = None) -> str:
     template_links = [
         f'<a class="btn btn-outline-dark" href="/assets/templates/{escape(generic_template_name)}">通用模板</a>'
     ]
+    dynamic_competition_field = build_match_competition_field(
+        current["competition_name"],
+        ctx.current_user,
+    )
+    dynamic_season_field = build_match_season_field(
+        current["competition_name"],
+        current["season"],
+        include_non_ongoing=True,
+    )
     seen_series_slugs: set[str] = set()
     for entry in series_catalog:
         series_slug = str(entry.get("series_slug") or "").strip()
@@ -416,6 +440,23 @@ def build_excel_import_panel(values: dict[str, str] | None = None) -> str:
         </div>
         <div class="d-flex flex-wrap gap-2">{''.join(template_links)}</div>
       </div>
+      <form method="get" action="/matches/new" class="team-link-card shadow-sm p-3 mb-4">
+        <input type="hidden" name="action" value="download_scoring_template">
+        <div class="row g-3 align-items-end">
+          <div class="col-12 col-lg-5">
+            <label class="form-label">模板所属赛事</label>
+            {dynamic_competition_field}
+          </div>
+          <div class="col-12 col-lg-4">
+            <label class="form-label">模板所属赛季</label>
+            {dynamic_season_field}
+          </div>
+          <div class="col-12 col-lg-3">
+            <button type="submit" class="btn btn-dark w-100">生成当前规则模板</button>
+          </div>
+        </div>
+        <div class="small text-secondary mt-2">模板会锁定当前赛季计分规则版本，并按启用维度生成列和单局积分公式。</div>
+      </form>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
         <input type="hidden" name="action" value="import_match_excel">
         <div class="row g-3">
@@ -1758,6 +1799,59 @@ def read_optional_sheet_rows(upload: UploadedFile, sheet_names: list[str]) -> li
     return []
 
 
+def read_scoring_template_metadata(upload: UploadedFile) -> dict[str, object] | None:
+    rows = read_excel_sheet_rows(upload, "_scoring_meta")
+    if not rows:
+        return None
+    values = {
+        str(row.get("meta_key") or "").strip(): str(row.get("meta_value") or "").strip()
+        for row in rows
+        if str(row.get("meta_key") or "").strip()
+    }
+    raw_rule = values.get("scoring_rule_json", "")
+    if not raw_rule:
+        raise ValueError("模板计分规则元数据缺失，请重新下载模板。")
+    try:
+        parsed_rule = json.loads(raw_rule)
+    except json.JSONDecodeError as exc:
+        raise ValueError("模板计分规则元数据损坏，请重新下载模板。") from exc
+    if not isinstance(parsed_rule, dict):
+        raise ValueError("模板计分规则格式无效，请重新下载模板。")
+    scoring_rule = normalize_scoring_rule(parsed_rule)
+    try:
+        metadata_version = int(values.get("scoring_rule_version") or 0)
+    except ValueError as exc:
+        raise ValueError("模板计分规则版本无效，请重新下载模板。") from exc
+    if metadata_version != int(scoring_rule.get("version") or 1):
+        raise ValueError("模板计分规则版本与规则内容不一致，请重新下载模板。")
+    return {
+        "competition_name": values.get("competition_name", ""),
+        "season_name": values.get("season_name", ""),
+        "scoring_rule": scoring_rule,
+    }
+
+
+def validate_template_metadata_scope(
+    rows: list[dict[str, str]],
+    metadata: dict[str, object] | None,
+) -> None:
+    if not metadata:
+        return
+    expected_competition = str(metadata.get("competition_name") or "").strip()
+    expected_season = str(metadata.get("season_name") or "").strip()
+    for row in rows:
+        competition_name = str(row.get("competition_name") or "").strip()
+        season_name = str(row.get("season_name") or "").strip()
+        if expected_competition and competition_name != expected_competition:
+            raise ValueError(
+                f"模板锁定赛事为 {expected_competition}，不能导入 {competition_name or '空赛事'}。"
+            )
+        if expected_season and season_name != expected_season:
+            raise ValueError(
+                f"模板锁定赛季为 {expected_season}，不能导入 {season_name or '空赛季'}。"
+            )
+
+
 def parse_excel_int(value: str, field_label: str) -> int:
     try:
         return int(float(value.strip()))
@@ -1820,9 +1914,40 @@ def parse_excel_award_name(
     return selected_names[0] if selected_names else ""
 
 
+def parse_excel_score_breakdown(
+    row: dict[str, str],
+    scoring_rule: dict[str, object] | None,
+) -> dict[str, float]:
+    breakdown = {
+        field_name: parse_float_value(row.get(field_name, "").strip() or "0", 0.0)
+        for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+    }
+    if not isinstance(scoring_rule, dict):
+        return breakdown
+    for component in scoring_rule.get("components", []):
+        if not isinstance(component, dict) or not component.get("enabled", False):
+            continue
+        field_name = str(component.get("key") or "").strip()
+        field_label = str(component.get("label") or "").strip()
+        if not field_name:
+            continue
+        raw_value = str(
+            row.get(field_name)
+            or (row.get(field_label) if field_label else "")
+            or ""
+        ).strip()
+        breakdown[field_name] = (
+            parse_excel_float(raw_value, field_label or field_name)
+            if raw_value
+            else 0.0
+        )
+    return breakdown
+
+
 def build_match_from_excel_rows(
     match_row: dict[str, str],
     player_rows: list[dict[str, str]],
+    scoring_rule_override: dict[str, object] | None = None,
 ) -> dict[str, object]:
     match = build_empty_match(
         match_row.get("competition_name", "").strip(),
@@ -1835,7 +1960,25 @@ def build_match_from_excel_rows(
     match["round"] = parse_excel_optional_int(match_row.get("round", ""), 1)
     match["game_no"] = resolve_excel_game_no(match_row)
     raw_score_model = match_row.get("score_model", "").strip()
-    match["score_model"] = normalize_match_score_model(raw_score_model) if raw_score_model else ""
+    inherited_rule = (
+        normalize_scoring_rule(scoring_rule_override)
+        if isinstance(scoring_rule_override, dict)
+        else resolve_scoring_rule_for_scope(
+            load_validated_data(),
+            str(match["competition_name"]),
+            str(match["season"]),
+        )
+    )
+    inherited_model = normalize_match_score_model(
+        str(inherited_rule.get("score_model") or "standard")
+    )
+    requested_model = normalize_match_score_model(raw_score_model) if raw_score_model else inherited_model
+    match["score_model"] = requested_model
+    match["scoring_rule"] = (
+        inherited_rule
+        if requested_model == inherited_model
+        else default_scoring_rule(requested_model)
+    )
     match["exclude_from_team_scores"] = parse_truthy_excel_value(
         match_row.get("exclude_from_team_scores", "")
     )
@@ -1860,12 +2003,15 @@ def build_match_from_excel_rows(
     match["notes"] = match_row.get("notes", "").strip()
     participants = []
     for player_row in sorted(player_rows, key=lambda item: parse_excel_int(item.get("seat", ""), "seat")):
-        score_breakdown = {
-            field_name: parse_float_value(player_row.get(field_name, "").strip() or "0", 0.0)
-            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
-        }
+        score_breakdown = parse_excel_score_breakdown(
+            player_row,
+            match.get("scoring_rule"),
+        )
         if uses_structured_score_model(match["score_model"]):
-            points_earned = calculate_score_breakdown_total(score_breakdown)
+            points_earned = calculate_score_breakdown_total(
+                {"score_breakdown": score_breakdown},
+                match.get("scoring_rule"),
+            )
         else:
             points_earned = parse_excel_float(player_row.get("points_earned", ""), "points_earned")
         participants.append(
@@ -1886,6 +2032,7 @@ def build_match_from_excel_rows(
                 "result": player_row.get("result", "").strip(),
                 "points_earned": points_earned,
                 **score_breakdown,
+                "score_breakdown": score_breakdown,
                 "stance_result": player_row.get("stance_result", "").strip() or "none",
                 "notes": player_row.get("notes", "").strip(),
             }
@@ -1899,6 +2046,7 @@ def build_match_from_excel_rows(
 
 def build_matches_from_flat_excel_rows(
     rows: list[dict[str, str]],
+    scoring_rule_override: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     grouped_rows: dict[str, list[dict[str, str]]] = {}
     for row in rows:
@@ -1914,28 +2062,24 @@ def build_matches_from_flat_excel_rows(
             team_name = row.get("team_name", "").strip()
             if not player_name and not team_name:
                 continue
-            player_rows.append(
+            player_row = {
+                key: str(value or "").strip()
+                for key, value in row.items()
+            }
+            player_row.update(
                 {
-                    "seat": row.get("seat", "").strip(),
                     "player_name": player_name,
                     "team_name": team_name,
-                    "mvp_player_name": row.get("mvp_player_name", "").strip(),
-                    "svp_player_name": row.get("svp_player_name", "").strip(),
-                    "scapegoat_player_name": row.get("scapegoat_player_name", "").strip(),
-                    "role": row.get("role", "").strip(),
-                    "camp": row.get("camp", "").strip(),
-                    "result": row.get("result", "").strip(),
-                    "result_points": row.get("result_points", "").strip(),
-                    "vote_points": row.get("vote_points", "").strip(),
-                    "behavior_points": row.get("behavior_points", "").strip(),
-                    "special_points": row.get("special_points", "").strip(),
-                    "adjustment_points": row.get("adjustment_points", "").strip(),
-                    "points_earned": row.get("points_earned", "").strip(),
-                    "stance_result": row.get("stance_result", "").strip(),
-                    "notes": row.get("notes", "").strip(),
                 }
             )
-        matches.append(build_match_from_excel_rows(match_row, player_rows))
+            player_rows.append(player_row)
+        matches.append(
+            build_match_from_excel_rows(
+                match_row,
+                player_rows,
+                scoring_rule_override=scoring_rule_override,
+            )
+        )
     return matches
 
 
@@ -1972,6 +2116,7 @@ def build_excel_match_group_key(row: dict[str, str]) -> str:
 
 def build_match_from_wide_excel_row(
     row: dict[str, str],
+    scoring_rule_override: dict[str, object] | None = None,
 ) -> dict[str, object]:
     match = build_empty_match(
         row.get("competition_name", "").strip(),
@@ -1984,7 +2129,25 @@ def build_match_from_wide_excel_row(
     match["round"] = parse_excel_optional_int(row.get("round", ""), 1)
     match["game_no"] = resolve_excel_game_no(row)
     raw_score_model = row.get("score_model", "").strip()
-    match["score_model"] = normalize_match_score_model(raw_score_model) if raw_score_model else ""
+    inherited_rule = (
+        normalize_scoring_rule(scoring_rule_override)
+        if isinstance(scoring_rule_override, dict)
+        else resolve_scoring_rule_for_scope(
+            load_validated_data(),
+            str(match["competition_name"]),
+            str(match["season"]),
+        )
+    )
+    inherited_model = normalize_match_score_model(
+        str(inherited_rule.get("score_model") or "standard")
+    )
+    requested_model = normalize_match_score_model(raw_score_model) if raw_score_model else inherited_model
+    match["score_model"] = requested_model
+    match["scoring_rule"] = (
+        inherited_rule
+        if requested_model == inherited_model
+        else default_scoring_rule(requested_model)
+    )
     match["exclude_from_team_scores"] = parse_truthy_excel_value(
         row.get("exclude_from_team_scores", "")
     )
@@ -2018,7 +2181,10 @@ def build_match_from_wide_excel_row(
             for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
         }
         points_earned = (
-            calculate_score_breakdown_total(score_breakdown)
+            calculate_score_breakdown_total(
+                {"score_breakdown": score_breakdown},
+                match.get("scoring_rule"),
+            )
             if uses_structured_score_model(match["score_model"])
             else parse_float_value(row.get(f"{prefix}points_earned", "").strip() or "0", 0.0)
         )
@@ -2034,6 +2200,7 @@ def build_match_from_wide_excel_row(
                 "result": row.get(f"{prefix}result", "").strip(),
                 "points_earned": points_earned,
                 **score_breakdown,
+                "score_breakdown": score_breakdown,
                 "stance_result": row.get(f"{prefix}stance_result", "").strip() or "none",
                 "notes": row.get(f"{prefix}notes", "").strip(),
             }
@@ -2147,6 +2314,15 @@ def merge_excel_import_match(
     imported_players = imported_match.get("players")
     if isinstance(imported_players, list) and imported_players:
         merged_match["players"] = imported_players
+        imported_rule = imported_match.get("scoring_rule")
+        if isinstance(imported_rule, dict) and imported_rule:
+            merged_match["scoring_rule"] = imported_rule
+            merged_match["score_model"] = str(
+                imported_rule.get("score_model")
+                or imported_match.get("score_model")
+                or merged_match.get("score_model")
+                or "standard"
+            )
     merged_match["match_id"] = existing_match["match_id"]
     merged_match["competition_name"] = existing_match["competition_name"]
     merged_match["season"] = existing_match["season"]
@@ -2167,18 +2343,35 @@ def import_matches_from_excel(
     group_label_override: str = "",
 ) -> tuple[list[dict[str, object]] | None, str]:
     try:
+        template_metadata = read_scoring_template_metadata(upload)
+        scoring_rule_override = (
+            template_metadata.get("scoring_rule")
+            if isinstance(template_metadata, dict)
+            else None
+        )
         flat_rows = read_first_available_sheet_rows(upload, ["records", "比赛记录", "单局成绩表"])
         if flat_rows:
+            validate_template_metadata_scope(flat_rows, template_metadata)
             if any(any(key.startswith("seat1_") for key in row.keys()) for row in flat_rows):
-                parsed_matches = [build_match_from_wide_excel_row(row) for row in flat_rows]
+                parsed_matches = [
+                    build_match_from_wide_excel_row(
+                        row,
+                        scoring_rule_override=scoring_rule_override,
+                    )
+                    for row in flat_rows
+                ]
             else:
-                parsed_matches = build_matches_from_flat_excel_rows(flat_rows)
+                parsed_matches = build_matches_from_flat_excel_rows(
+                    flat_rows,
+                    scoring_rule_override=scoring_rule_override,
+                )
             match_rows = []
             player_rows = []
         else:
             parsed_matches = []
             match_rows = read_excel_sheet_rows(upload, "matches")
             player_rows = read_excel_sheet_rows(upload, "players")
+            validate_template_metadata_scope(match_rows, template_metadata)
     except Exception as exc:
         return None, f"解析 Excel 失败：{exc}"
     if not parsed_matches and not match_rows:
@@ -2210,7 +2403,13 @@ def import_matches_from_excel(
                 return None, f"没有找到要更新的比赛：{match_id}。"
             if not match_key:
                 return None, "matches 工作表中的每一行都必须填写 match_key。"
-            source_matches.append(build_match_from_excel_rows(row, players_by_key.get(match_key, [])))
+            source_matches.append(
+                build_match_from_excel_rows(
+                    row,
+                    players_by_key.get(match_key, []),
+                    scoring_rule_override=scoring_rule_override,
+                )
+            )
 
     for current_match in source_matches:
         if group_label_override:
@@ -3323,7 +3522,18 @@ def render_match_form_page(
     try:
         current_data = load_validated_data()
     except Exception:
-        current_data = {"players": [], "teams": []}
+        current_data = {"players": [], "teams": [], "matches": []}
+    scoring_rule = current.get("scoring_rule") or resolve_scoring_rule_for_scope(
+        current_data,
+        str(current.get("competition_name") or ""),
+        str(current.get("season") or ""),
+    )
+    configured_score_fields = scoring_rule_component_fields(scoring_rule)
+    score_component_fields = (
+        configured_score_fields or MATCH_SCORE_COMPONENT_FIELDS
+        if uses_structured_score_model(score_model)
+        else []
+    )
     player_lookup = {
         str(player["player_id"]): player
         for player in current_data.get("players", [])
@@ -3372,18 +3582,22 @@ def render_match_form_page(
         "scapegoat_player_name",
     )
     participant_rows = []
+    fixed_score_field_names = {field_name for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS}
+
+    def score_input_name(field_name: str, index: int) -> str:
+        if field_name in fixed_score_field_names:
+            return f"{field_name}_{index}"
+        return f"score_component_{field_name}_{index}"
+
     for index, player in enumerate(current["players"]):
         player_name = get_match_form_player_name(player_lookup, player)
         team_name = get_match_form_team_name(team_lookup, player)
-        score_breakdown = {
-            field_name: parse_float_value(player.get(field_name), 0.0)
-            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
-        }
+        score_breakdown = normalize_score_breakdown(player)
         structured_cells = "".join(
             f'<td data-structured-score-column><input class="form-control form-control-sm" '
-            f'data-score-component name="{field_name}_{index}" type="number" step="0.1" '
-            f'value="{escape(str(score_breakdown[field_name]))}"></td>'
-            for field_name, _ in MATCH_SCORE_COMPONENT_FIELDS
+            f'data-score-component name="{score_input_name(field_name, index)}" type="number" step="0.1" '
+            f'value="{escape(str(score_breakdown.get(field_name, 0.0)))}"></td>'
+            for field_name, _ in score_component_fields
         )
         participant_rows.append(
             f"""
@@ -3425,7 +3639,7 @@ def render_match_form_page(
           <a class="btn btn-outline-dark" href="{escape(next_path)}">返回上一页</a>
         </div>
       </div>
-      <form method="post" action="{escape(action_url)}">
+      <form method="post" action="{escape(action_url)}" data-dynamic-rule-form="{'1' if str(current.get('match_id') or '') == 'pending-new-match' else '0'}">
         <div class="row g-3 mb-4">
           <div class="col-12 col-md-6 col-xl-3">
             <label class="form-label">比赛编号</label>
@@ -3442,10 +3656,9 @@ def render_match_form_page(
           </div>
           <div class="col-12 col-md-6 col-xl-3">
             <label class="form-label">计分模型</label>
-            <select class="form-select" data-score-model-select name="score_model">
-              {option_tags(MATCH_SCORE_MODEL_OPTIONS, score_model)}
-            </select>
-            <div class="small text-secondary mt-2">当前模型：{escape(score_model_label)}。京城日报模型会按固定分项自动汇总单局积分。</div>
+            <input type="hidden" data-score-model-select name="score_model" value="{escape(score_model)}">
+            <input class="form-control" value="{escape(score_model_label)}" readonly>
+            <div class="small text-secondary mt-2">由当前系列赛/赛季计分规则自动带入；需要调整请前往系列赛管理。</div>
           </div>
           <div class="col-12 col-md-6 col-xl-3 d-flex align-items-end">
             <div class="form-check mb-2">
@@ -3522,7 +3735,7 @@ def render_match_form_page(
         <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
           <div>
             <h2 class="h5 mb-1">上场选手数据</h2>
-            <div class="small text-secondary">这里按当前顺序编辑所有参赛选手信息。录入时直接填写队员姓名和战队名称；系统会在当前赛事赛季内自动匹配，找不到时会先创建赛季档案。选择京城日报模型后，会展开固定分项并自动计算总分。</div>
+            <div class="small text-secondary">这里按当前顺序编辑所有参赛选手信息。录入时直接填写队员姓名和战队名称；系统会在当前赛事赛季内自动匹配，找不到时会先创建赛季档案。计分分项来自后台系列赛/赛季规则，并自动汇总总分。</div>
           </div>
         </div>
 
@@ -3536,7 +3749,7 @@ def render_match_form_page(
                 <th>角色</th>
                 <th>阵营</th>
                 <th>结果</th>
-                {''.join(f'<th data-structured-score-column>{escape(field_label)}</th>' for _, field_label in MATCH_SCORE_COMPONENT_FIELDS)}
+                {''.join(f'<th data-structured-score-column>{escape(field_label)}</th>' for _, field_label in score_component_fields)}
                 <th>得分</th>
                 <th>站边结果</th>
                 <th>备注</th>
@@ -3564,6 +3777,11 @@ def render_match_form_page(
         const scapegoatSelect = form.querySelector('[data-award-select="scapegoat"]');
         const scapegoatField = form.querySelector("[data-scapegoat-field]");
         const scoreModelSelect = form.querySelector("[data-score-model-select]");
+        const competitionSelect = form.querySelector("[data-match-competition-select]");
+        const seasonSelect = form.querySelector("[data-match-season-select]");
+        const dynamicRuleForm = form.getAttribute("data-dynamic-rule-form") === "1";
+        const initialCompetition = {json.dumps(str(current.get("competition_name") or ""), ensure_ascii=False)};
+        const initialSeason = {json.dumps(str(current.get("season") or ""), ensure_ascii=False)};
         const playerInputs = Array.from(form.querySelectorAll("[data-award-player-id]"));
         const teamNameInputs = Array.from(form.querySelectorAll('[name^="team_name_"]'));
         const seatInputs = Array.from(form.querySelectorAll("[data-award-seat]"));
@@ -3638,6 +3856,19 @@ def render_match_form_page(
             totalInput.value = total.toFixed(2);
           }});
         }}
+        function reloadForSelectedRule() {{
+          if (!dynamicRuleForm || !competitionSelect || !seasonSelect) return;
+          const competition = competitionSelect.value || "";
+          const season = seasonSelect.value || "";
+          if (!competition || !season) return;
+          if (competition === initialCompetition && season === initialSeason) return;
+          const target = new URL(window.location.href);
+          target.pathname = "/matches/new";
+          target.searchParams.delete("action");
+          target.searchParams.set("competition", competition);
+          target.searchParams.set("season", season);
+          window.location.href = target.toString();
+        }}
         [winningCampSelect, ...playerInputs, ...teamNameInputs, ...seatInputs, ...roleInputs, ...campInputs]
           .filter(Boolean)
           .forEach((element) => element.addEventListener("input", renderAwards));
@@ -3650,8 +3881,11 @@ def render_match_form_page(
           }});
         }});
         if (scoreModelSelect) scoreModelSelect.addEventListener("change", updateStructuredScoreRows);
+        if (competitionSelect) competitionSelect.addEventListener("change", reloadForSelectedRule);
+        if (seasonSelect) seasonSelect.addEventListener("change", reloadForSelectedRule);
         updateStructuredScoreRows();
         renderAwards();
+        window.setTimeout(reloadForSelectedRule, 0);
       }})();
     </script>
     """
@@ -3693,6 +3927,12 @@ def get_match_edit_page(
         return layout("没有权限", '<div class="alert alert-danger">你不能编辑这个地区系列赛下的比赛。</div>', ctx)
 
     current = ensure_match_form_players(field_values or match)
+    if not current.get("scoring_rule"):
+        current["scoring_rule"] = resolve_scoring_rule_for_scope(
+            data,
+            get_match_competition_name(match),
+            str(match.get("season") or ""),
+        )
     next_path = form_value(ctx.query, "next").strip() or "/matches/new"
     match_code_hint = current.get("match_id", match_id)
     form_html = render_match_form_page(
@@ -3706,7 +3946,7 @@ def get_match_edit_page(
         match_code_hint,
         alert=alert,
     )
-    excel_panel_html = build_excel_import_panel()
+    excel_panel_html = build_excel_import_panel(ctx)
     dimension_panel_html = build_dimension_import_panel(ctx)
     team_logo_panel_html = build_team_logo_import_panel(ctx)
     player_photo_panel_html = build_player_photo_import_panel(ctx)
@@ -3731,6 +3971,14 @@ def get_match_create_page(
         form_value(ctx.query, "competition").strip(),
         form_value(ctx.query, "season").strip(),
     ))
+    if not field_values and current.get("competition_name") and current.get("season"):
+        scoring_rule = resolve_scoring_rule_for_scope(
+            load_validated_data(),
+            str(current.get("competition_name") or ""),
+            str(current.get("season") or ""),
+        )
+        current["score_model"] = str(scoring_rule.get("score_model") or "standard")
+        current["scoring_rule"] = scoring_rule
     if current.get("competition_name"):
         data = load_validated_data()
         if ctx.current_user and not can_manage_matches(
@@ -3757,7 +4005,7 @@ def get_match_create_page(
     )
     management_panel_html = build_match_management_panel(ctx)
     batch_panel_html = build_batch_create_form(ctx, get_batch_create_form_values(ctx, batch_form_values))
-    excel_panel_html = build_excel_import_panel(excel_form_values)
+    excel_panel_html = build_excel_import_panel(ctx, excel_form_values)
     dimension_panel_html = build_dimension_import_panel(ctx)
     team_logo_panel_html = build_team_logo_import_panel(ctx)
     player_photo_panel_html = build_player_photo_import_panel(ctx)
@@ -3879,6 +4127,73 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
 def handle_match_create(ctx: RequestContext, start_response):
     if ctx.method == "GET":
         action = form_value(ctx.query, "action").strip()
+        if action == "download_scoring_template":
+            data = load_validated_data()
+            competition_name = (
+                form_value(ctx.query, "competition_name").strip()
+                or form_value(ctx.query, "competition").strip()
+            )
+            season_name = form_value(ctx.query, "season").strip()
+            if not can_manage_matches(ctx.current_user, data, competition_name):
+                return start_response_html(
+                    start_response,
+                    "403 Forbidden",
+                    layout(
+                        "没有权限",
+                        f'<div class="alert alert-danger">你没有权限下载 {escape(competition_name)} 的赛季模板。</div>',
+                        ctx,
+                    ),
+                )
+            competition_error = validate_match_competition_selection(data, competition_name)
+            season_error = validate_match_season_selection(
+                data,
+                competition_name,
+                season_name,
+                include_non_ongoing=True,
+            )
+            if competition_error or season_error:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_create_page(
+                        ctx,
+                        alert=competition_error or season_error,
+                        excel_form_values={
+                            "group_label": "",
+                            "competition_name": competition_name,
+                            "season": season_name,
+                        },
+                    ),
+                )
+            scoring_rule = resolve_scoring_rule_for_scope(
+                data,
+                competition_name,
+                season_name,
+            )
+            payload = build_dynamic_match_template_bytes(
+                competition_name,
+                season_name,
+                scoring_rule,
+            )
+            version = int(scoring_rule.get("version") or 1)
+            safe_scope = re.sub(
+                r"[^A-Za-z0-9_.-]+",
+                "-",
+                f"{competition_name}-{season_name}",
+            ).strip("-")
+            filename = f"{safe_scope or 'season-scoring'}-template-v{version}.xlsx"
+            start_response(
+                "200 OK",
+                [
+                    (
+                        "Content-Type",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                    ("Content-Length", str(len(payload))),
+                    ("Content-Disposition", f'attachment; filename="{filename}"'),
+                ],
+            )
+            return [payload]
         if action == "export_season_player_photo_roster":
             data = load_validated_data()
             competition_name = (
@@ -4696,7 +5011,21 @@ def handle_match_create(ctx: RequestContext, start_response):
         )
         return redirect(start_response, append_alert_query(next_path, import_message))
 
-    new_match = parse_match_form(ctx.form, build_empty_match())
+    submitted_competition = form_value(ctx.form, "competition_name").strip()
+    submitted_season = form_value(ctx.form, "season").strip()
+    match_seed = build_empty_match(submitted_competition, submitted_season)
+    submitted_rule = resolve_scoring_rule_for_scope(
+        data,
+        submitted_competition,
+        submitted_season,
+    )
+    match_seed["score_model"] = str(submitted_rule.get("score_model") or "standard")
+    match_seed["scoring_rule"] = submitted_rule
+    submitted_form = {
+        **ctx.form,
+        "score_model": [str(submitted_rule.get("score_model") or "standard")],
+    }
+    new_match = parse_match_form(submitted_form, match_seed)
     resolution_errors = resolve_match_entities(data, [new_match])
     if resolution_errors:
         return start_response_html(

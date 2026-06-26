@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS matches (
     round INTEGER NOT NULL,
     game_no INTEGER NOT NULL,
     score_model TEXT NOT NULL DEFAULT 'standard',
+    scoring_rule_json TEXT NOT NULL DEFAULT '{}',
     exclude_from_team_scores INTEGER NOT NULL DEFAULT 0,
     played_on TEXT NOT NULL,
     group_label TEXT NOT NULL DEFAULT '',
@@ -197,12 +198,19 @@ CREATE TABLE IF NOT EXISTS match_players (
     behavior_points DOUBLE PRECISION NOT NULL DEFAULT 0,
     special_points DOUBLE PRECISION NOT NULL DEFAULT 0,
     adjustment_points DOUBLE PRECISION NOT NULL DEFAULT 0,
+    score_breakdown_json TEXT NOT NULL DEFAULT '{}',
     points_available DOUBLE PRECISION NOT NULL,
     stance_pick TEXT NOT NULL,
     stance_correct INTEGER NOT NULL CHECK (stance_correct IN (0, 1)),
     notes TEXT NOT NULL,
     PRIMARY KEY (match_id, sort_order)
 );
+
+ALTER TABLE matches
+ADD COLUMN IF NOT EXISTS scoring_rule_json TEXT NOT NULL DEFAULT '{}';
+
+ALTER TABLE match_players
+ADD COLUMN IF NOT EXISTS score_breakdown_json TEXT NOT NULL DEFAULT '{}';
 
 CREATE TABLE IF NOT EXISTS season_player_dimension_stats (
     competition_name TEXT NOT NULL,
@@ -355,7 +363,7 @@ ON users(wechat_web_openid)
 WHERE wechat_web_openid != '';
 
 INSERT INTO app_meta (meta_key, meta_value)
-VALUES ('schema_version', '2')
+VALUES ('schema_version', '4')
 ON CONFLICT (meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value;
 
 COMMIT;

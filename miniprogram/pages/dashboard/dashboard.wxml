@@ -2,7 +2,7 @@
   <view class="hero">
     <text class="eyebrow">{{generatedAt || "赛事数据"}}</text>
     <text class="title">{{scopeLabel}}</text>
-    <text class="copy" wx:if="{{choosing}}">必须先进入一个赛事，之后才能查看该赛事内的战队、选手和比赛详情。</text>
+    <text class="copy" wx:if="{{choosing}}">必须先进入一个赛事，之后才能查看该赛事内的门派、选手和比赛详情。</text>
     <text class="copy" wx:else>{{hero.featured_label || "当前赛事详情"}}</text>
     <view class="button-row" wx:if="{{!choosing}}">
       <button class="primary-button" bindtap="goTeams">门派</button>
@@ -72,15 +72,7 @@
             <text class="list-title">{{myPlayer.display_name}}</text>
             <text class="list-meta">{{myPlayer.team_name || "未绑定门派"}} · 当前积分 {{myPlayer.points_total || "--"}} · 出场 {{myPlayer.games_played || "--"}} 局</text>
           </view>
-          <view class="list-score">
-            <text class="score-value">{{myPredictionValue}}</text>
-            <text class="score-label">当日预测</text>
-          </view>
-        </view>
-
-        <view class="prediction-line" wx:if="{{myPrediction}}">
-          <text class="prediction-line-label">预测位置</text>
-          <text class="prediction-line-value">{{myPredictionRank}} · {{myPredictionBand}}</text>
+          <button class="scope-button" bindtap="openMyPlayerDetail">详情</button>
         </view>
 
         <view class="empty-inline" wx:if="{{!myPlayer}}">
@@ -118,7 +110,7 @@
 
     <view class="section">
       <view class="section-head">
-        <text class="section-title">战队积分</text>
+        <text class="section-title">门派积分</text>
         <text class="section-note">Top 5</text>
       </view>
       <view class="stack" wx:if="{{topTeams.length}}">
@@ -136,7 +128,7 @@
         </view>
       </view>
       <view class="empty-card" wx:else>
-        <text class="empty-title">暂无战队数据</text>
+        <text class="empty-title">暂无门派数据</text>
       </view>
     </view>
 

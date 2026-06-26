@@ -9,7 +9,7 @@
 }
 
 .center-head,
-.my-prediction-row {
+.my-player-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -33,7 +33,7 @@
 }
 
 .scope-mini,
-.my-prediction-row,
+.my-player-row,
 .empty-inline {
   margin-top: 22rpx;
   padding: 20rpx;

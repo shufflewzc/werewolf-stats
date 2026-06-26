@@ -9,19 +9,6 @@ const {
   setSelectedScope
 } = require("../../utils/scope");
 
-function predictionBand(score) {
-  if (score >= 12) {
-    return "高分区";
-  }
-  if (score >= 7) {
-    return "竞争区";
-  }
-  if (score >= 5) {
-    return "主体区";
-  }
-  return "观察区";
-}
-
 Page({
   data: {
     loading: true,
@@ -39,10 +26,6 @@ Page({
     latestDay: null,
     currentUser: null,
     myPlayer: null,
-    myPrediction: null,
-    myPredictionValue: "--",
-    myPredictionRank: "",
-    myPredictionBand: "",
     myEmptyText: "微信登录后，可以绑定选手并查看自己的赛事数据。",
     myPrimaryActionText: "去登录",
     myStatusLabel: "未登录"
@@ -87,10 +70,6 @@ Page({
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
       let myPlayer = null;
-      let myPrediction = null;
-      let myPredictionValue = "--";
-      let myPredictionRank = "";
-      let myPredictionBand = "";
       let myEmptyText = "微信登录后，可以绑定选手并查看自己的赛事数据。";
       let myPrimaryActionText = "去登录";
       let myStatusLabel = "未登录";
@@ -105,27 +84,9 @@ Page({
           games_played: "--",
           photoUrl: ""
         };
-        if (latestDay && latestDay.played_on) {
-          try {
-            const predictionPayload = await request("/api/predictions", {
-              ...scopeParams(selectedScope),
-              played_on: latestDay.played_on
-            });
-            const predictions = predictionPayload.predictions || [];
-            const predictionIndex = predictions.findIndex((item) => item.player_id === currentUser.player_id);
-            myPrediction = predictionIndex >= 0 ? predictions[predictionIndex] : null;
-            myPredictionValue = myPrediction ? (myPrediction.expected_total || myPrediction.expected_points || "--") : "--";
-            if (myPrediction) {
-              myPredictionRank = `第 ${predictionIndex + 1} 名`;
-              myPredictionBand = predictionBand(Number(myPrediction.expected_total || myPrediction.expected_points || 0));
-            }
-          } catch (predictionError) {
-            myPrediction = null;
-          }
-        }
       } else if (currentUser) {
         myStatusLabel = "未绑定选手";
-        myEmptyText = "绑定选手后，这里会显示你的赛事入口和当日预测。";
+        myEmptyText = "绑定选手后，这里会显示你的赛事入口和个人选手页。";
         myPrimaryActionText = "绑定选手";
       }
       this.setData({
@@ -146,10 +107,6 @@ Page({
         latestDay,
         currentUser,
         myPlayer,
-        myPrediction,
-        myPredictionValue,
-        myPredictionRank,
-        myPredictionBand,
         myEmptyText,
         myPrimaryActionText,
         myStatusLabel

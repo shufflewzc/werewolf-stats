@@ -46,17 +46,6 @@
       </view>
     </view>
 
-    <view class="section" wx:if="{{currentUser && currentUser.player_id}}">
-      <view class="day-summary-card">
-        <view class="list-main">
-          <text class="summary-label">我的当日预测</text>
-          <text class="summary-title">{{myPredictionValue}}</text>
-          <text class="list-meta">{{myPrediction ? ("当日 " + myPrediction.match_count + " 场 · 场均 " + myPrediction.average_expected_points) : "今天暂未匹配到你的出场预测"}}</text>
-        </view>
-        <button class="scope-button" bindtap="goPredictions">排行</button>
-      </view>
-    </view>
-
     <view class="section" wx:if="{{predictions.length}}">
       <view class="section-head">
         <text class="section-title">预测总分榜</text>

@@ -13,7 +13,7 @@ function buildGuildOverview(payload) {
     .slice(0, 3);
   return {
     cards: [
-      { label: "历史战队", value: String(teams.length), copy: `${historySections.length} 个赛事` },
+      { label: "历史队伍", value: String(teams.length), copy: `${historySections.length} 个赛事` },
       { label: "累计积分", value: totalPoints.toFixed(1), copy: "历史赛季合计" },
       { label: "比赛覆盖", value: String(totalMatches), copy: "累计场次" }
     ],

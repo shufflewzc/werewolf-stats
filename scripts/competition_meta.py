@@ -20,6 +20,17 @@ CHINA_TZ = ZoneInfo("Asia/Shanghai")
 DEFAULT_REGION_NAME = "广州"
 SERIES_CATALOG_META_KEY = "series_catalog"
 SEASON_CATALOG_META_KEY = "season_catalog"
+SCORING_RULE_COMPONENTS = (
+    ("result_points", "胜负分"),
+    ("vote_points", "投票分"),
+    ("behavior_points", "行为分"),
+    ("special_points", "特殊分"),
+    ("adjustment_points", "附加/罚分"),
+)
+SCORING_RULE_STANDARD = "standard"
+SCORING_RULE_STRUCTURED = "jingcheng_daily"
+MAX_SCORING_RULE_COMPONENTS = 20
+SCORING_COMPONENT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 REGION_NAME_CANDIDATES = (
     "广州",
     "北京",
@@ -327,6 +338,7 @@ def normalize_series_catalog_entry(entry: dict[str, Any]) -> dict[str, Any] | No
         "hero_title": hero_title,
         "hero_intro": hero_intro,
         "hero_note": hero_note,
+        "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule")),
         "active": bool(entry.get("active", True)),
         "created_by": str(entry.get("created_by") or "system").strip() or "system",
         "created_on": str(entry.get("created_on") or china_today_label()).strip()
@@ -514,6 +526,172 @@ def normalize_stage_windows(value: Any) -> list[dict[str, str]]:
     return windows
 
 
+def default_scoring_rule(score_model: str = SCORING_RULE_STANDARD) -> dict[str, Any]:
+    normalized_model = (
+        SCORING_RULE_STRUCTURED
+        if str(score_model or "").strip() == SCORING_RULE_STRUCTURED
+        else SCORING_RULE_STANDARD
+    )
+    return {
+        "inherit": False,
+        "score_model": normalized_model,
+        "components": [
+            {
+                "key": key,
+                "label": label,
+                "enabled": normalized_model == SCORING_RULE_STRUCTURED,
+                "counts_for_player": True,
+                "counts_for_team": True,
+            }
+            for key, label in SCORING_RULE_COMPONENTS
+        ],
+        "notes": "",
+        "version": 1,
+        "updated_at": "",
+    }
+
+
+def normalize_scoring_rule(value: Any, *, allow_inherit: bool = False) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        return {"inherit": True} if allow_inherit else default_scoring_rule()
+
+    if allow_inherit and bool(value.get("inherit")):
+        return {"inherit": True}
+
+    score_model = str(value.get("score_model") or "").strip()
+    if score_model not in {SCORING_RULE_STANDARD, SCORING_RULE_STRUCTURED}:
+        score_model = SCORING_RULE_STANDARD
+
+    raw_components = value.get("components")
+    raw_by_key: dict[str, dict[str, Any]] = {}
+    if isinstance(raw_components, list):
+        raw_by_key = {
+            str(item.get("key") or "").strip(): item
+            for item in raw_components
+            if isinstance(item, dict)
+        }
+
+    components: list[dict[str, Any]] = []
+    seen_component_keys: set[str] = set()
+    any_enabled = False
+    for key, default_label in SCORING_RULE_COMPONENTS:
+        raw_component = raw_by_key.get(key, {})
+        label = str(raw_component.get("label") or default_label).strip() or default_label
+        enabled = bool(raw_component.get("enabled", score_model == SCORING_RULE_STRUCTURED))
+        any_enabled = any_enabled or enabled
+        components.append(
+            {
+                "key": key,
+                "label": label,
+                "enabled": enabled,
+                "counts_for_player": bool(raw_component.get("counts_for_player", True)),
+                "counts_for_team": bool(raw_component.get("counts_for_team", True)),
+            }
+        )
+        seen_component_keys.add(key)
+
+    if isinstance(raw_components, list):
+        for raw_component in raw_components:
+            if len(components) >= MAX_SCORING_RULE_COMPONENTS:
+                break
+            if not isinstance(raw_component, dict):
+                continue
+            key = str(raw_component.get("key") or "").strip().lower()
+            if (
+                key in seen_component_keys
+                or not SCORING_COMPONENT_KEY_PATTERN.fullmatch(key)
+            ):
+                continue
+            label = str(raw_component.get("label") or "").strip()
+            if not label:
+                continue
+            enabled = bool(raw_component.get("enabled", True))
+            any_enabled = any_enabled or enabled
+            components.append(
+                {
+                    "key": key,
+                    "label": label,
+                    "enabled": enabled,
+                    "counts_for_player": bool(raw_component.get("counts_for_player", True)),
+                    "counts_for_team": bool(raw_component.get("counts_for_team", True)),
+                }
+            )
+            seen_component_keys.add(key)
+
+    score_model = SCORING_RULE_STRUCTURED if any_enabled else SCORING_RULE_STANDARD
+    try:
+        version = max(1, int(value.get("version") or 1))
+    except (TypeError, ValueError):
+        version = 1
+    return {
+        "inherit": False,
+        "score_model": score_model,
+        "components": components,
+        "notes": str(value.get("notes") or "").strip(),
+        "version": version,
+        "updated_at": str(value.get("updated_at") or "").strip(),
+    }
+
+
+def version_scoring_rule(
+    value: dict[str, Any] | None,
+    previous: dict[str, Any] | None = None,
+    *,
+    allow_inherit: bool = False,
+) -> dict[str, Any]:
+    normalized = normalize_scoring_rule(value, allow_inherit=allow_inherit)
+    if normalized.get("inherit"):
+        return {"inherit": True}
+
+    has_previous = isinstance(previous, dict) and bool(previous)
+    previous_normalized = normalize_scoring_rule(previous, allow_inherit=allow_inherit)
+    comparable_keys = ("score_model", "components", "notes")
+    unchanged = (
+        has_previous
+        and not previous_normalized.get("inherit")
+        and all(normalized.get(key) == previous_normalized.get(key) for key in comparable_keys)
+    )
+    if unchanged:
+        normalized["version"] = int(previous_normalized.get("version") or 1)
+        normalized["updated_at"] = str(previous_normalized.get("updated_at") or "")
+        return normalized
+
+    previous_version = (
+        int(previous_normalized.get("version") or 0)
+        if has_previous and not previous_normalized.get("inherit")
+        else 0
+    )
+    normalized["version"] = max(1, previous_version + 1)
+    normalized["updated_at"] = china_now().replace(microsecond=0).isoformat()
+    return normalized
+
+
+def merge_scoring_rules(
+    series_rule: dict[str, Any] | None,
+    season_rule: dict[str, Any] | None,
+) -> dict[str, Any]:
+    base = normalize_scoring_rule(series_rule)
+    override = normalize_scoring_rule(season_rule, allow_inherit=True)
+    if override.get("inherit"):
+        return base
+    return override
+
+
+def scoring_rule_component_fields(rule: dict[str, Any] | None) -> list[tuple[str, str]]:
+    normalized = normalize_scoring_rule(rule)
+    if normalized.get("score_model") != SCORING_RULE_STRUCTURED:
+        return []
+    fields: list[tuple[str, str]] = []
+    for component in normalized.get("components", []):
+        if not isinstance(component, dict) or not component.get("enabled", False):
+            continue
+        key = str(component.get("key") or "").strip()
+        label = str(component.get("label") or "").strip()
+        if key and label:
+            fields.append((key, label))
+    return fields
+
+
 def normalize_season_catalog_entry(
     entry: dict[str, Any],
     series_catalog: list[dict[str, Any]] | None = None,
@@ -567,6 +745,7 @@ def normalize_season_catalog_entry(
         "start_at": normalize_datetime_local_value(str(entry.get("start_at") or "")),
         "end_at": normalize_datetime_local_value(str(entry.get("end_at") or "")),
         "stage_windows": normalize_stage_windows(entry.get("stage_windows", [])),
+        "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule"), allow_inherit=True),
         "registered_team_ids": merge_team_ids(registered_team_ids),
         "notes": str(entry.get("notes") or "").strip(),
         "created_by": str(entry.get("created_by") or "system").strip() or "system",
@@ -725,6 +904,27 @@ def get_season_entry(
         ):
             return entry
     return None
+
+
+def resolve_scoring_rule_for_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str = "",
+) -> dict[str, Any]:
+    series_catalog = load_series_catalog(data)
+    season_catalog = load_season_catalog(data)
+    series_entry = get_series_entry_by_competition(series_catalog, competition_name)
+    series_rule = series_entry.get("scoring_rule") if series_entry else None
+    season_entry = None
+    if series_entry and season_name:
+        season_entry = get_season_entry(
+            season_catalog,
+            series_entry["series_slug"],
+            season_name,
+            competition_name=competition_name,
+        )
+    season_rule = season_entry.get("scoring_rule") if season_entry else None
+    return merge_scoring_rules(series_rule, season_rule)
 
 
 def list_seasons(

@@ -2,7 +2,7 @@
   <view class="hero">
     <text class="eyebrow">Account</text>
     <text class="title">我的赛事中心</text>
-    <text class="copy">登录、绑定选手、查看当前赛事和比赛日预测，都从这里进入。</text>
+    <text class="copy">登录、绑定选手、查看当前赛事和个人选手页，都从这里进入。</text>
   </view>
 
   <view class="section" wx:if="{{error}}">
@@ -30,19 +30,16 @@
       <view class="scope-mini" wx:else>
         <text class="account-label">当前赛事</text>
         <text class="account-name">尚未进入赛事</text>
-        <text class="account-meta">先选择赛事后，才能查看我的选手页和当日预测。</text>
+        <text class="account-meta">先选择赛事后，才能查看我的选手页和比赛日。</text>
       </view>
 
-      <view class="my-prediction-row" wx:if="{{user.player_id}}">
+      <view class="my-player-row" wx:if="{{user.player_id}}">
         <view class="list-main">
           <text class="account-label">我的选手</text>
           <text class="account-name">{{user.display_name}}</text>
           <text class="account-meta">{{latestDay ? latestDay.played_on : "暂无比赛日"}} · {{centerCopy}}</text>
         </view>
-        <view class="list-score">
-          <text class="score-value">{{myPredictionValue}}</text>
-          <text class="score-label">当日预测</text>
-        </view>
+        <button class="scope-button" bindtap="openMyPlayerPage">详情</button>
       </view>
 
       <view class="empty-inline" wx:else>

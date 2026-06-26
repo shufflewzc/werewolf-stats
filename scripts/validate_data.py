@@ -397,6 +397,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "round",
         "game_no",
         "score_model",
+        "scoring_rule",
         "exclude_from_team_scores",
         "played_on",
         "group_label",
@@ -423,6 +424,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         "behavior_points",
         "special_points",
         "adjustment_points",
+        "score_breakdown",
         "stance_result",
         "notes",
     }
@@ -471,6 +473,23 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             errors.append(
                 f"{label}.score_model: expected one of {sorted(VALID_SCORE_MODELS)}"
             )
+        scoring_rule = match.get("scoring_rule")
+        score_component_names = sorted(MATCH_SCORE_COMPONENT_FIELDS)
+        if not isinstance(scoring_rule, dict):
+            errors.append(f"{label}.scoring_rule: expected object")
+        elif scoring_rule:
+            version = scoring_rule.get("version")
+            if not isinstance(version, int) or isinstance(version, bool) or version < 1:
+                errors.append(f"{label}.scoring_rule.version: expected integer >= 1")
+            configured_component_names = [
+                str(component.get("key") or "").strip()
+                for component in scoring_rule.get("components", [])
+                if isinstance(component, dict)
+                and component.get("enabled", False)
+                and str(component.get("key") or "").strip()
+            ]
+            if configured_component_names:
+                score_component_names = configured_component_names
 
         if not isinstance(match.get("exclude_from_team_scores"), bool):
             errors.append(f"{label}.exclude_from_team_scores: expected boolean")
@@ -604,19 +623,44 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                         errors.append(
                             f"{participant_label}.{component_name}: expected number"
                         )
+                score_breakdown = participant.get("score_breakdown")
+                if not isinstance(score_breakdown, dict):
+                    errors.append(f"{participant_label}.score_breakdown: expected object")
+                else:
+                    for component_name, component_value in score_breakdown.items():
+                        if not isinstance(component_name, str) or not component_name.strip():
+                            errors.append(
+                                f"{participant_label}.score_breakdown: expected non-empty string keys"
+                            )
+                            continue
+                        if not is_number(component_value):
+                            errors.append(
+                                f"{participant_label}.score_breakdown.{component_name}: expected number"
+                            )
 
                 if (
                     score_model == "jingcheng_daily"
                     and is_number(points_earned)
                     and all(
-                        is_number(participant.get(component_name))
-                        for component_name in MATCH_SCORE_COMPONENT_FIELDS
+                        is_number(
+                            score_breakdown.get(component_name)
+                            if isinstance(score_breakdown, dict)
+                            else participant.get(component_name)
+                        )
+                        for component_name in score_component_names
                     )
                 ):
                     breakdown_total = round(
                         sum(
-                            float(participant.get(component_name) or 0.0)
-                            for component_name in MATCH_SCORE_COMPONENT_FIELDS
+                            float(
+                                (
+                                    score_breakdown.get(component_name)
+                                    if isinstance(score_breakdown, dict)
+                                    else participant.get(component_name)
+                                )
+                                or 0.0
+                            )
+                            for component_name in score_component_names
                         ),
                         2,
                     )

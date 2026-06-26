@@ -128,38 +128,6 @@
   background: #f8fafc;
 }
 
-.prediction-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16rpx;
-  margin-top: 16rpx;
-  padding: 16rpx 18rpx;
-  border-radius: 12rpx;
-  background: #eff6ff;
-}
-
-.prediction-line-label,
-.prediction-line-value {
-  display: block;
-  font-size: 22rpx;
-}
-
-.prediction-line-label {
-  color: #475569;
-}
-
-.prediction-line-value {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  font-weight: 800;
-  color: #1d4ed8;
-  text-align: right;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .day-focus-card {
   min-height: 112rpx;
   padding: 24rpx;

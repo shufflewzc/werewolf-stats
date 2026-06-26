@@ -49,7 +49,7 @@ Page({
     } catch (error) {
       this.setData({
         loading: false,
-        error: error.message || "战队数据加载失败"
+        error: error.message || "门派数据加载失败"
       });
     }
   },

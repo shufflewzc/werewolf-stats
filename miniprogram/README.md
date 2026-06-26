@@ -6,7 +6,7 @@
 
 - 首页：读取 `/api/dashboard`
 - 赛事：读取 `/api/competitions`
-- 战队：读取 `/api/teams`
+- 门派：读取 `/api/guilds`
 - 选手：读取 `/api/players`
 
 ## 本地调试

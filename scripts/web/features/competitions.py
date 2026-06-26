@@ -2822,7 +2822,7 @@ def _serialize_day_match_competition_section(
     series_name = series_entry["series_name"] if series_entry else competition_name
     series_slug = series_entry["series_slug"] if series_entry else None
     player_count = len({entry["player_id"] for match in matches for entry in match["players"]})
-    team_count = len({entry["team_id"] for match in matches for entry in match["players"]})
+    team_count = len({entry["team_id"] for match in matches for entry in match["players"] if entry.get("team_id")})
     completed_count = sum(1 for match in matches if is_match_counted_as_played(match))
 
     serialized_matches: list[dict[str, Any]] = []
@@ -3000,7 +3000,7 @@ def build_match_day_api_payload(
 
     grouped_matches = scope["grouped_matches"]
     completed_day_matches = scope["completed_day_matches"]
-    total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"]})
+    total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in completed_day_matches for entry in match["players"]})
     ai_settings = scope["ai_settings"]
     ai_report = scope["ai_report"]
@@ -3326,7 +3326,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
         series_name = series_entry["series_name"] if series_entry else competition_name
         series_slug = series_entry["series_slug"] if series_entry else None
         player_count = len({entry["player_id"] for match in matches for entry in match["players"]})
-        team_count = len({entry["team_id"] for match in matches for entry in match["players"]})
+        team_count = len({entry["team_id"] for match in matches for entry in match["players"] if entry.get("team_id")})
         completed_count = sum(1 for match in matches if is_match_counted_as_played(match))
         match_cards = []
         for match in sorted(
@@ -3343,7 +3343,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
                     {
                         item["team_id"]: item
                         for item in match["players"]
-                        if item["team_id"] in team_lookup
+                        if item.get("team_id") and item["team_id"] in team_lookup
                     }.values(),
                     key=lambda item: team_lookup[item["team_id"]]["name"],
                 )
@@ -3358,13 +3358,19 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
                 ),
             ):
                 player_name = player_lookup.get(participant["player_id"], {}).get("display_name", participant["player_id"])
-                team_name = team_lookup.get(participant["team_id"], {}).get("name", participant["team_id"])
+                team_id = str(participant.get("team_id") or "")
+                team_name = team_lookup.get(team_id, {}).get("name", team_id or "个人赛")
+                team_cell = (
+                    f'<a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{legacy.escape(build_scoped_path("/teams/" + team_id, competition_name, season_name, region_name, series_slug))}">{legacy.escape(team_name)}</a>'
+                    if team_id
+                    else legacy.escape(team_name)
+                )
                 player_rows.append(
                     f"""
                     <tr>
                       <td>{participant['seat']}</td>
                       <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{legacy.escape(build_scoped_path('/players/' + participant['player_id'], competition_name, season_name, region_name, series_slug))}">{legacy.escape(player_name)}</a></td>
-                      <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{legacy.escape(build_scoped_path('/teams/' + participant['team_id'], competition_name, season_name, region_name, series_slug))}">{legacy.escape(team_name)}</a></td>
+                      <td>{team_cell}</td>
                       <td>{legacy.escape(participant['role'])}</td>
                       <td>{legacy.escape(RESULT_OPTIONS.get(participant['result'], participant['result']))}</td>
                       <td>{float(participant['points_earned']):.2f}</td>
@@ -3433,7 +3439,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
             """
         )
 
-    total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"]})
+    total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in completed_day_matches for entry in match["players"]})
     team_day_rows = []
     for row in day_team_rows:
@@ -4030,7 +4036,7 @@ def _serialize_schedule_day_section(
             f"{quote(build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug))}"
         )
         team_names = "、".join(
-            sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"]})
+            sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"] if entry.get("team_id") and entry["team_id"] in team_lookup})
         )
         rows.append(
             {
@@ -4171,7 +4177,7 @@ def build_schedule_api_payload(
         if can_manage_matches(ctx.current_user, scope["data"], selected_competition)
         else ""
     )
-    total_team_count = len({entry["team_id"] for match in scope["match_rows"] for entry in match["players"]})
+    total_team_count = len({entry["team_id"] for match in scope["match_rows"] for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in scope["match_rows"] for entry in match["players"]})
     day_groups = scope["day_groups"]
     return {
@@ -4310,7 +4316,7 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
                 f"{quote(build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug))}"
             )
             team_names = "、".join(
-                sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"]})
+                sorted({team_lookup[entry["team_id"]]["name"] for entry in match["players"] if entry.get("team_id") and entry["team_id"] in team_lookup})
             )
             rows.append(
                 f"""
@@ -4358,7 +4364,7 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
             """
         )
 
-    total_team_count = len({entry["team_id"] for match in match_rows for entry in match["players"]})
+    total_team_count = len({entry["team_id"] for match in match_rows for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in match_rows for entry in match["players"]})
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">

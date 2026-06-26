@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS team_members (
 CREATE TABLE IF NOT EXISTS players (
     player_id TEXT PRIMARY KEY,
     display_name TEXT NOT NULL,
-    team_id TEXT NOT NULL REFERENCES teams(team_id),
+    team_id TEXT NOT NULL,
     photo TEXT NOT NULL,
     aliases_json TEXT NOT NULL,
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
@@ -186,7 +186,7 @@ CREATE TABLE IF NOT EXISTS match_players (
     -- Allows non-profile participants such as NPC while season dimension tables
     -- still keep strict player references.
     player_id TEXT NOT NULL,
-    team_id TEXT NOT NULL REFERENCES teams(team_id),
+    team_id TEXT NOT NULL,
     seat INTEGER NOT NULL,
     role TEXT NOT NULL,
     camp TEXT NOT NULL,
@@ -208,6 +208,12 @@ CREATE TABLE IF NOT EXISTS match_players (
 
 ALTER TABLE matches
 ADD COLUMN IF NOT EXISTS scoring_rule_json TEXT NOT NULL DEFAULT '{}';
+
+ALTER TABLE players
+DROP CONSTRAINT IF EXISTS players_team_id_fkey;
+
+ALTER TABLE match_players
+DROP CONSTRAINT IF EXISTS match_players_team_id_fkey;
 
 ALTER TABLE match_players
 ADD COLUMN IF NOT EXISTS score_breakdown_json TEXT NOT NULL DEFAULT '{}';

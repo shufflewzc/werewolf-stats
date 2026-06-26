@@ -43,6 +43,8 @@ from generate_stats import (
 )
 from competition_meta import (
     MAX_SCORING_RULE_COMPONENTS,
+    PARTICIPATION_MODE_INDIVIDUAL,
+    PARTICIPATION_MODE_TEAM,
     SCORING_RULE_COMPONENTS,
     build_city_code,
     build_season_code,
@@ -61,11 +63,14 @@ from competition_meta import (
     load_season_catalog,
     load_scoring_rule_templates,
     load_series_catalog,
+    merge_participation_modes,
     merge_scoring_rules,
+    normalize_participation_mode,
     normalize_season_catalog_entry,
     normalize_scoring_rule,
     normalize_series_catalog_entry,
     parse_china_datetime,
+    resolve_participation_mode_for_scope,
     resolve_scoring_rule_for_scope,
     save_season_catalog,
     save_scoring_rule_templates,
@@ -6177,6 +6182,8 @@ def find_player_by_name_in_scope(
             continue
         player_team = team_lookup_by_id.get(player.get("team_id"))
         if not player_team:
+            if not normalized_team_name and not str(player.get("team_id") or "").strip():
+                return player
             continue
         if (
             str(player_team.get("competition_name") or "").strip() != competition_name.strip()
@@ -6209,6 +6216,14 @@ def resolve_match_entities(
     for match in matches:
         competition_name = get_match_competition_name(match)
         season_name = str(match.get("season") or "").strip()
+        participation_mode = resolve_participation_mode_for_scope(
+            data,
+            competition_name,
+            season_name,
+        )
+        is_individual_match = participation_mode == PARTICIPATION_MODE_INDIVIDUAL
+        if is_individual_match:
+            match["exclude_from_team_scores"] = True
         for entry in match.get("players", []):
             player_name = str(
                 entry.get("player_name")
@@ -6219,21 +6234,26 @@ def resolve_match_entities(
             team_name = str(entry.get("team_name") or entry.get("team_id") or "").strip()
             if not player_name and not team_name:
                 continue
-            if not team_name:
+            if not team_name and not is_individual_match:
                 errors.append(f"{player_name or '某位选手'} 缺少战队名称。")
                 continue
-            team = find_team_by_name_in_scope(data, competition_name, season_name, team_name)
-            if not team:
-                placeholder_team_id = build_team_serial(data, competition_name, season_name, data["teams"])
-                team = build_placeholder_team(
-                    placeholder_team_id,
-                    team_name,
-                    competition_name,
-                    season_name,
-                )
-                data["teams"].append(team)
-            entry["team_id"] = team["team_id"]
-            entry["team_name"] = team["name"]
+            team = None
+            if team_name:
+                team = find_team_by_name_in_scope(data, competition_name, season_name, team_name)
+                if not team:
+                    placeholder_team_id = build_team_serial(data, competition_name, season_name, data["teams"])
+                    team = build_placeholder_team(
+                        placeholder_team_id,
+                        team_name,
+                        competition_name,
+                        season_name,
+                    )
+                    data["teams"].append(team)
+                entry["team_id"] = team["team_id"]
+                entry["team_name"] = team["name"]
+            else:
+                entry["team_id"] = ""
+                entry["team_name"] = ""
             if not player_name:
                 errors.append(f"{team_name} 有一行缺少队员姓名。")
                 continue
@@ -6246,13 +6266,13 @@ def resolve_match_entities(
                 competition_name,
                 season_name,
                 player_name,
-                team["name"],
+                team["name"] if team else "",
             )
             if not player:
                 player_id = build_unique_slug(existing_player_ids, "player", player_name, "player")
                 player = build_placeholder_player(
                     player_id,
-                    team["team_id"],
+                    team["team_id"] if team else "",
                     competition_name,
                     season_name,
                     display_name=player_name,
@@ -6261,7 +6281,7 @@ def resolve_match_entities(
                 existing_player_ids.add(player_id)
             entry["player_id"] = player["player_id"]
             entry["player_name"] = player["display_name"]
-            if entry["player_id"] not in team["members"]:
+            if team and entry["player_id"] not in team["members"]:
                 team["members"].append(entry["player_id"])
         resolve_match_award_player_ids(match)
     return errors

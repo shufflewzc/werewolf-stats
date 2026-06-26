@@ -30,6 +30,9 @@ SCORING_RULE_COMPONENTS = (
 )
 SCORING_RULE_STANDARD = "standard"
 SCORING_RULE_STRUCTURED = "jingcheng_daily"
+PARTICIPATION_MODE_TEAM = "team"
+PARTICIPATION_MODE_INDIVIDUAL = "individual"
+PARTICIPATION_MODE_OPTIONS = {PARTICIPATION_MODE_TEAM, PARTICIPATION_MODE_INDIVIDUAL}
 MAX_SCORING_RULE_COMPONENTS = 20
 SCORING_COMPONENT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 REGION_NAME_CANDIDATES = (
@@ -326,6 +329,9 @@ def normalize_series_catalog_entry(entry: dict[str, Any]) -> dict[str, Any] | No
     hero_title = str(entry.get("hero_title") or "").strip()
     hero_intro = str(entry.get("hero_intro") or "").strip()
     hero_note = str(entry.get("hero_note") or "").strip()
+    participation_mode = str(entry.get("participation_mode") or "").strip()
+    if participation_mode not in PARTICIPATION_MODE_OPTIONS:
+        participation_mode = PARTICIPATION_MODE_TEAM
     preserved_series_slug = str(entry.get("series_slug") or "").strip()
 
     return {
@@ -339,6 +345,7 @@ def normalize_series_catalog_entry(entry: dict[str, Any]) -> dict[str, Any] | No
         "hero_title": hero_title,
         "hero_intro": hero_intro,
         "hero_note": hero_note,
+        "participation_mode": participation_mode,
         "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule")),
         "active": bool(entry.get("active", True)),
         "created_by": str(entry.get("created_by") or "system").strip() or "system",
@@ -765,6 +772,22 @@ def merge_scoring_rules(
     return override
 
 
+def normalize_participation_mode(value: Any, *, allow_inherit: bool = False) -> str:
+    normalized = str(value or "").strip()
+    if allow_inherit and normalized in {"", "inherit"}:
+        return "inherit"
+    if normalized == PARTICIPATION_MODE_INDIVIDUAL:
+        return PARTICIPATION_MODE_INDIVIDUAL
+    return PARTICIPATION_MODE_TEAM
+
+
+def merge_participation_modes(series_mode: Any, season_mode: Any = None) -> str:
+    override = normalize_participation_mode(season_mode, allow_inherit=True)
+    if override != "inherit":
+        return override
+    return normalize_participation_mode(series_mode)
+
+
 def scoring_rule_component_fields(rule: dict[str, Any] | None) -> list[tuple[str, str]]:
     normalized = normalize_scoring_rule(rule)
     if normalized.get("score_model") != SCORING_RULE_STRUCTURED:
@@ -834,6 +857,10 @@ def normalize_season_catalog_entry(
         "end_at": normalize_datetime_local_value(str(entry.get("end_at") or "")),
         "stage_windows": normalize_stage_windows(entry.get("stage_windows", [])),
         "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule"), allow_inherit=True),
+        "participation_mode": normalize_participation_mode(
+            entry.get("participation_mode"),
+            allow_inherit=True,
+        ),
         "registered_team_ids": merge_team_ids(registered_team_ids),
         "notes": str(entry.get("notes") or "").strip(),
         "created_by": str(entry.get("created_by") or "system").strip() or "system",
@@ -907,6 +934,11 @@ def load_season_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "series_code": existing.get("series_code") or entry["series_code"],
                     "start_at": existing.get("start_at") or entry["start_at"],
                     "end_at": existing.get("end_at") or entry["end_at"],
+                    "participation_mode": (
+                        existing.get("participation_mode")
+                        if existing.get("participation_mode") != "inherit"
+                        else entry.get("participation_mode", "inherit")
+                    ),
                     "registered_team_ids": merge_team_ids(
                         existing.get("registered_team_ids", []),
                         entry.get("registered_team_ids", []),
@@ -1013,6 +1045,27 @@ def resolve_scoring_rule_for_scope(
         )
     season_rule = season_entry.get("scoring_rule") if season_entry else None
     return merge_scoring_rules(series_rule, season_rule)
+
+
+def resolve_participation_mode_for_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str = "",
+) -> str:
+    series_catalog = load_series_catalog(data)
+    season_catalog = load_season_catalog(data)
+    series_entry = get_series_entry_by_competition(series_catalog, competition_name)
+    series_mode = series_entry.get("participation_mode") if series_entry else None
+    season_entry = None
+    if series_entry and season_name:
+        season_entry = get_season_entry(
+            season_catalog,
+            series_entry["series_slug"],
+            season_name,
+            competition_name=competition_name,
+        )
+    season_mode = season_entry.get("participation_mode") if season_entry else None
+    return merge_participation_modes(series_mode, season_mode)
 
 
 def list_seasons(

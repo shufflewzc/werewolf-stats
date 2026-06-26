@@ -322,11 +322,12 @@ def validate_players(
         )
 
         team_id = player.get("team_id")
-        errors.extend(validate_slug(team_id, f"{label}.team_id"))
-        if isinstance(team_id, str) and team_id not in team_ids:
+        if team_id != "":
+            errors.extend(validate_slug(team_id, f"{label}.team_id"))
+        if isinstance(team_id, str) and team_id and team_id not in team_ids:
             errors.append(f"{label}.team_id: unknown team_id {team_id!r}")
 
-        if isinstance(player_id, str) and isinstance(team_id, str):
+        if isinstance(player_id, str) and isinstance(team_id, str) and team_id:
             player_teams[player_id] = team_id
 
         errors.extend(validate_non_empty_string(player.get("photo"), f"{label}.photo"))
@@ -568,8 +569,9 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                         participant_ids_in_match.add(participant_id)
 
                 participant_team_id = participant.get("team_id")
-                errors.extend(validate_slug(participant_team_id, f"{participant_label}.team_id"))
-                if isinstance(participant_team_id, str) and participant_team_id not in team_ids:
+                if participant_team_id != "":
+                    errors.extend(validate_slug(participant_team_id, f"{participant_label}.team_id"))
+                if isinstance(participant_team_id, str) and participant_team_id and participant_team_id not in team_ids:
                     errors.append(
                         f"{participant_label}.team_id: unknown team_id {participant_team_id!r}"
                     )

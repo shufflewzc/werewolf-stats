@@ -183,12 +183,12 @@ def resolve_player_team_context(
         for entry in match["players"]:
             if entry["player_id"] != player["player_id"]:
                 continue
-            if entry["team_id"] not in ordered_team_ids:
+            if entry.get("team_id") and entry["team_id"] not in ordered_team_ids:
                 ordered_team_ids.append(entry["team_id"])
 
     if not ordered_team_ids:
-        team_id = player["team_id"]
-        team_name = teams.get(team_id, {}).get("name", team_id)
+        team_id = str(player.get("team_id") or "")
+        team_name = teams.get(team_id, {}).get("name", team_id or "个人赛")
         return team_id, team_name, [team_name]
 
     team_names = [teams.get(team_id, {}).get("name", team_id) for team_id in ordered_team_ids]
@@ -214,8 +214,8 @@ def build_player_rows(
             "team_id": team_id,
             "team_name": team_name,
             "team_names": team_names,
-            "current_team_id": player["team_id"],
-            "current_team_name": teams[player["team_id"]]["name"],
+            "current_team_id": player.get("team_id", ""),
+            "current_team_name": teams.get(player.get("team_id", ""), {}).get("name", "个人赛"),
             "photo": player["photo"],
             "games_played": 0,
             "wins": 0,
@@ -341,7 +341,7 @@ def build_team_rows(
         exclude_from_team_scores = is_team_score_excluded(match)
         teams_in_match = set()
         for entry in match["players"]:
-            if entry["team_id"] not in aggregates:
+            if not entry.get("team_id") or entry["team_id"] not in aggregates:
                 continue
             row = aggregates[entry["team_id"]]
             stance_result = normalize_stance_result(entry)
@@ -425,6 +425,8 @@ def build_match_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
     ):
         team_totals: dict[str, float] = {}
         for entry in match["players"]:
+            if not entry.get("team_id") or entry["team_id"] not in teams:
+                continue
             team_totals.setdefault(entry["team_id"], 0.0)
             team_totals[entry["team_id"]] += float(entry["points_earned"])
 

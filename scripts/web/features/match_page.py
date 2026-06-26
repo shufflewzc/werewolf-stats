@@ -997,6 +997,8 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
 
     team_scores: dict[str, float] = {}
     for participant in match["players"]:
+        if not participant.get("team_id"):
+            continue
         team_scores.setdefault(participant["team_id"], 0.0)
         team_scores[participant["team_id"]] += float(participant["points_earned"])
 
@@ -1054,7 +1056,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
         player = player_lookup.get(participant["player_id"])
         team = team_lookup.get(participant["team_id"])
         player_name = player["display_name"] if player else participant["player_id"]
-        team_name = team["name"] if team else participant["team_id"]
+        team_name = team["name"] if team else (participant["team_id"] or "个人赛")
         stance_result = normalize_stance_result(participant)
         score_breakdown = normalize_score_breakdown(participant)
         breakdown_cells = ""

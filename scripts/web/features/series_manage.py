@@ -34,6 +34,8 @@ normalize_season_catalog_entry = legacy.normalize_season_catalog_entry
 normalize_scoring_rule = legacy.normalize_scoring_rule
 normalize_series_catalog_entry = legacy.normalize_series_catalog_entry
 merge_scoring_rules = legacy.merge_scoring_rules
+merge_participation_modes = legacy.merge_participation_modes
+normalize_participation_mode = legacy.normalize_participation_mode
 parse_china_datetime = legacy.parse_china_datetime
 require_competition_catalog_manager = legacy.require_competition_catalog_manager
 require_competition_season_manager = legacy.require_competition_season_manager
@@ -50,6 +52,8 @@ STAGE_OPTIONS = legacy.STAGE_OPTIONS
 SCORING_RULE_COMPONENTS = legacy.SCORING_RULE_COMPONENTS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 MAX_SCORING_RULE_COMPONENTS = legacy.MAX_SCORING_RULE_COMPONENTS
+PARTICIPATION_MODE_INDIVIDUAL = legacy.PARTICIPATION_MODE_INDIVIDUAL
+PARTICIPATION_MODE_TEAM = legacy.PARTICIPATION_MODE_TEAM
 
 RESERVED_EXCEL_SCORE_LABELS = {
     "座位号",
@@ -287,6 +291,47 @@ def render_scoring_rule_summary(rule: dict[str, object] | None) -> str:
     <div class="small text-secondary mt-3">启用分项</div>
     <div class="fw-semibold mt-1">{escape(field_text)}</div>
     {f'<div class="small text-secondary mt-3">规则备注</div><div class="fw-semibold mt-1">{escape(notes)}</div>' if notes else ''}
+    """
+
+
+def participation_mode_label(mode: str) -> str:
+    return "个人赛" if mode == PARTICIPATION_MODE_INDIVIDUAL else "团队赛"
+
+
+def render_participation_mode_summary(mode: str) -> str:
+    normalized = normalize_participation_mode(mode)
+    helper = (
+        "个人赛录入时战队可为空，比赛会自动不计入战队榜。"
+        if normalized == PARTICIPATION_MODE_INDIVIDUAL
+        else "团队赛录入时参赛选手需要填写战队，成绩会进入战队统计。"
+    )
+    return f"""
+    <div class="small text-secondary">参赛模式</div>
+    <div class="fw-semibold mt-1">{escape(participation_mode_label(normalized))}</div>
+    <div class="small text-secondary mt-2">{escape(helper)}</div>
+    """
+
+
+def render_participation_mode_field(
+    name: str,
+    value: str,
+    *,
+    allow_inherit: bool = False,
+    inherited_mode: str = PARTICIPATION_MODE_TEAM,
+) -> str:
+    normalized = normalize_participation_mode(value, allow_inherit=allow_inherit)
+    inherited_label = participation_mode_label(normalize_participation_mode(inherited_mode))
+    inherit_option = (
+        f'<option value="inherit"{ " selected" if normalized == "inherit" else ""}>继承系列赛默认（{escape(inherited_label)}）</option>'
+        if allow_inherit
+        else ""
+    )
+    return f"""
+    <select class="form-select" name="{escape(name)}">
+      {inherit_option}
+      <option value="{PARTICIPATION_MODE_TEAM}"{" selected" if normalized == PARTICIPATION_MODE_TEAM else ""}>团队赛：需要战队，计入战队榜</option>
+      <option value="{PARTICIPATION_MODE_INDIVIDUAL}"{" selected" if normalized == PARTICIPATION_MODE_INDIVIDUAL else ""}>个人赛：战队可空，只统计个人</option>
+    </select>
     """
 
 
@@ -569,6 +614,7 @@ def get_series_manage_page(
         "hero_title": "",
         "hero_intro": "",
         "hero_note": "",
+        "participation_mode": PARTICIPATION_MODE_TEAM,
         "scoring_rule": normalize_scoring_rule({}),
         "scoring_template": "",
         "save_scoring_template": "",
@@ -585,6 +631,7 @@ def get_series_manage_page(
         "start_at": "",
         "end_at": "",
         "notes": "",
+        "participation_mode": "inherit",
         "scoring_rule": {"inherit": True},
         "edit_mode": requested_edit_mode,
         **build_stage_window_form_values(),
@@ -601,6 +648,7 @@ def get_series_manage_page(
                 "hero_title": selected_entry.get("hero_title", ""),
                 "hero_intro": selected_entry.get("hero_intro", ""),
                 "hero_note": selected_entry.get("hero_note", ""),
+                "participation_mode": normalize_participation_mode(selected_entry.get("participation_mode")),
                 "scoring_rule": normalize_scoring_rule(selected_entry.get("scoring_rule")),
                 "original_competition_name": selected_entry["competition_name"],
             }
@@ -614,6 +662,10 @@ def get_series_manage_page(
                 "start_at": selected_season_entry.get("start_at", ""),
                 "end_at": selected_season_entry.get("end_at", ""),
                 "notes": selected_season_entry.get("notes", ""),
+                "participation_mode": normalize_participation_mode(
+                    selected_season_entry.get("participation_mode"),
+                    allow_inherit=True,
+                ),
                 "scoring_rule": normalize_scoring_rule(selected_season_entry.get("scoring_rule"), allow_inherit=True),
                 **build_stage_window_form_values(selected_season_entry),
             }
@@ -632,6 +684,7 @@ def get_series_manage_page(
                     "start_at",
                     "end_at",
                     "notes",
+                    "participation_mode",
                     "edit_mode",
                     *[
                         key
@@ -752,6 +805,11 @@ def get_series_manage_page(
             </div>
             <div class="col-12">
               <div class="team-link-card shadow-sm p-4">
+                {render_participation_mode_summary(selected_entry.get('participation_mode', PARTICIPATION_MODE_TEAM))}
+              </div>
+            </div>
+            <div class="col-12">
+              <div class="team-link-card shadow-sm p-4">
                 {render_scoring_rule_summary(selected_entry.get('scoring_rule'))}
               </div>
             </div>
@@ -779,6 +837,7 @@ def get_series_manage_page(
             <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">结束日期</div><div class="fw-semibold mt-1">{escape(format_datetime_local_label(selected_season_entry.get('end_at', '')))}</div></div></div>
             <div class="col-12 col-lg-4"><div class="team-link-card shadow-sm p-4 h-100"><div class="small text-secondary">状态</div><div class="fw-semibold mt-1">{escape(season_status_label(selected_season_entry))}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4"><div class="small text-secondary">赛季说明</div><div class="fw-semibold mt-1">{escape(selected_season_entry.get('notes') or '暂无赛季说明')}</div></div></div>
+            <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_participation_mode_summary(merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}</div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_scoring_rule_summary(merge_scoring_rules(selected_entry.get('scoring_rule') if selected_entry else None, selected_season_entry.get('scoring_rule')))}</div></div>
             <div class="col-12"><h3 class="h5 mb-0 mt-2">赛段时间</h3></div>
             {render_stage_window_cards(selected_season_entry)}
@@ -900,6 +959,11 @@ def get_series_manage_page(
                       <div class="col-12 col-md-4"><label class="form-label">开始日期</label><input class="form-control" name="start_at" type="date" value="{escape(date_input_value(season_form['start_at']))}" required></div>
                       <div class="col-12 col-md-4"><label class="form-label">结束日期</label><input class="form-control" name="end_at" type="date" value="{escape(date_input_value(season_form['end_at']))}" required></div>
                       <div class="col-12"><label class="form-label">赛季说明</label><textarea class="form-control" name="notes" rows="3" placeholder="可写赛季定位、档期说明或补充备注。">{escape(season_form['notes'])}</textarea></div>
+                      <div class="col-12 col-md-6">
+                        <label class="form-label">参赛模式</label>
+                        {render_participation_mode_field('participation_mode', season_form.get('participation_mode', 'inherit'), allow_inherit=True, inherited_mode=(selected_entry or {}).get('participation_mode', PARTICIPATION_MODE_TEAM))}
+                        <div class="small text-secondary mt-2">个人赛允许参赛选手不填战队，并自动不进入战队榜。</div>
+                      </div>
                       {render_scoring_rule_editor(season_form.get('scoring_rule'), 'season', allow_inherit=True, inherited_rule=(selected_entry or {}).get('scoring_rule'))}
                       <div class="col-12">
                         <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mt-2">
@@ -955,6 +1019,11 @@ def get_series_manage_page(
                   <div class="col-12 col-md-6"><label class="form-label">赛事页主标题</label><input class="form-control" name="hero_title" value="{escape(current_form['hero_title'])}" placeholder="留空则默认显示赛事页名称"></div>
                   <div class="col-12"><label class="form-label">赛事页导语</label><textarea class="form-control" name="hero_intro" rows="3" placeholder="展示在赛事页头部左侧，适合写当前赛事定位、浏览方式和亮点。">{escape(current_form['hero_intro'])}</textarea></div>
                   <div class="col-12"><label class="form-label">赛事页说明备注</label><textarea class="form-control" name="hero_note" rows="3" placeholder="展示在赛事页头部右侧信息卡，适合写这个赛区、本赛季或该赛事页的说明。">{escape(current_form['hero_note'])}</textarea></div>
+                  <div class="col-12 col-md-6">
+                    <label class="form-label">参赛模式</label>
+                    {render_participation_mode_field('participation_mode', current_form.get('participation_mode', PARTICIPATION_MODE_TEAM))}
+                    <div class="small text-secondary mt-2">团队赛保留战队统计；个人赛录入时战队可为空。</div>
+                  </div>
                   {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog', templates=scoring_templates, selected_template_slug=current_form.get('scoring_template', ''))}
                   <div class="col-12">
                     <div class="team-link-card shadow-sm p-4">
@@ -1006,6 +1075,11 @@ def get_series_manage_page(
                   <div class="col-12 col-md-6"><label class="form-label">赛事页主标题</label><input class="form-control" name="hero_title" value="{escape(current_form['hero_title'])}" placeholder="留空则默认显示赛事页名称"></div>
                   <div class="col-12"><label class="form-label">赛事页导语</label><textarea class="form-control" name="hero_intro" rows="3" placeholder="展示在赛事页头部左侧，适合写当前赛事定位、浏览方式和亮点。">{escape(current_form['hero_intro'])}</textarea></div>
                   <div class="col-12"><label class="form-label">赛事页说明备注</label><textarea class="form-control" name="hero_note" rows="3" placeholder="展示在赛事页头部右侧信息卡，适合写这个赛区、本赛季或该赛事页的说明。">{escape(current_form['hero_note'])}</textarea></div>
+                  <div class="col-12 col-md-6">
+                    <label class="form-label">参赛模式</label>
+                    {render_participation_mode_field('participation_mode', current_form.get('participation_mode', PARTICIPATION_MODE_TEAM))}
+                    <div class="small text-secondary mt-2">团队赛保留战队统计；个人赛录入时战队可为空。</div>
+                  </div>
                   {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog', templates=scoring_templates, selected_template_slug=current_form.get('scoring_template', ''))}
                   <div class="col-12">
                     <div class="team-link-card shadow-sm p-4">
@@ -1083,6 +1157,10 @@ def handle_series_manage(ctx: RequestContext, start_response):
         start_at = form_value(ctx.form, "start_at").strip()
         end_at = form_value(ctx.form, "end_at").strip()
         notes = form_value(ctx.form, "notes").strip()
+        participation_mode = normalize_participation_mode(
+            form_value(ctx.form, "participation_mode").strip(),
+            allow_inherit=True,
+        )
         season_scoring_rule = collect_scoring_rule_from_form(ctx.form, "season", allow_inherit=True)
         next_path = form_value(ctx.form, "next").strip()
         stage_windows = collect_stage_windows_from_form(ctx.form)
@@ -1098,6 +1176,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
             "start_at": start_at,
             "end_at": end_at,
             "notes": notes,
+            "participation_mode": participation_mode,
             "season_scoring_rule": season_scoring_rule,
             "original_competition_name": competition_name,
             "next": next_path,
@@ -1120,7 +1199,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
             existing_entry.get("scoring_rule") if existing_entry else None,
             allow_inherit=True,
         )
-        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_windows": stage_windows, "scoring_rule": season_scoring_rule, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
+        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_windows": stage_windows, "participation_mode": participation_mode, "scoring_rule": season_scoring_rule, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
         if not new_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季保存失败。", form_values=form_values))
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == series_slug and item.get("competition_name", "") == competition_name and item["season_name"] == lookup_season_name)]
@@ -1196,6 +1275,9 @@ def handle_series_manage(ctx: RequestContext, start_response):
     hero_title = form_value(ctx.form, "hero_title").strip()
     hero_intro = form_value(ctx.form, "hero_intro").strip()
     hero_note = form_value(ctx.form, "hero_note").strip()
+    participation_mode = normalize_participation_mode(
+        form_value(ctx.form, "participation_mode").strip()
+    )
     catalog_scoring_rule = collect_scoring_rule_from_form(ctx.form, "catalog")
     selected_scoring_template = form_value(ctx.form, "catalog_scoring_template").strip()
     save_as_scoring_template = form_value(ctx.form, "save_scoring_template").strip() in {"1", "true", "on", "yes"}
@@ -1214,6 +1296,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         "hero_title": hero_title,
         "hero_intro": hero_intro,
         "hero_note": hero_note,
+        "participation_mode": participation_mode,
         "catalog_scoring_rule": catalog_scoring_rule,
         "scoring_template": selected_scoring_template,
         "save_scoring_template": "1" if save_as_scoring_template else "",
@@ -1244,7 +1327,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         catalog_scoring_rule,
         existing_entry.get("scoring_rule") if existing_entry else None,
     )
-    new_entry = normalize_series_catalog_entry({"series_name": series_name, "series_code": series_code, "region_name": region_name, "competition_name": competition_name, "series_slug": existing_entry["series_slug"] if existing_entry else "", "summary": summary, "page_badge": page_badge, "hero_title": hero_title, "hero_intro": hero_intro, "hero_note": hero_note, "scoring_rule": catalog_scoring_rule, "active": True, "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
+    new_entry = normalize_series_catalog_entry({"series_name": series_name, "series_code": series_code, "region_name": region_name, "competition_name": competition_name, "series_slug": existing_entry["series_slug"] if existing_entry else "", "summary": summary, "page_badge": page_badge, "hero_title": hero_title, "hero_intro": hero_intro, "hero_note": hero_note, "participation_mode": participation_mode, "scoring_rule": catalog_scoring_rule, "active": True, "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
     if not new_entry:
         return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="系列赛目录保存失败。", form_values=form_values))
     updated_catalog = [item for item in catalog if item["competition_name"] != (original_competition_name or competition_name)]

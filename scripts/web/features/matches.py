@@ -58,6 +58,7 @@ invalidate_validated_data_cache = legacy.invalidate_validated_data_cache
 is_admin_user = legacy.is_admin_user
 MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
+PARTICIPATION_MODE_INDIVIDUAL = legacy.PARTICIPATION_MODE_INDIVIDUAL
 normalize_stance_result = legacy.normalize_stance_result
 normalize_match_score_model = legacy.normalize_match_score_model
 normalize_scoring_rule = legacy.normalize_scoring_rule
@@ -74,6 +75,7 @@ resolve_match_entities = legacy.resolve_match_entities
 rollback_import_batch = legacy.rollback_import_batch
 save_repository_state = legacy.save_repository_state
 resolve_scoring_rule_for_scope = legacy.resolve_scoring_rule_for_scope
+resolve_participation_mode_for_scope = legacy.resolve_participation_mode_for_scope
 safe_asset_path = legacy.safe_asset_path
 scoring_rule_component_fields = legacy.scoring_rule_component_fields
 ensure_team_asset_dirs = legacy.ensure_team_asset_dirs
@@ -3528,6 +3530,12 @@ def render_match_form_page(
         str(current.get("competition_name") or ""),
         str(current.get("season") or ""),
     )
+    participation_mode = resolve_participation_mode_for_scope(
+        current_data,
+        str(current.get("competition_name") or ""),
+        str(current.get("season") or ""),
+    )
+    is_individual_match = participation_mode == PARTICIPATION_MODE_INDIVIDUAL
     configured_score_fields = scoring_rule_component_fields(scoring_rule)
     score_component_fields = (
         configured_score_fields or MATCH_SCORE_COMPONENT_FIELDS
@@ -3735,7 +3743,7 @@ def render_match_form_page(
         <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
           <div>
             <h2 class="h5 mb-1">上场选手数据</h2>
-            <div class="small text-secondary">这里按当前顺序编辑所有参赛选手信息。录入时直接填写队员姓名和战队名称；系统会在当前赛事赛季内自动匹配，找不到时会先创建赛季档案。计分分项来自后台系列赛/赛季规则，并自动汇总总分。</div>
+            <div class="small text-secondary">这里按当前顺序编辑所有参赛选手信息。{('当前是个人赛，战队名称可以留空，成绩只进入个人统计。' if is_individual_match else '录入时直接填写队员姓名和战队名称；系统会在当前赛事赛季内自动匹配，找不到时会先创建赛季档案。')}计分分项来自后台系列赛/赛季规则，并自动汇总总分。</div>
           </div>
         </div>
 
@@ -3744,7 +3752,7 @@ def render_match_form_page(
             <thead>
               <tr>
                 <th>队员姓名</th>
-                <th>战队名称</th>
+                <th>战队名称{'（可留空）' if is_individual_match else ''}</th>
                 <th>座位</th>
                 <th>角色</th>
                 <th>阵营</th>

@@ -308,8 +308,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             aliases_json TEXT NOT NULL,
             active INTEGER NOT NULL CHECK (active IN (0, 1)),
             joined_on TEXT NOT NULL,
-            notes TEXT NOT NULL,
-            FOREIGN KEY (team_id) REFERENCES teams(team_id)
+            notes TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS matches (
@@ -357,8 +356,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             notes TEXT NOT NULL,
             PRIMARY KEY (match_id, sort_order),
             FOREIGN KEY (match_id) REFERENCES matches(match_id) ON DELETE CASCADE,
-            FOREIGN KEY (player_id) REFERENCES players(player_id),
-            FOREIGN KEY (team_id) REFERENCES teams(team_id)
+            FOREIGN KEY (player_id) REFERENCES players(player_id)
         );
 
         CREATE INDEX IF NOT EXISTS idx_team_members_team_order

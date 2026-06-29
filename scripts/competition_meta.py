@@ -524,13 +524,18 @@ def normalize_stage_windows(value: Any) -> list[dict[str, str]]:
             continue
         start_at = normalize_datetime_local_value(str(item.get("start_at") or ""))
         end_at = normalize_datetime_local_value(str(item.get("end_at") or ""))
-        if not start_at and not end_at:
+        participation_mode = normalize_participation_mode(
+            item.get("participation_mode"),
+            allow_inherit=True,
+        )
+        if not start_at and not end_at and participation_mode == "inherit":
             continue
         windows.append(
             {
                 "stage": stage_key,
                 "start_at": start_at,
                 "end_at": end_at,
+                "participation_mode": participation_mode,
             }
         )
         seen_stages.add(stage_key)
@@ -781,10 +786,15 @@ def normalize_participation_mode(value: Any, *, allow_inherit: bool = False) -> 
     return PARTICIPATION_MODE_TEAM
 
 
-def merge_participation_modes(series_mode: Any, season_mode: Any = None) -> str:
-    override = normalize_participation_mode(season_mode, allow_inherit=True)
-    if override != "inherit":
-        return override
+def merge_participation_modes(
+    series_mode: Any,
+    season_mode: Any = None,
+    stage_mode: Any = None,
+) -> str:
+    for override_value in (stage_mode, season_mode):
+        override = normalize_participation_mode(override_value, allow_inherit=True)
+        if override != "inherit":
+            return override
     return normalize_participation_mode(series_mode)
 
 
@@ -1051,6 +1061,7 @@ def resolve_participation_mode_for_scope(
     data: dict[str, Any],
     competition_name: str,
     season_name: str = "",
+    stage: str = "",
 ) -> str:
     series_catalog = load_series_catalog(data)
     season_catalog = load_season_catalog(data)
@@ -1065,7 +1076,19 @@ def resolve_participation_mode_for_scope(
             competition_name=competition_name,
         )
     season_mode = season_entry.get("participation_mode") if season_entry else None
-    return merge_participation_modes(series_mode, season_mode)
+    stage_mode = None
+    if season_entry and stage:
+        stage_window = next(
+            (
+                item
+                for item in season_entry.get("stage_windows", [])
+                if isinstance(item, dict)
+                and str(item.get("stage") or "").strip() == stage
+            ),
+            None,
+        )
+        stage_mode = stage_window.get("participation_mode") if stage_window else None
+    return merge_participation_modes(series_mode, season_mode, stage_mode)
 
 
 def list_seasons(

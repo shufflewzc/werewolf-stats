@@ -327,10 +327,12 @@ def build_batch_create_form(
     competition_field_html = build_match_competition_field(
         current["competition_name"],
         ctx.current_user,
+        prioritize_active=True,
     )
     season_field_html = build_match_season_field(
         current["competition_name"],
         current["season"],
+        include_non_ongoing=True,
     )
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -438,7 +440,7 @@ def build_excel_import_panel(
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
           <h2 class="section-title mb-2">Excel 批量补录比赛详情</h2>
-          <p class="section-copy mb-0">支持一次上传多场比赛详情。模板为单工作表，单行就是一个选手在一局里的记录；系统会优先按比赛编号定位已预创建比赛。</p>
+          <p class="section-copy mb-0">支持一次上传多场比赛详情。模板为单工作表，单行就是一个选手在一局里的记录；系统按唯一比赛编号定位已预创建比赛。</p>
         </div>
         <div class="d-flex flex-wrap gap-2">{''.join(template_links)}</div>
       </div>
@@ -472,7 +474,7 @@ def build_excel_import_panel(
             <input class="form-control" type="file" name="match_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </div>
         </div>
-        <div class="small text-secondary mt-3">模板只用于补录已经批量创建好的比赛。系统会优先按 `match_id` 定位比赛；如果没有比赛编号，才会回退到赛事、赛季、日期这些信息辅助匹配。这里的分组如果填写，会统一写入本次上传的每场比赛；如果留空，系统才会读取 Excel 里的 `分组` 列。MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
+        <div class="small text-secondary mt-3">模板只用于补录已经批量创建好的比赛。Excel 只需填写唯一比赛编号，系统会自动读取对应赛事、赛季、日期和赛段。这里的分组如果填写，会统一写入本次上传的每场比赛；如果留空，系统才会读取 Excel 里的 `分组` 列。MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入</button>
         </div>
@@ -1854,6 +1856,36 @@ def validate_template_metadata_scope(
             )
 
 
+def hydrate_excel_rows_from_match_ids(
+    rows: list[dict[str, str]],
+    data: dict[str, object],
+    *,
+    require_match_id: bool = False,
+) -> None:
+    existing_by_id = {
+        str(match.get("match_id") or "").strip(): match
+        for match in data.get("matches", [])
+        if isinstance(match, dict) and str(match.get("match_id") or "").strip()
+    }
+    for row in rows:
+        match_id = str(row.get("match_id") or "").strip()
+        if not match_id:
+            if require_match_id:
+                raise ValueError("新版比赛模板的每一行都必须填写唯一比赛编号。")
+            continue
+        existing_match = existing_by_id.get(match_id)
+        if not existing_match:
+            raise ValueError(f"没有找到比赛编号：{match_id}。请先批量创建待补录比赛。")
+        row["competition_name"] = get_match_competition_name(existing_match)
+        row["season_name"] = str(existing_match.get("season") or "").strip()
+        row["played_on"] = str(existing_match.get("played_on") or "").strip()
+        row["stage"] = str(existing_match.get("stage") or "").strip()
+        row["round"] = str(existing_match.get("round") or "").strip()
+        row["game_no"] = str(existing_match.get("game_no") or "").strip()
+        if not str(row.get("room_label") or row.get("table_label") or "").strip():
+            row["room_label"] = str(existing_match.get("table_label") or "").strip()
+
+
 def parse_excel_int(value: str, field_label: str) -> int:
     try:
         return int(float(value.strip()))
@@ -1961,7 +1993,11 @@ def build_match_from_excel_rows(
     match["stage"] = match_row.get("stage", "").strip()
     match["round"] = parse_excel_optional_int(match_row.get("round", ""), 1)
     match["game_no"] = resolve_excel_game_no(match_row)
-    raw_score_model = match_row.get("score_model", "").strip()
+    raw_score_model = (
+        ""
+        if isinstance(scoring_rule_override, dict)
+        else match_row.get("score_model", "").strip()
+    )
     inherited_rule = (
         normalize_scoring_rule(scoring_rule_override)
         if isinstance(scoring_rule_override, dict)
@@ -2091,17 +2127,7 @@ def build_excel_match_group_key(row: dict[str, str]) -> str:
     played_on = row.get("played_on", "").strip()
     match_id = row.get("match_id", "").strip()
     if match_id:
-        if not competition_name or not season_name or not played_on:
-            raise ValueError(
-                "records 工作表缺少归组字段。填写比赛编号时，至少还要补全 competition_name、season_name、played_on。"
-            )
-        stage = row.get("stage", "").strip()
-        group_label = row.get("group_label", "").strip()
-        room_label = row.get("room_label", "").strip() or row.get("table_label", "").strip()
-        round_no = row.get("round", "").strip()
-        return "|".join(
-            [competition_name, season_name, played_on, match_id, stage, group_label, room_label, round_no]
-        )
+        return match_id
     game_no = row.get("game_no", "").strip()
     if not competition_name or not season_name or not played_on or not game_no:
         raise ValueError(
@@ -2130,7 +2156,11 @@ def build_match_from_wide_excel_row(
     match["stage"] = row.get("stage", "").strip()
     match["round"] = parse_excel_optional_int(row.get("round", ""), 1)
     match["game_no"] = resolve_excel_game_no(row)
-    raw_score_model = row.get("score_model", "").strip()
+    raw_score_model = (
+        ""
+        if isinstance(scoring_rule_override, dict)
+        else row.get("score_model", "").strip()
+    )
     inherited_rule = (
         normalize_scoring_rule(scoring_rule_override)
         if isinstance(scoring_rule_override, dict)
@@ -2353,6 +2383,11 @@ def import_matches_from_excel(
         )
         flat_rows = read_first_available_sheet_rows(upload, ["records", "比赛记录", "单局成绩表"])
         if flat_rows:
+            hydrate_excel_rows_from_match_ids(
+                flat_rows,
+                data,
+                require_match_id=template_metadata is not None,
+            )
             validate_template_metadata_scope(flat_rows, template_metadata)
             if any(any(key.startswith("seat1_") for key in row.keys()) for row in flat_rows):
                 parsed_matches = [
@@ -2373,6 +2408,11 @@ def import_matches_from_excel(
             parsed_matches = []
             match_rows = read_excel_sheet_rows(upload, "matches")
             player_rows = read_excel_sheet_rows(upload, "players")
+            hydrate_excel_rows_from_match_ids(
+                match_rows,
+                data,
+                require_match_id=template_metadata is not None,
+            )
             validate_template_metadata_scope(match_rows, template_metadata)
     except Exception as exc:
         return None, f"解析 Excel 失败：{exc}"
@@ -3329,6 +3369,7 @@ def batch_create_matches(
 def build_match_competition_field(
     current_competition_name: str,
     current_user: dict[str, object] | None = None,
+    prioritize_active: bool = False,
 ) -> str:
     try:
         data = load_validated_data()
@@ -3353,15 +3394,50 @@ def build_match_competition_field(
     for entry in catalog:
         grouped_entries.setdefault(entry["region_name"], []).append(entry)
 
+    status_rank = {"ongoing": 0, "upcoming": 1, "draft": 2, "ended": 3}
+    season_catalog = legacy.load_season_catalog(data) if prioritize_active else []
+
+    def competition_sort_key(entry: dict[str, object]) -> tuple[object, ...]:
+        if not prioritize_active:
+            return (str(entry["series_name"]), str(entry["competition_name"]))
+        season_entries = legacy.get_season_entries_for_series(
+            season_catalog,
+            str(entry["series_slug"]),
+            include_non_ongoing=True,
+            competition_name=str(entry["competition_name"]),
+        )
+        best_status_rank = min(
+            (
+                status_rank.get(legacy.get_season_status(season_entry), 4)
+                for season_entry in season_entries
+            ),
+            default=4,
+        )
+        return (
+            best_status_rank,
+            str(entry["series_name"]),
+            str(entry["competition_name"]),
+        )
+
+    grouped_items = list(grouped_entries.items())
+    if prioritize_active:
+        region_sort_keys = {
+            region_name: min(
+                (competition_sort_key(entry) for entry in entries),
+                default=(4, "", ""),
+            )
+            for region_name, entries in grouped_items
+        }
+        grouped_items.sort(key=lambda item: (region_sort_keys[item[0]], item[0]))
     option_groups: list[str] = []
     known_competitions = {entry["competition_name"] for entry in catalog}
     if current_competition_name and current_competition_name not in known_competitions:
         option_groups.append(
             f'<option value="{escape(current_competition_name)}" selected>{escape(current_competition_name)}（历史赛事）</option>'
         )
-    for region_name, entries in grouped_entries.items():
+    for region_name, entries in grouped_items:
         option_tags_html = []
-        for entry in sorted(entries, key=lambda item: (item["series_name"], item["competition_name"])):
+        for entry in sorted(entries, key=competition_sort_key):
             selected = " selected" if entry["competition_name"] == current_competition_name else ""
             option_tags_html.append(
                 f'<option value="{escape(entry["competition_name"])}"{selected}>{escape(entry["series_name"])} · {escape(entry["competition_name"])}</option>'
@@ -3410,7 +3486,7 @@ def build_match_season_field(
     return f"""
     <div class="match-season-picker" data-season-map='{selected_json}'>
       <select class="form-select" name="season" required data-match-season-select data-selected="{escape(current_season_name)}"></select>
-      <div class="small text-secondary mt-2" data-match-season-helper>显示该系列赛下已配置的全部赛季，未开始赛季也可以提前创建待补录比赛。</div>
+      <div class="small text-secondary mt-2" data-match-season-helper>按进行中、未开始、待排期、已结束排序；未开始赛季也可以提前创建待补录比赛。</div>
     </div>
     <script>
       (function() {{
@@ -3433,12 +3509,12 @@ def build_match_season_field(
             seasonSelect.value = seasons[0];
           }}
           if (!seasons.length) {{
-            seasonSelect.innerHTML = '<option value="">暂无进行中赛季</option>';
+            seasonSelect.innerHTML = '<option value="">暂无可用赛季</option>';
           }}
           if (helper) {{
             helper.textContent = seasons.length
-              ? '只显示当前正在进行中的赛季；赛季需要先在系列赛管理里配置起止时间。'
-              : '当前地区赛事页所属系列赛还没有进行中的赛季，请先到系列赛管理里配置。';
+              ? '优先显示正在进行的赛季，已结束赛季排在最后。'
+              : '当前地区赛事页还没有可用赛季，请先到系列赛管理里配置。';
           }}
           seasonSelect.setAttribute("data-selected", seasonSelect.value || selected);
         }}
@@ -3534,6 +3610,7 @@ def render_match_form_page(
         current_data,
         str(current.get("competition_name") or ""),
         str(current.get("season") or ""),
+        str(current.get("stage") or ""),
     )
     is_individual_match = participation_mode == PARTICIPATION_MODE_INDIVIDUAL
     configured_score_fields = scoring_rule_component_fields(scoring_rule)

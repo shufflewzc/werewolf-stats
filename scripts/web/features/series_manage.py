@@ -126,6 +126,10 @@ def build_stage_window_form_values(entry: dict[str, str] | None = None) -> dict[
         window = window_by_stage.get(stage_key, {})
         values[f"stage_{stage_key}_start_at"] = str(window.get("start_at") or "")
         values[f"stage_{stage_key}_end_at"] = str(window.get("end_at") or "")
+        values[f"stage_{stage_key}_participation_mode"] = normalize_participation_mode(
+            window.get("participation_mode"),
+            allow_inherit=True,
+        )
     return values
 
 
@@ -139,9 +143,20 @@ def collect_stage_windows_from_form(form: dict[str, list[str]]) -> list[dict[str
     for stage_key in STAGE_OPTIONS:
         start_at = form_value(form, f"stage_{stage_key}_start_at").strip()
         end_at = form_value(form, f"stage_{stage_key}_end_at").strip()
-        if not start_at and not end_at:
+        participation_mode = normalize_participation_mode(
+            form_value(form, f"stage_{stage_key}_participation_mode").strip(),
+            allow_inherit=True,
+        )
+        if not start_at and not end_at and participation_mode == "inherit":
             continue
-        windows.append({"stage": stage_key, "start_at": start_at, "end_at": end_at})
+        windows.append(
+            {
+                "stage": stage_key,
+                "start_at": start_at,
+                "end_at": end_at,
+                "participation_mode": participation_mode,
+            }
+        )
     return windows
 
 
@@ -151,6 +166,8 @@ def validate_stage_windows(stage_windows: list[dict[str, str]]) -> str:
         stage_label = STAGE_OPTIONS.get(stage_key, stage_key or "赛段")
         start_at = str(window.get("start_at") or "").strip()
         end_at = str(window.get("end_at") or "").strip()
+        if not start_at and not end_at:
+            continue
         if not start_at or not end_at:
             return f"{stage_label} 需要同时填写开始日期和结束日期。"
         normalized_start = parse_china_datetime(start_at)
@@ -162,7 +179,10 @@ def validate_stage_windows(stage_windows: list[dict[str, str]]) -> str:
     return ""
 
 
-def render_stage_window_cards(entry: dict[str, object]) -> str:
+def render_stage_window_cards(
+    entry: dict[str, object],
+    inherited_mode: str = PARTICIPATION_MODE_TEAM,
+) -> str:
     windows = entry.get("stage_windows", []) if isinstance(entry, dict) else []
     window_by_stage = {
         str(item.get("stage") or "").strip(): item
@@ -178,12 +198,19 @@ def render_stage_window_cards(entry: dict[str, object]) -> str:
             if window
             else "未设置"
         )
+        effective_mode = merge_participation_modes(
+            inherited_mode,
+            None,
+            window.get("participation_mode") if window else None,
+        )
         cards.append(
             f"""
             <div class="col-12 col-lg-6">
               <div class="team-link-card shadow-sm p-4 h-100">
                 <div class="small text-secondary">{escape(stage_label)}</div>
                 <div class="fw-semibold mt-1">{escape(period)}</div>
+                <div class="small text-secondary mt-3">参赛模式</div>
+                <div class="fw-semibold mt-1">{escape(participation_mode_label(effective_mode))}</div>
               </div>
             </div>
             """
@@ -689,7 +716,11 @@ def get_series_manage_page(
                     *[
                         key
                         for stage_key in STAGE_OPTIONS
-                        for key in (f"stage_{stage_key}_start_at", f"stage_{stage_key}_end_at")
+                        for key in (
+                            f"stage_{stage_key}_start_at",
+                            f"stage_{stage_key}_end_at",
+                            f"stage_{stage_key}_participation_mode",
+                        )
                     ],
                 )
                 if key in form_values
@@ -839,8 +870,8 @@ def get_series_manage_page(
             <div class="col-12"><div class="team-link-card shadow-sm p-4"><div class="small text-secondary">赛季说明</div><div class="fw-semibold mt-1">{escape(selected_season_entry.get('notes') or '暂无赛季说明')}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_participation_mode_summary(merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}</div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_scoring_rule_summary(merge_scoring_rules(selected_entry.get('scoring_rule') if selected_entry else None, selected_season_entry.get('scoring_rule')))}</div></div>
-            <div class="col-12"><h3 class="h5 mb-0 mt-2">赛段时间</h3></div>
-            {render_stage_window_cards(selected_season_entry)}
+            <div class="col-12"><h3 class="h5 mb-0 mt-2">赛段设置</h3></div>
+            {render_stage_window_cards(selected_season_entry, merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}
           </div>
         </section>
         """
@@ -934,6 +965,18 @@ def get_series_manage_page(
                             <label class="form-label">结束日期</label>
                             <input class="form-control" name="stage_{escape(stage_key)}_end_at" type="date" value="{escape(date_input_value(season_form[f'stage_{stage_key}_end_at']))}">
                           </div>
+                          <div class="col-12">
+                            <label class="form-label">参赛模式</label>
+                            {render_participation_mode_field(
+                                f'stage_{stage_key}_participation_mode',
+                                season_form.get(f'stage_{stage_key}_participation_mode', 'inherit'),
+                                allow_inherit=True,
+                                inherited_mode=merge_participation_modes(
+                                    (selected_entry or {}).get('participation_mode'),
+                                    season_form.get('participation_mode'),
+                                ),
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -968,8 +1011,8 @@ def get_series_manage_page(
                       <div class="col-12">
                         <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mt-2">
                           <div>
-                            <h3 class="h5 mb-1">赛段时间</h3>
-                            <div class="small text-secondary">以下日期均按北京时间保存；赛事页会按当天自动显示赛段状态。</div>
+                            <h3 class="h5 mb-1">赛段设置</h3>
+                            <div class="small text-secondary">每个赛段可覆盖参赛模式；日期均按北京时间保存，赛事页会按当天自动显示赛段状态。</div>
                           </div>
                         </div>
                       </div>
@@ -1184,7 +1227,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
             **{
                 f"stage_{window['stage']}_{field}": window.get(f"{field}", "")
                 for window in stage_windows
-                for field in ("start_at", "end_at")
+                for field in ("start_at", "end_at", "participation_mode")
             },
         }
         error = legacy.validate_season_catalog_form(series_slug, season_name, start_at, end_at)

@@ -682,7 +682,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                     errors.append(f"{participant_label}.notes: expected string")
 
         mvp_player_id = match.get("mvp_player_id")
-        if isinstance(mvp_player_id, str) and not mvp_player_id.strip() and is_placeholder_match:
+        if isinstance(mvp_player_id, str) and not mvp_player_id.strip():
             pass
         elif is_non_profile_player_id(mvp_player_id):
             mvp_player_id = mvp_player_id.strip().upper()
@@ -698,7 +698,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             )
 
         svp_player_id = match.get("svp_player_id")
-        if isinstance(svp_player_id, str) and not svp_player_id.strip() and is_placeholder_match:
+        if isinstance(svp_player_id, str) and not svp_player_id.strip():
             pass
         elif is_non_profile_player_id(svp_player_id):
             svp_player_id = svp_player_id.strip().upper()
@@ -722,7 +722,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
             errors.append(f"{label}: mvp_player_id and svp_player_id must be different")
 
         scapegoat_player_id = match.get("scapegoat_player_id")
-        if is_placeholder_match and isinstance(scapegoat_player_id, str) and not scapegoat_player_id.strip():
+        if isinstance(scapegoat_player_id, str) and not scapegoat_player_id.strip():
             pass
         elif winning_camp in {"villagers", "third_party"}:
             if not isinstance(scapegoat_player_id, str):
@@ -738,6 +738,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
                 )
             if (
                 isinstance(scapegoat_player_id, str)
+                and scapegoat_player_id.strip()
                 and scapegoat_player_id not in participant_ids_in_match
             ):
                 errors.append(

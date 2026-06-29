@@ -3,7 +3,7 @@ const apiPresets = {
   local: "http://127.0.0.1:8000"
 };
 
-const activeApiEnv = "local";
+const activeApiEnv = "production";
 
 module.exports = {
   activeApiEnv,

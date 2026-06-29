@@ -1469,6 +1469,13 @@ def competition_latest_day_sort_key(row: dict[str, Any]) -> tuple[int, str, str]
     return (2, abs(delta_days), str(row.get("competition_name") or ""))
 
 
+def competition_season_status_sort_key(row: dict[str, Any]) -> tuple[int, tuple[int, str, str]]:
+    return (
+        int(row.get("season_status_rank", 4)),
+        competition_latest_day_sort_key(row),
+    )
+
+
 def get_scheduled_match_day_label(
     matches: list[dict[str, Any]],
     today_label: str | None = None,
@@ -1826,6 +1833,7 @@ def list_series_rows_for_region(
                 "player_count": row["player_count"],
                 "latest_played_on": row["latest_played_on"],
                 "seasons": list(row["seasons"]),
+                "season_status_rank": int(row.get("season_status_rank", 4)),
                 "summary": row["summary"],
             }
             continue
@@ -1838,12 +1846,17 @@ def list_series_rows_for_region(
             china_today_label(),
         )
         existing["summary"] = existing["summary"] or row["summary"]
-        combined_seasons = {*existing["seasons"], *row["seasons"]}
-        existing["seasons"] = sorted(combined_seasons, reverse=True)
+        existing["season_status_rank"] = min(
+            int(existing.get("season_status_rank", 4)),
+            int(row.get("season_status_rank", 4)),
+        )
+        for season_name in row["seasons"]:
+            if season_name not in existing["seasons"]:
+                existing["seasons"].append(season_name)
 
     return sorted(
         series_index.values(),
-        key=lambda item: (competition_latest_day_sort_key(item), item["series_name"]),
+        key=lambda item: (competition_season_status_sort_key(item), item["series_name"]),
     )
 
 
@@ -1874,6 +1887,7 @@ def build_competition_catalog_rows(
             "player_count": int(stats.get("player_count", 0)),
             "latest_played_on": str(stats.get("latest_played_on", "")),
             "seasons": list(stats.get("seasons", [])),
+            "season_status_rank": int(stats.get("season_status_rank", 4)),
         }
         if row["active"] or row["match_count"] > 0:
             rows.append(row)
@@ -1881,6 +1895,7 @@ def build_competition_catalog_rows(
     return sorted(
         rows,
         key=lambda item: (
+            item["season_status_rank"],
             item["region_name"] != DEFAULT_REGION_NAME,
             item["region_name"],
             item["series_name"],
@@ -6220,6 +6235,7 @@ def resolve_match_entities(
             data,
             competition_name,
             season_name,
+            str(match.get("stage") or "").strip(),
         )
         is_individual_match = participation_mode == PARTICIPATION_MODE_INDIVIDUAL
         if is_individual_match:
@@ -7371,6 +7387,16 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen_seasons.add(season_name)
             seasons.append(season_name)
+        season_status_rank = min(
+            (
+                {"ongoing": 0, "upcoming": 1, "draft": 2, "ended": 3}.get(
+                    get_season_status(season_entry),
+                    4,
+                )
+                for season_entry in season_entries
+            ),
+            default=4,
+        )
         rows.append(
             {
                 "competition_name": competition_name,
@@ -7379,6 +7405,7 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "player_count": len(player_ids),
                 "latest_played_on": get_scheduled_match_day_label(matches, china_today_label()),
                 "seasons": seasons,
+                "season_status_rank": season_status_rank,
             }
         )
     return rows
@@ -7732,7 +7759,11 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     region_rows = scope["region_rows"]
     filtered_rows = scope["filtered_rows"]
     series_rows = scope["series_rows"]
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    season_names = (
+        list_seasons(data, selected_competition, include_non_ongoing=True)
+        if selected_competition
+        else []
+    )
     selected_season = get_selected_season(ctx, season_names)
     season_catalog = load_season_catalog(data)
     season_entry = (
@@ -7796,7 +7827,7 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     )
     featured_competition = min(
         scoped_competition_rows or competition_catalog,
-        key=competition_latest_day_sort_key,
+        key=competition_season_status_sort_key,
         default=None,
     )
     selected_series_row = next(
@@ -8557,7 +8588,11 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     region_rows = scope["region_rows"]
     filtered_rows = scope["filtered_rows"]
     series_rows = scope["series_rows"]
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    season_names = (
+        list_seasons(data, selected_competition, include_non_ongoing=True)
+        if selected_competition
+        else []
+    )
     selected_season = get_selected_season(ctx, season_names)
     season_catalog = load_season_catalog(data)
     season_entry = (
@@ -8650,7 +8685,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     )
     featured_competition = min(
         scoped_competition_rows or competition_catalog,
-        key=competition_latest_day_sort_key,
+        key=competition_season_status_sort_key,
         default=None,
     )
     selected_series_row = next(

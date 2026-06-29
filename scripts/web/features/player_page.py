@@ -62,6 +62,72 @@ def _build_player_legacy_href(
     )
 
 
+def _build_same_name_player_scopes(
+    data: dict[str, Any],
+    player_id: str,
+    selected_competition: str | None,
+    selected_season: str | None,
+) -> list[dict[str, object]]:
+    player_lookup = {
+        str(player.get("player_id") or ""): player
+        for player in data.get("players", [])
+    }
+    current_player = player_lookup.get(player_id)
+    display_name = str((current_player or {}).get("display_name") or "").strip()
+    if not display_name:
+        return []
+    candidate_ids = {
+        candidate_id
+        for candidate_id, candidate in player_lookup.items()
+        if str(candidate.get("display_name") or "").strip() == display_name
+    }
+    team_lookup = {
+        str(team.get("team_id") or ""): str(team.get("name") or "").strip()
+        for team in data.get("teams", [])
+    }
+    scopes: dict[tuple[str, str, str], dict[str, object]] = {}
+    for match in data.get("matches", []):
+        competition_name = get_match_competition_name(match)
+        season_name = str(match.get("season") or "").strip()
+        played_on = str(match.get("played_on") or "").strip()
+        for participant in match.get("players", []):
+            candidate_id = str(participant.get("player_id") or "").strip()
+            if candidate_id not in candidate_ids:
+                continue
+            key = (candidate_id, competition_name, season_name)
+            team_id = str(participant.get("team_id") or "").strip()
+            existing = scopes.get(key)
+            if existing and str(existing.get("latest_played_on") or "") >= played_on:
+                continue
+            scopes[key] = {
+                "player_id": candidate_id,
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "team_name": team_lookup.get(team_id, team_id or "个人赛"),
+                "latest_played_on": played_on,
+                "href": build_scoped_path(
+                    f"/players/{quote(candidate_id)}",
+                    competition_name,
+                    season_name,
+                ),
+                "active": (
+                    candidate_id == player_id
+                    and competition_name == (selected_competition or "")
+                    and season_name == (selected_season or "")
+                ),
+            }
+    return sorted(
+        scopes.values(),
+        key=lambda item: (
+            not bool(item["active"]),
+            -int(str(item["latest_played_on"]).replace("-", "") or "0"),
+            str(item["competition_name"]),
+            str(item["season_name"]),
+            str(item["player_id"]),
+        ),
+    )
+
+
 def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
     data = load_validated_data()
     users = load_users()
@@ -109,6 +175,19 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         season_names,
         selected_season,
         tone="light",
+    )
+    same_name_scopes = _build_same_name_player_scopes(
+        data,
+        player_id,
+        selected_competition,
+        selected_season,
+    )
+    same_name_switcher = "".join(
+        f'<a class="switcher-chip{" is-active" if scope["active"] else ""}" '
+        f'href="{escape(str(scope["href"]))}">'
+        f'{escape(str(scope["competition_name"]))} · {escape(str(scope["season_name"]))}'
+        f' · {escape(str(scope["team_name"]))}</a>'
+        for scope in same_name_scopes
     )
     player_rows = build_player_rows(data, selected_competition, selected_season)
     row_lookup = {row["player_id"]: row for row in player_rows}
@@ -454,6 +533,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
           <p class="mb-2 opacity-75">{escape(detail['team_name'])} · 当前排名第 {detail['rank']} 名</p>
           <div class="d-flex flex-wrap gap-2 mt-3">{competition_switcher}</div>
           {f'<div class="d-flex flex-wrap gap-2 mt-3">{season_switcher}</div>' if season_switcher else ''}
+          {f'<div class="small opacity-75 mt-3">同名选手赛事赛季档案</div><div class="d-flex flex-wrap gap-2 mt-2">{same_name_switcher}</div>' if len(same_name_scopes) > 1 else ''}
           {manage_button_row}
           <div class="d-flex flex-wrap gap-2 mt-3">
             <a class="btn btn-outline-light text-dark shadow-sm" href="{escape(legacy_href)}">旧版队员页</a>
@@ -741,6 +821,12 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
     season_names = list_seasons(data, selected_competition) if selected_competition else []
     requested_season = form_value(ctx.query, "season").strip()
     selected_season = get_selected_season(ctx, season_names) or requested_season or None
+    same_name_scopes = _build_same_name_player_scopes(
+        data,
+        player_id,
+        selected_competition,
+        selected_season,
+    )
     scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
     region_options = [
         {
@@ -1088,6 +1174,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             "season": selected_season,
             "competition_options": player_competition_names,
             "season_options": season_names,
+            "same_name_profiles": same_name_scopes,
         },
         "player": {
             "player_id": player_id,

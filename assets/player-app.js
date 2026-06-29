@@ -36,6 +36,23 @@
     `;
   }
 
+  function renderSameNameProfiles(items) {
+    const profiles = Array.isArray(items) ? items : [];
+    if (profiles.length <= 1) return "";
+    return `
+      <div class="player-detail-profile-switcher">
+        <div class="competitions-section-kicker">同名选手赛事赛季档案</div>
+        <div class="competitions-chip-list">
+          ${profiles.map((item) => `
+            <a class="competitions-chip${item.active ? " is-active" : ""}" href="${escapeHtml(item.href)}">
+              ${escapeHtml(item.competition_name)} · ${escapeHtml(item.season_name)} · ${escapeHtml(item.team_name)}
+            </a>
+          `).join("")}
+        </div>
+      </div>
+    `;
+  }
+
   function renderInsight(player, insights) {
     return `
       <aside class="competitions-panel player-detail-insight-card">
@@ -268,6 +285,7 @@
                 <span>${escapeHtml(player.team_name || "未加入战队")}</span>
                 <span>排名 #${escapeHtml(player.rank || "-")}</span>
               </div>
+              ${renderSameNameProfiles(scope.same_name_profiles)}
               <div class="competitions-hero-actions player-detail-actions">
                 <a class="competitions-button competitions-button-secondary" href="${escapeHtml(actions.players_href || "/players")}">返回选手列表</a>
                 <a class="competitions-button competitions-button-secondary" href="${escapeHtml(actions.team_href || "/teams")}">查看战队</a>

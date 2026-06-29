@@ -381,8 +381,16 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
     assert_json_keys(players, ["scope", "metrics", "players"], "/api/players")
     assert_pagination(players, "/api/players")
     player_rows = players.get("players") if isinstance(players.get("players"), list) else []
-    if player_rows:
-        player_id = str((player_rows[0] or {}).get("player_id") or "").strip()
+    active_player = next(
+        (
+            row
+            for row in player_rows
+            if isinstance(row, dict) and int(row.get("games_played") or 0) > 0
+        ),
+        None,
+    )
+    if active_player:
+        player_id = str(active_player.get("player_id") or "").strip()
         if player_id:
             player_detail = api_get_json(f"/api/players/{player_id}", scope_query)
             assert_json_keys(player_detail, ["player", "metrics", "insights", "dimension"], "/api/players/{id}")

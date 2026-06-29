@@ -7314,20 +7314,13 @@ def resolve_catalog_scope(ctx: RequestContext, data: dict[str, Any]) -> dict[str
     selected_series_slug = (
         selected_entry["series_slug"]
         if selected_entry
-        else get_selected_series_slug(
-            ctx,
-            series_slugs,
-            series_slugs[0] if series_slugs else None,
-        )
+        else get_selected_series_slug(ctx, series_slugs)
     )
     filtered_rows = [
         row
         for row in region_rows
         if not selected_series_slug or row["series_slug"] == selected_series_slug
     ]
-    if not selected_competition and filtered_rows:
-        selected_competition = filtered_rows[0]["competition_name"]
-        selected_entry = filtered_rows[0]
     return {
         "catalog": catalog,
         "competition_rows": competition_rows,
@@ -7340,6 +7333,32 @@ def resolve_catalog_scope(ctx: RequestContext, data: dict[str, Any]) -> dict[str
         "series_rows": series_rows,
         "selected_series_slug": selected_series_slug,
         "filtered_rows": filtered_rows,
+    }
+
+
+def resolve_dashboard_catalog_scope(
+    ctx: RequestContext, data: dict[str, Any]
+) -> dict[str, Any]:
+    scope = resolve_catalog_scope(ctx, data)
+    selected_series_slug = scope["selected_series_slug"]
+    if not selected_series_slug and scope["series_rows"]:
+        selected_series_slug = scope["series_rows"][0]["series_slug"]
+    filtered_rows = [
+        row
+        for row in scope["region_rows"]
+        if not selected_series_slug or row["series_slug"] == selected_series_slug
+    ]
+    selected_competition = scope["selected_competition"]
+    selected_entry = scope["selected_entry"]
+    if not selected_competition and filtered_rows:
+        selected_competition = filtered_rows[0]["competition_name"]
+        selected_entry = filtered_rows[0]
+    return {
+        **scope,
+        "selected_series_slug": selected_series_slug,
+        "filtered_rows": filtered_rows,
+        "selected_competition": selected_competition,
+        "selected_entry": selected_entry,
     }
 
 
@@ -7760,7 +7779,7 @@ def _build_dashboard_activity_feed(
 
 def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     data = load_validated_data()
-    scope = resolve_catalog_scope(ctx, data)
+    scope = resolve_dashboard_catalog_scope(ctx, data)
     competition_catalog = scope["competition_rows"]
     selected_competition = scope["selected_competition"]
     selected_entry = scope["selected_entry"]
@@ -8563,7 +8582,7 @@ def build_dashboard_promotion_context(
 
 def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     data = load_validated_data()
-    scope = resolve_catalog_scope(ctx, data)
+    scope = resolve_dashboard_catalog_scope(ctx, data)
     competition_catalog = scope["competition_rows"]
     selected_competition = scope["selected_competition"]
     selected_entry = scope["selected_entry"]

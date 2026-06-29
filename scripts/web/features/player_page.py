@@ -821,12 +821,6 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
     season_names = list_seasons(data, selected_competition) if selected_competition else []
     requested_season = form_value(ctx.query, "season").strip()
     selected_season = get_selected_season(ctx, season_names) or requested_season or None
-    same_name_scopes = _build_same_name_player_scopes(
-        data,
-        player_id,
-        selected_competition,
-        selected_season,
-    )
     scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
     region_options = [
         {
@@ -1095,6 +1089,12 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
     )
     requested_season = form_value(ctx.query, "season").strip()
     selected_season = get_selected_season(ctx, season_names) or requested_season or None
+    same_name_scopes = _build_same_name_player_scopes(
+        data,
+        player_id,
+        selected_competition,
+        selected_season,
+    )
     legacy_href = _build_player_legacy_href(player_id, selected_competition, selected_season)
     if not selected_competition or not selected_season:
         return {

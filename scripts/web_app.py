@@ -7141,17 +7141,20 @@ def build_series_switcher(
     selected_series_slug: str | None,
     tone: str = "light",
     all_label: str = "全部系列赛",
+    include_all: bool = True,
 ) -> str:
     if not series_rows:
         return ""
 
-    links = [
-        (
-            all_label,
-            build_scoped_path(base_path, None, None, selected_region, None),
-            selected_series_slug is None,
+    links = []
+    if include_all:
+        links.append(
+            (
+                all_label,
+                build_scoped_path(base_path, None, None, selected_region, None),
+                selected_series_slug is None,
+            )
         )
-    ]
     for row in series_rows:
         links.append(
             (
@@ -7311,13 +7314,20 @@ def resolve_catalog_scope(ctx: RequestContext, data: dict[str, Any]) -> dict[str
     selected_series_slug = (
         selected_entry["series_slug"]
         if selected_entry
-        else get_selected_series_slug(ctx, series_slugs)
+        else get_selected_series_slug(
+            ctx,
+            series_slugs,
+            series_slugs[0] if series_slugs else None,
+        )
     )
     filtered_rows = [
         row
         for row in region_rows
         if not selected_series_slug or row["series_slug"] == selected_series_slug
     ]
+    if not selected_competition and filtered_rows:
+        selected_competition = filtered_rows[0]["competition_name"]
+        selected_entry = filtered_rows[0]
     return {
         "catalog": catalog,
         "competition_rows": competition_rows,
@@ -7908,7 +7918,6 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         selected_series_slug,
     )
 
-    competition_source_rows = filtered_rows or region_rows or competition_catalog
     region_options = [
         {
             "label": region_name,
@@ -7919,38 +7928,13 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     ]
     series_options = [
         {
-            "label": "全部系列赛",
-            "href": build_scoped_path("/dashboard", None, None, selected_region, None),
-            "active": selected_series_slug is None,
-        }
-    ] + [
-        {
             "label": row["series_name"],
             "href": build_scoped_path("/dashboard", None, None, selected_region, row["series_slug"]),
             "active": selected_series_slug == row["series_slug"],
         }
         for row in series_rows
     ]
-    competition_options = [
-        {
-            "label": "全部赛事",
-            "href": build_scoped_path("/dashboard", None, None, selected_region, selected_series_slug),
-            "active": selected_competition is None,
-        }
-    ] + [
-        {
-            "label": row["competition_name"],
-            "href": build_scoped_path(
-                "/dashboard",
-                row["competition_name"],
-                None,
-                selected_region,
-                selected_series_slug,
-            ),
-            "active": selected_competition == row["competition_name"],
-        }
-        for row in competition_source_rows
-    ]
+    competition_options: list[dict[str, Any]] = []
     season_options = [
         {
             "label": season_name,
@@ -7995,11 +7979,11 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
                 "series_slug": row["series_slug"],
                 "series_name": row["series_name"],
                 "region_name": selected_region or DEFAULT_REGION_NAME,
-                "seasons": list(row["seasons"]),
-                "latest_played_on": row["latest_played_on"] or "待更新",
-                "team_count": int(row["team_count"]),
-                "player_count": int(row["player_count"]),
-                "match_count": int(row["match_count"]),
+                "seasons": [selected_season] if selected_season else [],
+                "latest_played_on": latest_played_on or "待更新",
+                "team_count": active_team_count,
+                "player_count": active_player_count,
+                "match_count": active_match_count,
                 "summary": row["summary"],
                 "topic_href": build_series_topic_path(row["series_slug"]),
                 "competition_href": competition_path,
@@ -8641,14 +8625,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         series_rows,
         selected_region,
         selected_series_slug,
-    )
-    competition_switcher = build_competition_switcher(
-        "/dashboard",
-        [row["competition_name"] for row in (filtered_rows or region_rows or competition_catalog)],
-        selected_competition,
-        tone="light",
-        region_name=selected_region,
-        series_slug=selected_series_slug,
+        include_all=False,
     )
     season_switcher = build_season_switcher(
         "/dashboard",
@@ -8721,11 +8698,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     )
     series_switcher_html = (
         f'<div class="hero-switchers">{series_switcher}</div>' if series_switcher else ""
-    )
-    competition_switcher_html = (
-        f'<div class="hero-switchers">{competition_switcher}</div>'
-        if competition_switcher
-        else ""
     )
     season_switcher_html = (
         f'<div class="hero-switchers">{season_switcher}</div>' if season_switcher else ""
@@ -8808,19 +8780,19 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
                 <span class="dashboard-feature-tag">专题页 + 地区站点</span>
               </div>
               <h2 class="dashboard-feature-title">{escape(row['series_name'])}</h2>
-              <p class="dashboard-feature-copy">赛季 {escape('、'.join(row['seasons'])) if row['seasons'] else '未设置'} · 下一个比赛日 {escape(row['latest_played_on'] or '待更新')}。先看专题，再按地区进入具体赛事。</p>
+              <p class="dashboard-feature-copy">赛季 {escape(selected_season or '未设置')} · 下一个比赛日 {escape(latest_played_on or '待更新')}。先看专题，再按地区进入具体赛事。</p>
               <div class="dashboard-feature-stats">
                 <div class="dashboard-feature-stat">
                   <span>战队</span>
-                  <strong>{row['team_count']} 支</strong>
+                  <strong>{active_team_count} 支</strong>
                 </div>
                 <div class="dashboard-feature-stat">
                   <span>队员</span>
-                  <strong>{row['player_count']} 名</strong>
+                  <strong>{active_player_count} 名</strong>
                 </div>
                 <div class="dashboard-feature-stat">
                   <span>对局</span>
-                  <strong>{row['match_count']} 场</strong>
+                  <strong>{active_match_count} 场</strong>
                 </div>
               </div>
               <div class="dashboard-feature-actions">
@@ -9179,10 +9151,6 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               <div class="dashboard-filter-block">
                 <div class="dashboard-filter-label">系列赛筛选</div>
                 {series_switcher_html or '<div class="small text-secondary">暂无系列赛目录</div>'}
-              </div>
-              <div class="dashboard-filter-block">
-                <div class="dashboard-filter-label">赛事入口</div>
-                {competition_switcher_html or '<div class="small text-secondary">当前还没有可切换赛事</div>'}
               </div>
               <div class="dashboard-filter-block">
                 <div class="dashboard-filter-label">赛季切换</div>

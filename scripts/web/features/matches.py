@@ -416,6 +416,7 @@ def build_excel_import_panel(
     dynamic_competition_field = build_match_competition_field(
         current["competition_name"],
         ctx.current_user,
+        prioritize_active=True,
     )
     dynamic_season_field = build_match_season_field(
         current["competition_name"],
@@ -494,6 +495,7 @@ def build_dimension_import_panel(
     competition_field_html = build_match_competition_field(
         current["competition_name"],
         ctx.current_user,
+        prioritize_active=True,
     )
     season_field_html = build_match_season_field(
         current["competition_name"],

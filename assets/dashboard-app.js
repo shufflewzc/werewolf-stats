@@ -377,7 +377,6 @@
       <div class="dashboard-filter-grid">
         <section class="dashboard-filter-card"><div class="dashboard-filter-label">赛区切换</div>${renderChipLinks(scope.filters && scope.filters.regions)}</section>
         <section class="dashboard-filter-card"><div class="dashboard-filter-label">系列赛切换</div>${renderChipLinks(scope.filters && scope.filters.series)}</section>
-        <section class="dashboard-filter-card"><div class="dashboard-filter-label">赛事切换</div>${renderChipLinks(scope.filters && scope.filters.competitions)}</section>
         <section class="dashboard-filter-card"><div class="dashboard-filter-label">赛季切换</div>${renderSeasonSelect(scope.filters && scope.filters.seasons)}</section>
       </div>
     `;

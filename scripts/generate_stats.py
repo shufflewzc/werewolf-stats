@@ -280,6 +280,7 @@ def build_player_rows(
 
     leaderboard.sort(
         key=lambda item: (
+            item["games_played"] == 0,
             -item["points_earned_total"],
             -item["win_rate"],
             -item["stance_rate"],
@@ -288,8 +289,13 @@ def build_player_rows(
         )
     )
 
-    for index, row in enumerate(leaderboard, start=1):
-        row["rank"] = index
+    active_rank = 0
+    for row in leaderboard:
+        if row["games_played"] > 0:
+            active_rank += 1
+            row["rank"] = active_rank
+        else:
+            row["rank"] = 0
 
     return leaderboard
 

@@ -974,7 +974,17 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
     filtered_rows = scope["filtered_rows"]
     series_rows = scope["series_rows"]
     season_catalog = load_season_catalog(data)
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    requested_season = form_value(ctx.query, "season").strip()
+    season_names = (
+        list_seasons(
+            data,
+            selected_competition,
+            include_non_ongoing=True,
+            selected_season=requested_season or None,
+        )
+        if selected_competition
+        else []
+    )
     selected_season = get_selected_season(ctx, season_names)
     visible_competitions = filtered_rows or region_rows
     legacy_href = build_scoped_path(
@@ -1432,7 +1442,17 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     filtered_rows = scope["filtered_rows"]
     series_rows = scope["series_rows"]
     season_catalog = load_season_catalog(data)
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    requested_season = form_value(ctx.query, "season").strip()
+    season_names = (
+        list_seasons(
+            data,
+            selected_competition,
+            include_non_ongoing=True,
+            selected_season=requested_season or None,
+        )
+        if selected_competition
+        else []
+    )
     selected_season = get_selected_season(ctx, season_names)
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     featured_competition = max(

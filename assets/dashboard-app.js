@@ -397,7 +397,7 @@
             ${renderHeroFilters(scope)}
             <div class="dashboard-hero-actions">
               <a class="dashboard-card-link dashboard-card-link-primary" href="${escapeHtml(hero.latest_match_day_href || hero.competitions_href || "/competitions")}">打开比赛日时间线</a>
-              <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(hero.competitions_href || "/competitions")}">打开全部赛事</a>
+              <a class="dashboard-card-link dashboard-card-link-secondary" href="${escapeHtml(hero.competitions_href || "/competitions")}">进入当前赛季赛事页</a>
             </div>
           </article>
           ${renderSchedule(payload)}

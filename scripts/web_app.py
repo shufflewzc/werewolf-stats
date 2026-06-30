@@ -7985,8 +7985,16 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         competition_path = (
             build_scoped_path(
                 "/competitions",
-                primary_competition["competition_name"],
-                None,
+                (
+                    selected_competition
+                    if selected_competition
+                    and any(
+                        item["competition_name"] == selected_competition
+                        for item in regional_competitions
+                    )
+                    else primary_competition["competition_name"]
+                ),
+                selected_season,
                 selected_region,
                 row["series_slug"],
             )
@@ -8145,7 +8153,13 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
                 selected_region,
                 selected_series_slug,
             ),
-            "competitions_href": "/competitions",
+            "competitions_href": build_scoped_path(
+                "/competitions",
+                selected_competition,
+                selected_season,
+                selected_region,
+                selected_series_slug,
+            ),
             "top_team": top_team,
             "top_player": top_player,
         },
@@ -8783,8 +8797,16 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         competition_path = (
             build_scoped_path(
                 "/competitions",
-                primary_competition["competition_name"],
-                None,
+                (
+                    selected_competition
+                    if selected_competition
+                    and any(
+                        item["competition_name"] == selected_competition
+                        for item in regional_competitions
+                    )
+                    else primary_competition["competition_name"]
+                ),
+                selected_season,
                 selected_region,
                 row["series_slug"],
             )
@@ -9177,7 +9199,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               </div>
             </div>
             <div class="d-flex flex-wrap gap-2 mt-4">
-              <a class="btn btn-outline-dark" href="/competitions">打开全部赛事</a>
+              <a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', selected_competition, selected_season, selected_region, selected_series_slug))}">进入当前赛季赛事页</a>
             </div>
           </div>
           <div class="dashboard-hero-side">
@@ -9215,7 +9237,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
             <h2 class="section-title mb-2">系列赛专题入口</h2>
             <p class="dashboard-section-copy mb-0">首页先把“值得点进去的专题”摆出来。你可以先看系列赛品牌页，再根据需要落到某个地区赛事站点。</p>
           </div>
-          <a class="btn btn-outline-dark" href="/competitions">进入全部赛事</a>
+          <a class="btn btn-outline-dark" href="{escape(build_scoped_path('/competitions', selected_competition, selected_season, selected_region, selected_series_slug))}">进入当前赛季赛事页</a>
         </div>
         <div class="dashboard-feature-grid">
           {''.join(series_cards) or '<div class="alert alert-secondary mb-0">当前地区还没有系列赛，请先创建系列赛目录。</div>'}

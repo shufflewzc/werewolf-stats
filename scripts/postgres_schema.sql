@@ -223,11 +223,14 @@ CREATE TABLE IF NOT EXISTS season_player_dimension_stats (
     season_name TEXT NOT NULL,
     played_on TEXT NOT NULL,
     player_id TEXT NOT NULL REFERENCES players(player_id) ON DELETE CASCADE,
-    team_id TEXT NOT NULL REFERENCES teams(team_id) ON DELETE CASCADE,
+    team_id TEXT NOT NULL DEFAULT '',
     seat INTEGER NOT NULL DEFAULT 0,
     metrics_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (competition_name, season_name, played_on, player_id)
 );
+
+ALTER TABLE season_player_dimension_stats
+DROP CONSTRAINT IF EXISTS season_player_dimension_stats_team_id_fkey;
 
 CREATE TABLE IF NOT EXISTS season_team_dimension_stats (
     competition_name TEXT NOT NULL,

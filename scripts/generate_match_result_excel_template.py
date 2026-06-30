@@ -633,7 +633,6 @@ def build_dynamic_match_template_bytes(
         ("points_earned", "单局积分"),
         ("camp", "阵营"),
         ("result", "结果"),
-        ("stance_result", "站边"),
         ("format", "板型"),
         ("winning_camp", "胜利阵营"),
         ("mvp_player_name", "MVP"),

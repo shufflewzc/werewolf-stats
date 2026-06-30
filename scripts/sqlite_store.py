@@ -404,8 +404,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             seat INTEGER NOT NULL DEFAULT 0,
             metrics_json TEXT NOT NULL DEFAULT '{}',
             PRIMARY KEY (competition_name, season_name, played_on, player_id),
-            FOREIGN KEY (player_id) REFERENCES players(player_id) ON DELETE CASCADE,
-            FOREIGN KEY (team_id) REFERENCES teams(team_id) ON DELETE CASCADE
+            FOREIGN KEY (player_id) REFERENCES players(player_id) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS season_team_dimension_stats (
@@ -659,6 +658,7 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE membership_requests ADD COLUMN scope_season_name TEXT NOT NULL DEFAULT ''"
         )
+    migrate_season_player_dimension_stats_schema(connection)
     migrate_season_team_dimension_stats_schema(connection)
     backfill_team_scopes(connection)
     backfill_match_awards(connection)
@@ -671,6 +671,63 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         """,
         (SCHEMA_VERSION_META_KEY, str(REQUIRED_SCHEMA_VERSION)),
     )
+
+
+def migrate_season_player_dimension_stats_schema(connection: sqlite3.Connection) -> None:
+    foreign_keys = connection.execute(
+        "PRAGMA foreign_key_list(season_player_dimension_stats)"
+    ).fetchall()
+    if not any(str(row["from"]) == "team_id" for row in foreign_keys):
+        return
+    existing_rows = connection.execute(
+        """
+        SELECT competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
+        FROM season_player_dimension_stats
+        ORDER BY competition_name, season_name, played_on, player_id
+        """
+    ).fetchall()
+    connection.execute("DROP INDEX IF EXISTS idx_season_player_dimension_stats_scope")
+    connection.execute("ALTER TABLE season_player_dimension_stats RENAME TO season_player_dimension_stats_legacy")
+    connection.execute(
+        """
+        CREATE TABLE season_player_dimension_stats (
+            competition_name TEXT NOT NULL,
+            season_name TEXT NOT NULL,
+            played_on TEXT NOT NULL,
+            player_id TEXT NOT NULL,
+            team_id TEXT NOT NULL DEFAULT '',
+            seat INTEGER NOT NULL DEFAULT 0,
+            metrics_json TEXT NOT NULL DEFAULT '{}',
+            PRIMARY KEY (competition_name, season_name, played_on, player_id),
+            FOREIGN KEY (player_id) REFERENCES players(player_id) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX idx_season_player_dimension_stats_scope
+        ON season_player_dimension_stats(competition_name, season_name, played_on, player_id)
+        """
+    )
+    for row in existing_rows:
+        connection.execute(
+            """
+            INSERT INTO season_player_dimension_stats (
+                competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                row["competition_name"],
+                row["season_name"],
+                row["played_on"],
+                row["player_id"],
+                row["team_id"],
+                int(row["seat"] or 0),
+                row["metrics_json"],
+            ),
+        )
+    connection.execute("DROP TABLE season_player_dimension_stats_legacy")
 
 
 def migrate_season_team_dimension_stats_schema(connection: sqlite3.Connection) -> None:

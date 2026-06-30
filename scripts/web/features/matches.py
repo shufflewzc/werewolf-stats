@@ -530,7 +530,7 @@ def build_dimension_import_panel(
             <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </div>
         </div>
-        <div class="small text-secondary mt-3">目前按京城大师赛维度模板识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。导入时会按你选定的赛事和赛季，用战队名、选手主档名做完全一致匹配；找不到会直接报错，不会自动创建新档案。重复上传会按同一赛事、赛季、日期下的选手或战队主键逐条更新，不会清空其他日期的数据。</div>
+        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。定级赛的个人维度允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写定级赛记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
         </div>
@@ -2526,18 +2526,46 @@ def build_player_dimension_stats_from_rows(
         seat = parse_excel_optional_int(get_excel_row_value(row, "座位号", "seat"), 0)
         if not player_name:
             raise ValueError(f"单日选手个人维度数据 第 {index} 行缺少选手姓名。")
+        team = None
+        if team_name:
+            team = legacy.find_team_by_name_in_scope(
+                data,
+                competition_name,
+                season_name,
+                team_name,
+            )
+            if not team:
+                raise ValueError(f"单日选手个人维度数据 第 {index} 行未找到战队：{team_name}。")
+        player = None
         if not team_name:
-            raise ValueError(f"单日选手个人维度数据 第 {index} 行缺少所属战队。")
-        team = legacy.find_team_by_name_in_scope(data, competition_name, season_name, team_name)
-        if not team:
-            raise ValueError(f"单日选手个人维度数据 第 {index} 行未找到战队：{team_name}。")
-        player = legacy.find_player_by_name_in_scope(
-            data,
-            competition_name,
-            season_name,
-            player_name,
-            team_name,
-        )
+            matching_player_ids = {
+                str(participant.get("player_id") or "").strip()
+                for match in data.get("matches", [])
+                if get_match_competition_name(match) == competition_name
+                and str(match.get("season") or "").strip() == season_name
+                for participant in match.get("players", [])
+                if str(participant.get("player_name") or "").strip() == player_name
+                and not str(participant.get("team_id") or "").strip()
+                and str(participant.get("player_id") or "").strip()
+            }
+            if len(matching_player_ids) == 1:
+                matched_player_id = next(iter(matching_player_ids))
+                player = next(
+                    (
+                        item
+                        for item in data.get("players", [])
+                        if str(item.get("player_id") or "").strip() == matched_player_id
+                    ),
+                    None,
+                )
+        if not player:
+            player = legacy.find_player_by_name_in_scope(
+                data,
+                competition_name,
+                season_name,
+                player_name,
+                team_name,
+            )
         if not player:
             raise ValueError(f"单日选手个人维度数据 第 {index} 行未找到选手：{player_name}。")
         parsed_row: dict[str, object] = {
@@ -2545,7 +2573,7 @@ def build_player_dimension_stats_from_rows(
             "season_name": season_name,
             "played_on": played_on,
             "player_id": player["player_id"],
-            "team_id": team["team_id"],
+            "team_id": team["team_id"] if team else "",
             "seat": seat,
         }
         for header_name, field_name in PLAYER_DIMENSION_FIELD_MAP.items():
@@ -2563,12 +2591,12 @@ def build_team_dimension_stats_from_rows(
     parsed_rows: list[dict[str, object]] = []
     for index, row in enumerate(rows, start=2):
         team_name = get_excel_row_value(row, "战队", "所属战队", "team_name")
+        if not team_name:
+            continue
         played_on = normalize_excel_serial_date(
             get_excel_row_value(row, "比赛日期", "played_on"),
             f"单日选手战队维度数据 第 {index} 行的比赛日期",
         )
-        if not team_name:
-            raise ValueError(f"单日选手战队维度数据 第 {index} 行缺少战队名称。")
         team = legacy.find_team_by_name_in_scope(data, competition_name, season_name, team_name)
         if not team:
             raise ValueError(f"单日选手战队维度数据 第 {index} 行未找到战队：{team_name}。")

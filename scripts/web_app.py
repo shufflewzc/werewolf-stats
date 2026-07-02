@@ -5796,6 +5796,20 @@ def load_validated_data() -> dict[str, Any]:
     if errors:
         invalidate_validated_data_cache()
         raise ValueError("\n".join(errors))
+    for match in data["matches"]:
+        competition_name = get_match_competition_name(match)
+        if (
+            "飞行杯" in competition_name
+            and not match.get("exclude_from_team_scores")
+            and resolve_participation_mode_for_scope(
+                data,
+                competition_name,
+                str(match.get("season") or "").strip(),
+                str(match.get("stage") or "").strip(),
+            )
+            == PARTICIPATION_MODE_INDIVIDUAL
+        ):
+            match["exclude_from_team_scores"] = True
     set_cached_validated_data(data)
     return data
 
@@ -6303,7 +6317,6 @@ def reconcile_flight_cup_player_team(
             or str(match.get("season") or "").strip() != season_name
         ):
             continue
-        updated_history = False
         for entry in match.get("players", []):
             if str(entry.get("player_id") or "").strip() not in merged_ids:
                 continue
@@ -6311,13 +6324,11 @@ def reconcile_flight_cup_player_team(
             entry["player_name"] = canonical_player["display_name"]
             entry["team_id"] = target_team["team_id"]
             entry["team_name"] = target_team["name"]
-            updated_history = True
         for award_field in ("mvp_player_id", "svp_player_id", "scapegoat_player_id"):
             if str(match.get(award_field) or "").strip() in merged_ids:
                 match[award_field] = canonical_id
         if (
-            updated_history
-            and resolve_participation_mode_for_scope(
+            resolve_participation_mode_for_scope(
                 data,
                 competition_name,
                 season_name,
@@ -6325,8 +6336,7 @@ def reconcile_flight_cup_player_team(
             )
             == PARTICIPATION_MODE_INDIVIDUAL
         ):
-            match["exclude_from_team_scores"] = False
-
+            match["exclude_from_team_scores"] = True
     for row in data.get("season_player_dimension_stats", []):
         if (
             str(row.get("competition_name") or "").strip() == competition_name
@@ -6438,12 +6448,6 @@ def resolve_match_entities(
             entry["player_name"] = player["display_name"]
             if team and entry["player_id"] not in team["members"]:
                 team["members"].append(entry["player_id"])
-        if (
-            "飞行杯" in competition_name
-            and is_individual_match
-            and any(str(entry.get("team_id") or "").strip() for entry in match.get("players", []))
-        ):
-            match["exclude_from_team_scores"] = False
         resolve_match_award_player_ids(match)
     return errors
 

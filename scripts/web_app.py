@@ -5798,18 +5798,16 @@ def load_validated_data() -> dict[str, Any]:
         raise ValueError("\n".join(errors))
     for match in data["matches"]:
         competition_name = get_match_competition_name(match)
-        if (
-            "飞行杯" in competition_name
-            and not match.get("exclude_from_team_scores")
-            and resolve_participation_mode_for_scope(
+        if "飞行杯" in competition_name:
+            participation_mode = resolve_participation_mode_for_scope(
                 data,
                 competition_name,
                 str(match.get("season") or "").strip(),
                 str(match.get("stage") or "").strip(),
             )
-            == PARTICIPATION_MODE_INDIVIDUAL
-        ):
-            match["exclude_from_team_scores"] = True
+            match["exclude_from_team_scores"] = (
+                participation_mode == PARTICIPATION_MODE_INDIVIDUAL
+            )
     set_cached_validated_data(data)
     return data
 
@@ -6327,16 +6325,15 @@ def reconcile_flight_cup_player_team(
         for award_field in ("mvp_player_id", "svp_player_id", "scapegoat_player_id"):
             if str(match.get(award_field) or "").strip() in merged_ids:
                 match[award_field] = canonical_id
-        if (
-            resolve_participation_mode_for_scope(
-                data,
-                competition_name,
-                season_name,
-                str(match.get("stage") or "").strip(),
-            )
-            == PARTICIPATION_MODE_INDIVIDUAL
-        ):
-            match["exclude_from_team_scores"] = True
+        participation_mode = resolve_participation_mode_for_scope(
+            data,
+            competition_name,
+            season_name,
+            str(match.get("stage") or "").strip(),
+        )
+        match["exclude_from_team_scores"] = (
+            participation_mode == PARTICIPATION_MODE_INDIVIDUAL
+        )
     for row in data.get("season_player_dimension_stats", []):
         if (
             str(row.get("competition_name") or "").strip() == competition_name

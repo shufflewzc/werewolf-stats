@@ -2501,6 +2501,14 @@ def import_matches_from_excel(
         resolution_errors = resolve_match_entities(data, [current_match])
         if resolution_errors:
             return None, f"{match_key} 导入失败：{resolution_errors[0]}"
+        team_score_flags = {
+            str(match.get("match_id") or ""): bool(match.get("exclude_from_team_scores"))
+            for match in data["matches"]
+        }
+        for existing_match in next_matches:
+            existing_match_id = str(existing_match.get("match_id") or "")
+            if existing_match_id in team_score_flags:
+                existing_match["exclude_from_team_scores"] = team_score_flags[existing_match_id]
         award_error = validate_match_awards(current_match)
         if award_error:
             return None, f"{match_key} 导入失败：{award_error}"

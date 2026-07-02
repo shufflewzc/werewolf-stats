@@ -6228,6 +6228,116 @@ def find_player_by_name_in_scope(
     return None
 
 
+def reconcile_flight_cup_player_team(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    player_name: str,
+    target_team: dict[str, Any],
+) -> dict[str, Any] | None:
+    if "飞行杯" not in competition_name:
+        return None
+
+    player_lookup = {player["player_id"]: player for player in data["players"]}
+    same_name_ids = {
+        player["player_id"]
+        for player in data["players"]
+        if str(player.get("display_name") or "").strip() == player_name
+    }
+    if not same_name_ids:
+        return None
+
+    blank_history_counts = {player_id: 0 for player_id in same_name_ids}
+    for match in data["matches"]:
+        if (
+            get_match_competition_name(match) != competition_name
+            or str(match.get("season") or "").strip() != season_name
+        ):
+            continue
+        for entry in match.get("players", []):
+            player_id = str(entry.get("player_id") or "").strip()
+            if player_id in same_name_ids and not str(entry.get("team_id") or "").strip():
+                blank_history_counts[player_id] += 1
+    matching_ids = {
+        player_id
+        for player_id in same_name_ids
+        if blank_history_counts[player_id] > 0
+        or str(player_lookup[player_id].get("team_id") or "").strip()
+        == target_team["team_id"]
+    }
+    if not matching_ids:
+        return None
+
+    canonical_id = max(
+        matching_ids,
+        key=lambda player_id: (
+            blank_history_counts[player_id],
+            player_lookup[player_id].get("team_id") == target_team["team_id"],
+            player_id,
+        ),
+    )
+    canonical_player = player_lookup[canonical_id]
+    canonical_player["team_id"] = target_team["team_id"]
+
+    merged_ids = {
+        player_id
+        for player_id in matching_ids
+        if player_id == canonical_id
+        or blank_history_counts[player_id] > 0
+        or player_lookup[player_id].get("team_id") == target_team["team_id"]
+    }
+    for player_id in merged_ids - {canonical_id}:
+        player_lookup[player_id]["team_id"] = ""
+    for team in data["teams"]:
+        team["members"] = [
+            member_id
+            for member_id in team.get("members", [])
+            if member_id not in merged_ids or member_id == canonical_id
+        ]
+    if canonical_id not in target_team["members"]:
+        target_team["members"].append(canonical_id)
+
+    for match in data["matches"]:
+        if (
+            get_match_competition_name(match) != competition_name
+            or str(match.get("season") or "").strip() != season_name
+        ):
+            continue
+        updated_history = False
+        for entry in match.get("players", []):
+            if str(entry.get("player_id") or "").strip() not in merged_ids:
+                continue
+            entry["player_id"] = canonical_id
+            entry["player_name"] = canonical_player["display_name"]
+            entry["team_id"] = target_team["team_id"]
+            entry["team_name"] = target_team["name"]
+            updated_history = True
+        for award_field in ("mvp_player_id", "svp_player_id", "scapegoat_player_id"):
+            if str(match.get(award_field) or "").strip() in merged_ids:
+                match[award_field] = canonical_id
+        if (
+            updated_history
+            and resolve_participation_mode_for_scope(
+                data,
+                competition_name,
+                season_name,
+                str(match.get("stage") or "").strip(),
+            )
+            == PARTICIPATION_MODE_INDIVIDUAL
+        ):
+            match["exclude_from_team_scores"] = False
+
+    for row in data.get("season_player_dimension_stats", []):
+        if (
+            str(row.get("competition_name") or "").strip() == competition_name
+            and str(row.get("season_name") or "").strip() == season_name
+            and str(row.get("player_id") or "").strip() in merged_ids
+        ):
+            row["player_id"] = canonical_id
+            row["team_id"] = target_team["team_id"]
+    return canonical_player
+
+
 def resolve_match_award_player_ids(match: dict[str, Any]) -> None:
     participant_name_map = {
         str(participant.get("player_name") or "").strip(): str(participant.get("player_id") or "").strip()
@@ -6294,13 +6404,25 @@ def resolve_match_entities(
                 entry["player_id"] = "NPC"
                 entry["player_name"] = "NPC"
                 continue
-            player = find_player_by_name_in_scope(
-                data,
-                competition_name,
-                season_name,
-                player_name,
-                team["name"] if team else "",
+            player = (
+                reconcile_flight_cup_player_team(
+                    data,
+                    competition_name,
+                    season_name,
+                    player_name,
+                    team,
+                )
+                if team
+                else None
             )
+            if not player:
+                player = find_player_by_name_in_scope(
+                    data,
+                    competition_name,
+                    season_name,
+                    player_name,
+                    team["name"] if team else "",
+                )
             if not player:
                 player_id = build_unique_slug(existing_player_ids, "player", player_name, "player")
                 player = build_placeholder_player(
@@ -6316,6 +6438,12 @@ def resolve_match_entities(
             entry["player_name"] = player["display_name"]
             if team and entry["player_id"] not in team["members"]:
                 team["members"].append(entry["player_id"])
+        if (
+            "飞行杯" in competition_name
+            and is_individual_match
+            and any(str(entry.get("team_id") or "").strip() for entry in match.get("players", []))
+        ):
+            match["exclude_from_team_scores"] = False
         resolve_match_award_player_ids(match)
     return errors
 

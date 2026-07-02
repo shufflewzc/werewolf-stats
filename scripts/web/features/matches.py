@@ -1980,6 +1980,18 @@ def parse_excel_score_breakdown(
     return breakdown
 
 
+def normalize_excel_participant_results(match: dict[str, object]) -> None:
+    winning_camp = str(match.get("winning_camp") or "").strip()
+    if winning_camp not in {"villagers", "werewolves", "third_party"}:
+        return
+    for participant in match.get("players", []):
+        if not isinstance(participant, dict):
+            continue
+        camp = str(participant.get("camp") or "").strip()
+        if camp in {"villagers", "werewolves", "third_party"}:
+            participant["result"] = "win" if camp == winning_camp else "loss"
+
+
 def build_match_from_excel_rows(
     match_row: dict[str, str],
     player_rows: list[dict[str, str]],
@@ -2081,6 +2093,7 @@ def build_match_from_excel_rows(
     match["svp_player_name"] = parse_excel_award_name(player_rows, "svp_player_name", "SVP")
     match["scapegoat_player_name"] = parse_excel_award_name(player_rows, "scapegoat_player_name", "背锅")
     match["players"] = participants
+    normalize_excel_participant_results(match)
     return match
 
 
@@ -2240,6 +2253,7 @@ def build_match_from_wide_excel_row(
             }
         )
     match["players"] = participants
+    normalize_excel_participant_results(match)
     return match
 
 

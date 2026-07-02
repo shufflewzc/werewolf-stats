@@ -2511,36 +2511,40 @@ def load_operational_overview(limit: int = 80) -> dict[str, Any]:
     with connect_read_db() as connection:
         require_initialized_database(connection)
         api_total_row = connection.execute(
-            "SELECT COUNT(*) AS count FROM access_logs WHERE path LIKE '/api/%'"
+            "SELECT COUNT(*) AS count FROM access_logs WHERE path LIKE ?",
+            ("/api/%",),
         ).fetchone()
         api_today_row = connection.execute(
             """
             SELECT COUNT(*) AS count
             FROM access_logs
-            WHERE path LIKE '/api/%' AND substr(created_at, 1, 10) = ?
+            WHERE path LIKE ? AND substr(created_at, 1, 10) = ?
             """,
-            (china_today_iso(),),
+            ("/api/%", china_today_iso()),
         ).fetchone()
         api_error_row = connection.execute(
             """
             SELECT COUNT(*) AS count
             FROM access_logs
-            WHERE path LIKE '/api/%' AND status_code >= 400
-            """
+            WHERE path LIKE ? AND status_code >= 400
+            """,
+            ("/api/%",),
         ).fetchone()
         api_slow_row = connection.execute(
             """
             SELECT COUNT(*) AS count
             FROM access_logs
-            WHERE path LIKE '/api/%' AND duration_ms >= 1000
-            """
+            WHERE path LIKE ? AND duration_ms >= 1000
+            """,
+            ("/api/%",),
         ).fetchone()
         api_duration_row = connection.execute(
             """
             SELECT AVG(duration_ms) AS avg_duration_ms, MAX(duration_ms) AS max_duration_ms
             FROM access_logs
-            WHERE path LIKE '/api/%' AND duration_ms > 0
-            """
+            WHERE path LIKE ? AND duration_ms > 0
+            """,
+            ("/api/%",),
         ).fetchone()
         api_path_rows = connection.execute(
             """
@@ -2553,32 +2557,34 @@ def load_operational_overview(limit: int = 80) -> dict[str, Any]:
                 SUM(CASE WHEN duration_ms >= 1000 THEN 1 ELSE 0 END) AS slow_count,
                 MAX(created_at) AS last_seen_at
             FROM access_logs
-            WHERE path LIKE '/api/%'
+            WHERE path LIKE ?
             GROUP BY path
             ORDER BY max_duration_ms DESC, visits DESC
             LIMIT 12
-            """
+            """,
+            ("/api/%",),
         ).fetchall()
         recent_api_rows = connection.execute(
             """
             SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
                    ip_address, user_agent, created_at
             FROM access_logs
-            WHERE path LIKE '/api/%'
+            WHERE path LIKE ?
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (row_limit,),
+            ("/api/%", row_limit),
         ).fetchall()
         recent_problem_rows = connection.execute(
             """
             SELECT log_id, request_id, path, method, status_code, duration_ms, query_string, username,
                    ip_address, user_agent, created_at
             FROM access_logs
-            WHERE path LIKE '/api/%' AND (status_code >= 400 OR duration_ms >= 1000)
+            WHERE path LIKE ? AND (status_code >= 400 OR duration_ms >= 1000)
             ORDER BY created_at DESC
             LIMIT 20
-            """
+            """,
+            ("/api/%",),
         ).fetchall()
     return {
         "api_total": int(api_total_row["count"] or 0),

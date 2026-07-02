@@ -509,6 +509,8 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
         day_path = build_match_day_path(
             item["played_on"],
             build_scoped_path("/teams/" + team_id, selected_competition, selected_season),
+            selected_competition,
+            selected_season,
         )
         match_row = next(
             (
@@ -633,6 +635,8 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
             day_path = build_match_day_path(
                 item["played_on"],
                 build_scoped_path("/teams/" + team_id, selected_competition, selected_season),
+                selected_competition,
+                selected_season,
             )
             manage_actions = (
                 f'<a class="btn btn-sm btn-outline-dark" href="/matches/{escape(item["match_id"])}/edit?next={quote(build_scoped_path("/teams/" + team_id, selected_competition, selected_season))}">编辑比赛</a>'

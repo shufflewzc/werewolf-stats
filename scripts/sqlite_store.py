@@ -2586,6 +2586,19 @@ def load_operational_overview(limit: int = 80) -> dict[str, Any]:
             """,
             ("/api/%",),
         ).fetchall()
+    api_paths = []
+    for row in api_path_rows:
+        item = dict(row)
+        item.update(
+            {
+                "visits": int(item.get("visits") or 0),
+                "avg_duration_ms": int(float(item.get("avg_duration_ms") or 0)),
+                "max_duration_ms": int(item.get("max_duration_ms") or 0),
+                "error_count": int(item.get("error_count") or 0),
+                "slow_count": int(item.get("slow_count") or 0),
+            }
+        )
+        api_paths.append(item)
     return {
         "api_total": int(api_total_row["count"] or 0),
         "api_today": int(api_today_row["count"] or 0),
@@ -2593,7 +2606,7 @@ def load_operational_overview(limit: int = 80) -> dict[str, Any]:
         "api_slow_count": int(api_slow_row["count"] or 0),
         "api_avg_duration_ms": int(float(api_duration_row["avg_duration_ms"] or 0)),
         "api_max_duration_ms": int(api_duration_row["max_duration_ms"] or 0),
-        "api_paths": [dict(row) for row in api_path_rows],
+        "api_paths": api_paths,
         "recent_api_logs": [dict(row) for row in recent_api_rows],
         "recent_problem_logs": [dict(row) for row in recent_problem_rows],
     }

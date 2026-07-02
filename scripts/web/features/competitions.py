@@ -369,11 +369,15 @@ def build_season_schedule_calendar(
 def build_match_day_leaderboards(
     data: dict[str, Any],
     played_on: str,
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     completed_matches = [
         match
         for match in data["matches"]
         if str(match.get("played_on") or "").strip() == played_on
+        and (not competition_name or get_match_competition_name(match) == competition_name)
+        and (not season_name or str(match.get("season") or "").strip() == season_name)
         and is_match_counted_as_played(match)
     ]
     stats_data = {
@@ -1213,7 +1217,12 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
                 "match_count": sum(
                     1 for match in match_rows if str(match.get("played_on") or "").strip() == played_on
                 ),
-                "href": build_match_day_path(played_on, current_competition_path),
+                "href": build_match_day_path(
+                    played_on,
+                    current_competition_path,
+                    selected_competition,
+                    selected_season,
+                ),
             }
         )
 
@@ -2723,7 +2732,14 @@ def _build_match_day_scope(ctx: RequestContext, played_on: str) -> tuple[dict[st
     catalog = load_series_catalog(data)
     player_lookup = {player["player_id"]: player for player in data["players"]}
     team_lookup = {team["team_id"]: team for team in data["teams"]}
-    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(data, played_on)
+    selected_competition = form_value(ctx.query, "competition").strip() or None
+    selected_season = form_value(ctx.query, "season").strip() or None
+    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(
+        data,
+        played_on,
+        selected_competition,
+        selected_season,
+    )
     day_matches = [
         match
         for match in sorted(
@@ -2737,17 +2753,33 @@ def _build_match_day_scope(ctx: RequestContext, played_on: str) -> tuple[dict[st
             ),
         )
         if str(match.get("played_on") or "").strip() == played_on
+        and (
+            not selected_competition
+            or get_match_competition_name(match) == selected_competition
+        )
+        and (
+            not selected_season
+            or str(match.get("season") or "").strip() == selected_season
+        )
     ]
     if not day_matches:
-        return None, "这一天还没有比赛记录。"
+        return None, "当前赛事赛季在这一天还没有比赛记录。"
 
-    grouped_matches: dict[str, list[dict[str, Any]]] = {}
+    grouped_matches: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for match in day_matches:
-        grouped_matches.setdefault(get_match_competition_name(match), []).append(match)
+        group_key = (
+            get_match_competition_name(match),
+            str(match.get("season") or "").strip(),
+        )
+        grouped_matches.setdefault(group_key, []).append(match)
 
     next_path = legacy.form_value(ctx.query, "next").strip() or "/dashboard"
     ai_settings = load_ai_daily_brief_settings()
-    ai_report = load_ai_match_day_report(played_on)
+    ai_report = load_ai_match_day_report(
+        played_on,
+        selected_competition,
+        selected_season,
+    )
     return (
         {
             "data": data,
@@ -2759,6 +2791,8 @@ def _build_match_day_scope(ctx: RequestContext, played_on: str) -> tuple[dict[st
             "day_team_rows": day_team_rows,
             "day_matches": day_matches,
             "grouped_matches": grouped_matches,
+            "selected_competition": selected_competition,
+            "selected_season": selected_season,
             "next_path": next_path,
             "ai_settings": ai_settings,
             "ai_report": ai_report,
@@ -2767,19 +2801,33 @@ def _build_match_day_scope(ctx: RequestContext, played_on: str) -> tuple[dict[st
     )
 
 
-def _build_match_day_legacy_href(played_on: str, next_path: str | None) -> str:
+def _build_match_day_legacy_href(
+    played_on: str,
+    next_path: str | None,
+    competition_name: str | None = None,
+    season_name: str | None = None,
+) -> str:
     base_path = f"/days/{played_on}/legacy"
-    if not next_path:
+    params = {}
+    if next_path:
+        params["next"] = next_path
+    if competition_name:
+        params["competition"] = competition_name
+    if season_name:
+        params["season"] = season_name
+    if not params:
         return base_path
-    return f"{base_path}?{legacy.urlencode({'next': next_path})}"
+    return f"{base_path}?{legacy.urlencode(params)}"
 
 
 def _serialize_day_team_row(
     row: dict[str, Any],
     catalog: dict[str, Any],
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> dict[str, Any]:
-    competition_name = str(row.get("competition_name") or "").strip()
-    season_name = str(row.get("season_name") or "").strip()
+    competition_name = competition_name or str(row.get("competition_name") or "").strip()
+    season_name = season_name or str(row.get("season_name") or "").strip()
     series_entry = get_series_entry_by_competition(catalog, competition_name)
     region_name = series_entry["region_name"] if series_entry else DEFAULT_REGION_NAME
     series_slug = series_entry["series_slug"] if series_entry else None
@@ -2802,9 +2850,11 @@ def _serialize_day_team_row(
 def _serialize_day_player_row(
     row: dict[str, Any],
     catalog: dict[str, Any],
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> dict[str, Any]:
-    competition_name = str(row.get("competition_name") or "").strip()
-    season_name = str(row.get("season_name") or "").strip()
+    competition_name = competition_name or str(row.get("competition_name") or "").strip()
+    season_name = season_name or str(row.get("season_name") or "").strip()
     series_entry = get_series_entry_by_competition(catalog, competition_name)
     region_name = series_entry["region_name"] if series_entry else DEFAULT_REGION_NAME
     series_slug = series_entry["series_slug"] if series_entry else None
@@ -2832,6 +2882,7 @@ def _serialize_day_player_row(
 def _serialize_day_match_competition_section(
     played_on: str,
     competition_name: str,
+    season_name: str,
     matches: list[dict[str, Any]],
     catalog: dict[str, Any],
     player_lookup: dict[str, dict[str, Any]],
@@ -2856,7 +2907,11 @@ def _serialize_day_match_competition_section(
         ),
     ):
         season_name = (match.get("season") or "").strip()
-        detail_path = build_match_day_path(played_on)
+        detail_path = build_match_day_path(
+            played_on,
+            competition_name=competition_name,
+            season_name=season_name,
+        )
         participants = []
         for participant in sorted(
             match["players"],
@@ -2915,14 +2970,16 @@ def _serialize_day_match_competition_section(
         )
 
     return {
+        "scope_key": f"{competition_name}:{season_name}",
         "series_name": series_name,
         "region_name": region_name,
         "competition_name": competition_name,
-        "copy": f"当天该系列赛共有 {len(matches)} 场比赛，其中 {completed_count} 场已完成补录，涉及 {team_count} 支战队、{player_count} 名队员。",
+        "season_name": season_name,
+        "copy": f"当天该赛事赛季共有 {len(matches)} 场比赛，其中 {completed_count} 场已完成补录，涉及 {team_count} 支战队、{player_count} 名队员。",
         "competition_href": build_scoped_path(
             "/competitions",
             competition_name,
-            (matches[0].get("season") or "").strip() or None,
+            season_name or None,
             region_name,
             series_slug,
         ),
@@ -2950,9 +3007,16 @@ def build_match_day_frontend_page(ctx: RequestContext, played_on: str) -> str:
         </div>
         """
 
+    selected_competition = form_value(ctx.query, "competition").strip() or None
+    selected_season = form_value(ctx.query, "season").strip() or None
+    api_endpoint = build_match_day_path(
+        played_on,
+        competition_name=selected_competition,
+        season_name=selected_season,
+    ).replace("/days/", "/api/days/", 1)
     bootstrap = json.dumps(
         {
-            "apiEndpoint": f"/api/days/{played_on}",
+            "apiEndpoint": api_endpoint,
             "alert": form_value(ctx.query, "alert").strip(),
         },
         ensure_ascii=False,
@@ -3019,6 +3083,8 @@ def build_match_day_api_payload(
         }
 
     grouped_matches = scope["grouped_matches"]
+    selected_competition = scope["selected_competition"]
+    selected_season = scope["selected_season"]
     completed_day_matches = scope["completed_day_matches"]
     total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in completed_day_matches for entry in match["players"]})
@@ -3026,18 +3092,27 @@ def build_match_day_api_payload(
     ai_report = scope["ai_report"]
     ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
     next_path = scope["next_path"]
-    action_path = build_match_day_path(played_on, next_path)
+    action_path = build_match_day_path(
+        played_on,
+        next_path,
+        selected_competition,
+        selected_season,
+    )
     return {
         "alert": form_value(ctx.query, "alert").strip(),
         "hero": {
-            "title": f"{played_on} 比赛日",
-            "copy": "这里按系列赛拆分展示这一天的全部比赛结果，只保留当天各局比赛明细。",
+            "title": " · ".join(
+                item
+                for item in [selected_competition, selected_season, f"{played_on} 比赛日"]
+                if item
+            ),
+            "copy": "这里按赛事赛季展示当天的排行榜和比赛明细。",
         },
         "metrics": [
             {
-                "label": "系列赛数量",
+                "label": "赛事赛季",
                 "value": str(len(grouped_matches)),
-                "copy": "当天涉及系列赛",
+                "copy": "当天涉及的赛事赛季",
             },
             {
                 "label": "比赛场次",
@@ -3058,6 +3133,8 @@ def build_match_day_api_payload(
         "hero_side": {
             "played_on": played_on,
             "series_count": str(len(grouped_matches)),
+            "competition_name": selected_competition or "",
+            "season_name": selected_season or "",
             "match_count": str(len(scope["day_matches"])),
             "team_count": str(total_team_count),
             "player_count": str(total_player_count),
@@ -3081,26 +3158,42 @@ def build_match_day_api_payload(
             ),
         },
         "team_leaderboard": [
-            _serialize_day_team_row(row, scope["catalog"])
+            _serialize_day_team_row(
+                row,
+                scope["catalog"],
+                selected_competition,
+                selected_season,
+            )
             for row in scope["day_team_rows"]
         ],
         "player_leaderboard": [
-            _serialize_day_player_row(row, scope["catalog"])
+            _serialize_day_player_row(
+                row,
+                scope["catalog"],
+                selected_competition,
+                selected_season,
+            )
             for row in scope["day_player_rows"]
         ],
         "competitions": [
             _serialize_day_match_competition_section(
                 played_on,
                 competition_name,
+                season_name,
                 matches,
                 scope["catalog"],
                 scope["player_lookup"],
                 scope["team_lookup"],
             )
-            for competition_name, matches in grouped_matches.items()
+            for (competition_name, season_name), matches in grouped_matches.items()
         ],
         "back_href": next_path,
-        "legacy_href": _build_match_day_legacy_href(played_on, next_path),
+        "legacy_href": _build_match_day_legacy_href(
+            played_on,
+            next_path,
+            selected_competition,
+            selected_season,
+        ),
     }
 
 
@@ -3315,7 +3408,14 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
     data = load_validated_data()
     catalog = load_series_catalog(data)
     player_lookup = {player["player_id"]: player for player in data["players"]}
-    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(data, played_on)
+    selected_competition = form_value(ctx.query, "competition").strip() or None
+    selected_season = form_value(ctx.query, "season").strip() or None
+    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(
+        data,
+        played_on,
+        selected_competition,
+        selected_season,
+    )
     day_matches = [
         match
         for match in sorted(
@@ -3329,6 +3429,14 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
             ),
         )
         if str(match.get("played_on") or "").strip() == played_on
+        and (
+            not selected_competition
+            or get_match_competition_name(match) == selected_competition
+        )
+        and (
+            not selected_season
+            or str(match.get("season") or "").strip() == selected_season
+        )
     ]
     if not day_matches:
         return layout("未找到比赛日", '<div class="alert alert-danger">这一天还没有比赛记录。</div>', ctx, alert=alert)
@@ -3508,13 +3616,17 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
         else ""
     )
     ai_settings = load_ai_daily_brief_settings()
-    ai_report = load_ai_match_day_report(played_on)
+    ai_report = load_ai_match_day_report(
+        played_on,
+        selected_competition,
+        selected_season,
+    )
     ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
     ai_actions = ""
     ai_report_admin_editor = ""
     if ai_configured and (not ai_report or is_admin_user(ctx.current_user)):
         ai_actions = f"""
-        <form method="post" action="{escape(build_match_day_path(played_on, next_path))}" class="m-0">
+        <form method="post" action="{escape(build_match_day_path(played_on, next_path, selected_competition, selected_season))}" class="m-0">
           <input type="hidden" name="action" value="generate_ai_daily_brief">
           <button type="submit" class="btn btn-dark">{'重生成 AI 日报' if ai_report else '生成 AI 日报'}</button>
         </form>
@@ -3526,7 +3638,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
         <div class="form-panel p-3 p-lg-4 mt-4">
           <h3 class="h5 mb-2">管理员编辑日报</h3>
           <p class="section-copy mb-3">可以直接修改当前日报正文。保存后会立即覆盖展示内容。</p>
-          <form method="post" action="{escape(build_match_day_path(played_on, next_path))}">
+          <form method="post" action="{escape(build_match_day_path(played_on, next_path, selected_competition, selected_season))}">
             <input type="hidden" name="action" value="save_ai_daily_brief">
             <div class="mb-3">
               <textarea class="form-control" name="report_content" rows="12">{escape(ai_report.get('content') or '')}</textarea>
@@ -3630,7 +3742,14 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
         return start_response_html(start_response, "200 OK", get_match_day_legacy_page(ctx, played_on))
 
     next_path = legacy.form_value(ctx.query, "next").strip() or "/dashboard"
-    redirect_path = build_match_day_path(played_on, next_path)
+    selected_competition = form_value(ctx.query, "competition").strip() or None
+    selected_season = form_value(ctx.query, "season").strip() or None
+    redirect_path = build_match_day_path(
+        played_on,
+        next_path,
+        selected_competition,
+        selected_season,
+    )
 
     action = form_value(ctx.form, "action").strip()
     if action == "save_ai_daily_brief":
@@ -3644,13 +3763,19 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
             played_on,
             report_content,
             "管理员手动编辑",
+            competition_name=selected_competition,
+            season_name=selected_season,
         )
         return redirect(start_response, append_alert_query(redirect_path, "AI 比赛日报已保存。"))
 
     if action != "generate_ai_daily_brief":
         return redirect(start_response, append_alert_query(redirect_path, "未识别的操作。"))
 
-    existing_report = load_ai_match_day_report(played_on)
+    existing_report = load_ai_match_day_report(
+        played_on,
+        selected_competition,
+        selected_season,
+    )
     if existing_report and not is_admin_user(ctx.current_user):
         return redirect(start_response, append_alert_query(redirect_path, "当前日报已生成，只有管理员可以重生成。"))
 
@@ -3671,11 +3796,24 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
             ),
         )
         if str(match.get("played_on") or "").strip() == played_on
+        and (
+            not selected_competition
+            or get_match_competition_name(match) == selected_competition
+        )
+        and (
+            not selected_season
+            or str(match.get("season") or "").strip() == selected_season
+        )
     ]
     if not day_matches:
         return redirect(start_response, append_alert_query(redirect_path, "这一天还没有比赛记录。"))
 
-    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(data, played_on)
+    completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(
+        data,
+        played_on,
+        selected_competition,
+        selected_season,
+    )
     player_lookup = {player["player_id"]: player for player in data["players"]}
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     try:
@@ -3687,7 +3825,13 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
             player_lookup,
             team_lookup,
         )
-        save_ai_match_day_report(played_on, report_text, model)
+        save_ai_match_day_report(
+            played_on,
+            report_text,
+            model,
+            competition_name=selected_competition,
+            season_name=selected_season,
+        )
     except ValueError as exc:
         return redirect(start_response, append_alert_query(redirect_path, str(exc)))
 
@@ -4077,6 +4221,8 @@ def _serialize_schedule_day_section(
         "day_href": build_match_day_path(
             played_on,
             build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug),
+            selected_competition,
+            selected_season,
         ),
         "rows": rows,
     }
@@ -4357,7 +4503,7 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
             <section class="panel shadow-sm p-3 p-lg-4 mb-4">
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
                 <div>
-                  <h2 class="section-title mb-2"><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(build_match_day_path(played_on, build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug)))}">{escape(played_on)}</a></h2>
+                  <h2 class="section-title mb-2"><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover" href="{escape(build_match_day_path(played_on, build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug), selected_competition, selected_season))}">{escape(played_on)}</a></h2>
                   <p class="section-copy mb-0">当天共有 {len(matches)} 场比赛。点击日期可切换到该比赛日总览，点击单场编号可进入详情页。</p>
                 </div>
               </div>
@@ -4627,11 +4773,23 @@ def list_match_days(data: dict[str, Any]) -> list[str]:
     )
 
 
-def build_match_day_path(played_on: str, next_path: str | None = None) -> str:
+def build_match_day_path(
+    played_on: str,
+    next_path: str | None = None,
+    competition_name: str | None = None,
+    season_name: str | None = None,
+) -> str:
     base_path = f"/days/{played_on}"
-    if not next_path:
+    params: dict[str, str] = {}
+    if next_path:
+        params["next"] = next_path
+    if competition_name:
+        params["competition"] = competition_name
+    if season_name:
+        params["season"] = season_name
+    if not params:
         return base_path
-    return f"{base_path}?{legacy.urlencode({'next': next_path})}"
+    return f"{base_path}?{legacy.urlencode(params)}"
 
 
 def build_schedule_path(

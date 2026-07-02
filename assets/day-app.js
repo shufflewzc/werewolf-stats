@@ -189,6 +189,7 @@
           section.region_name
         )}</div>
                 <h2 class="competitions-section-title">${escapeHtml(section.competition_name)}</h2>
+                <p class="competitions-copy">${escapeHtml(section.season_name || "赛季未设置")}</p>
                 <p class="competitions-section-copy">${escapeHtml(section.copy)}</p>
               </div>
               <div class="competitions-card-actions">

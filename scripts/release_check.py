@@ -413,6 +413,18 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
     if played_on:
         day_detail = api_get_json(f"/api/days/{played_on}", scope_query)
         assert_json_keys(day_detail, ["hero", "metrics", "player_leaderboard", "team_leaderboard", "competitions"], "/api/days/{played_on}")
+        day_sections = (
+            day_detail.get("competitions")
+            if isinstance(day_detail.get("competitions"), list)
+            else []
+        )
+        for section in day_sections:
+            if not isinstance(section, dict):
+                raise ReleaseCheckError("/api/days/{played_on} competitions 包含非对象数据")
+            if section.get("competition_name") != competition_name:
+                raise ReleaseCheckError("/api/days/{played_on} 混入其他赛事数据")
+            if scope_query.get("season") and section.get("season_name") != scope_query["season"]:
+                raise ReleaseCheckError("/api/days/{played_on} 混入其他赛季数据")
 
 
 def check_miniprogram_api_benchmark(*, require_data: bool = False) -> None:

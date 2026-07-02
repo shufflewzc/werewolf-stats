@@ -894,10 +894,25 @@ def mask_api_key(value: str) -> str:
     return normalized[:4] + "*" * (len(normalized) - 8) + normalized[-4:]
 
 
-def load_ai_match_day_report(played_on: str) -> dict[str, str] | None:
+def _ai_match_day_report_key(
+    played_on: str,
+    competition_name: str | None = None,
+    season_name: str | None = None,
+) -> str:
+    key = AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on
+    if competition_name or season_name:
+        key += f":{competition_name or ''}:{season_name or ''}"
+    return key
+
+
+def load_ai_match_day_report(
+    played_on: str,
+    competition_name: str | None = None,
+    season_name: str | None = None,
+) -> dict[str, str] | None:
     return ai_load_text_artifact(
         load_meta_value,
-        AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on,
+        _ai_match_day_report_key(played_on, competition_name, season_name),
     )
 
 
@@ -906,10 +921,12 @@ def save_ai_match_day_report(
     content: str,
     model: str,
     generated_at: str | None = None,
+    competition_name: str | None = None,
+    season_name: str | None = None,
 ) -> None:
     ai_save_text_artifact(
         save_meta_value,
-        AI_DAILY_BRIEF_REPORT_KEY_PREFIX + played_on,
+        _ai_match_day_report_key(played_on, competition_name, season_name),
         content=content,
         model=model,
         default_model=DEFAULT_AI_DAILY_BRIEF_MODEL,
@@ -8044,6 +8061,8 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
                 selected_region,
                 selected_series_slug,
             ),
+            selected_competition,
+            selected_season,
         )
 
     match_days: list[dict[str, Any]] = []
@@ -8105,6 +8124,8 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
                         selected_region,
                         selected_series_slug,
                     ),
+                    selected_competition,
+                    selected_season,
                 ),
             }
         )
@@ -8871,6 +8892,8 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
                 selected_region,
                 selected_series_slug,
             ),
+            selected_competition,
+            selected_season,
         )
 
     recent_day_cards = []
@@ -8892,7 +8915,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         day_competitions = sorted({get_match_competition_name(match) for match in day_matches})
         recent_day_cards.append(
             f"""
-            <a class="dashboard-day-card" href="{escape(build_match_day_path(played_on, build_scoped_path('/dashboard', selected_competition, selected_season, selected_region, selected_series_slug)))}">
+            <a class="dashboard-day-card" href="{escape(build_match_day_path(played_on, build_scoped_path('/dashboard', selected_competition, selected_season, selected_region, selected_series_slug), selected_competition, selected_season))}">
               <div class="dashboard-day-top">
                 <div class="dashboard-day-kicker">Match Day</div>
                 <div class="dashboard-day-count">{len(day_matches)} 场</div>
@@ -10432,10 +10455,15 @@ def list_match_days(data: dict[str, Any]) -> list[str]:
     return impl(data)
 
 
-def build_match_day_path(played_on: str, next_path: str | None = None) -> str:
+def build_match_day_path(
+    played_on: str,
+    next_path: str | None = None,
+    competition_name: str | None = None,
+    season_name: str | None = None,
+) -> str:
     from web.features.competitions import build_match_day_path as impl
 
-    return impl(played_on, next_path)
+    return impl(played_on, next_path, competition_name, season_name)
 
 
 def build_schedule_path(

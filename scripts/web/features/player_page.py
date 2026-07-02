@@ -298,6 +298,8 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         day_path = build_match_day_path(
             item["played_on"],
             build_scoped_path("/players/" + player_id, selected_competition, selected_season),
+            selected_competition,
+            selected_season,
         )
         result_class = ""
         if item["result_label"] == "胜利":
@@ -373,6 +375,8 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         day_path = build_match_day_path(
             item["played_on"],
             build_scoped_path("/players/" + player_id, selected_competition, selected_season),
+            selected_competition,
+            selected_season,
         )
         history_rows.append(
             f"""

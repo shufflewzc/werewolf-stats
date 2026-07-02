@@ -118,8 +118,9 @@
         <text class="section-note">{{competitions.length}} 组</text>
       </view>
       <view class="stack">
-        <view class="competition-section" wx:for="{{competitions}}" wx:key="competition_name">
+        <view class="competition-section" wx:for="{{competitions}}" wx:key="scope_key">
           <text class="competition-title">{{item.competition_name}}</text>
+          <text class="competition-copy">{{item.season_name || "赛季未设置"}}</text>
           <text class="competition-copy">{{item.copy}}</text>
           <view class="match-card" wx:for="{{item.matches}}" wx:for-item="match" wx:key="match_id">
             <text class="match-title">{{match.stage_label}} · 第{{match.round}}轮第{{match.game_no}}局</text>

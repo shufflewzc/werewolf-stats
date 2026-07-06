@@ -1008,8 +1008,20 @@ def replace_repository_data(
     matches: list[dict[str, Any]],
     users: list[dict[str, Any]],
     guilds: list[dict[str, Any]] | None = None,
+    season_player_dimension_stats: list[dict[str, Any]] | None = None,
+    season_team_dimension_stats: list[dict[str, Any]] | None = None,
 ) -> None:
     guild_rows = guilds or []
+    player_dimension_rows = (
+        season_player_dimension_stats
+        if season_player_dimension_stats is not None
+        else load_season_player_dimension_stats(connection)
+    )
+    team_dimension_rows = (
+        season_team_dimension_stats
+        if season_team_dimension_stats is not None
+        else load_season_team_dimension_stats(connection)
+    )
     backend = connection_backend(connection)
     existing_sessions = connection.execute(
         """
@@ -1243,6 +1255,12 @@ def replace_repository_data(
                         entry["notes"],
                     ),
                 )
+
+        upsert_season_dimension_stats(
+            connection,
+            player_dimension_rows,
+            team_dimension_rows,
+        )
 
         connection.execute(
             """
@@ -1693,6 +1711,8 @@ def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | Non
             players=data["players"],
             matches=data["matches"],
             users=users if users is not None else load_users(connection),
+            season_player_dimension_stats=data.get("season_player_dimension_stats"),
+            season_team_dimension_stats=data.get("season_team_dimension_stats"),
         )
 
 
@@ -1759,6 +1779,81 @@ def load_season_team_dimension_stats(
             connection.close()
 
 
+def upsert_season_dimension_stats(
+    connection: Any,
+    player_rows: list[dict[str, Any]],
+    team_rows: list[dict[str, Any]],
+) -> None:
+    for row in player_rows:
+        metrics = {
+            key: value
+            for key, value in row.items()
+            if key
+            not in {
+                "competition_name",
+                "season_name",
+                "played_on",
+                "player_id",
+                "team_id",
+                "seat",
+            }
+        }
+        connection.execute(
+            """
+            INSERT INTO season_player_dimension_stats (
+                competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(competition_name, season_name, played_on, player_id)
+            DO UPDATE SET
+                team_id = excluded.team_id,
+                seat = excluded.seat,
+                metrics_json = excluded.metrics_json
+            """,
+            (
+                row["competition_name"],
+                row["season_name"],
+                row["played_on"],
+                row["player_id"],
+                row.get("team_id") or "",
+                int(row.get("seat") or 0),
+                json.dumps(metrics, ensure_ascii=False),
+            ),
+        )
+    for row in team_rows:
+        metrics = {
+            key: value
+            for key, value in row.items()
+            if key
+            not in {
+                "competition_name",
+                "season_name",
+                "played_on",
+                "team_id",
+                "seat",
+            }
+        }
+        connection.execute(
+            """
+            INSERT INTO season_team_dimension_stats (
+                competition_name, season_name, played_on, team_id, seat, metrics_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(competition_name, season_name, played_on, team_id, seat)
+            DO UPDATE SET
+                metrics_json = excluded.metrics_json
+            """,
+            (
+                row["competition_name"],
+                row["season_name"],
+                row["played_on"],
+                row["team_id"],
+                int(row.get("seat") or 0),
+                json.dumps(metrics, ensure_ascii=False),
+            ),
+        )
+
+
 def save_season_dimension_stats(
     player_rows: list[dict[str, Any]],
     team_rows: list[dict[str, Any]],
@@ -1766,74 +1861,7 @@ def save_season_dimension_stats(
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
-            for row in player_rows:
-                metrics = {
-                    key: value
-                    for key, value in row.items()
-                    if key
-                    not in {
-                        "competition_name",
-                        "season_name",
-                        "played_on",
-                        "player_id",
-                        "team_id",
-                        "seat",
-                    }
-                }
-                connection.execute(
-                    """
-                    INSERT INTO season_player_dimension_stats (
-                        competition_name, season_name, played_on, player_id, team_id, seat, metrics_json
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(competition_name, season_name, played_on, player_id)
-                    DO UPDATE SET
-                        team_id = excluded.team_id,
-                        seat = excluded.seat,
-                        metrics_json = excluded.metrics_json
-                    """,
-                    (
-                        row["competition_name"],
-                        row["season_name"],
-                        row["played_on"],
-                        row["player_id"],
-                        row["team_id"],
-                        int(row.get("seat") or 0),
-                        json.dumps(metrics, ensure_ascii=False),
-                    ),
-                )
-            for row in team_rows:
-                metrics = {
-                    key: value
-                    for key, value in row.items()
-                    if key
-                    not in {
-                        "competition_name",
-                        "season_name",
-                        "played_on",
-                        "team_id",
-                        "seat",
-                    }
-                }
-                connection.execute(
-                    """
-                    INSERT INTO season_team_dimension_stats (
-                        competition_name, season_name, played_on, team_id, seat, metrics_json
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(competition_name, season_name, played_on, team_id, seat)
-                    DO UPDATE SET
-                        metrics_json = excluded.metrics_json
-                    """,
-                    (
-                        row["competition_name"],
-                        row["season_name"],
-                        row["played_on"],
-                        row["team_id"],
-                        int(row.get("seat") or 0),
-                        json.dumps(metrics, ensure_ascii=False),
-                    ),
-                )
+            upsert_season_dimension_stats(connection, player_rows, team_rows)
 
 
 def clear_season_dimension_stats(

@@ -4763,13 +4763,21 @@ def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[
     team_score = 0.0
     opponents: dict[str, float] = {}
     for participant in match["players"]:
-        if participant["team_id"] == team_id:
+        participant_team_id = str(participant.get("team_id") or "").strip()
+        if participant_team_id == team_id:
             team_score += float(participant["points_earned"])
         else:
-            opponents.setdefault(participant["team_id"], 0.0)
-            opponents[participant["team_id"]] += float(participant["points_earned"])
+            opponents.setdefault(participant_team_id, 0.0)
+            opponents[participant_team_id] += float(participant["points_earned"])
 
-    opponent_names = "、".join(team_lookup[opponent_id]["name"] for opponent_id in opponents)
+    opponent_names = "、".join(
+        (
+            str(team_lookup.get(opponent_id, {}).get("name") or opponent_id).strip()
+            if opponent_id
+            else "未组队选手"
+        )
+        for opponent_id in opponents
+    )
     opponent_score = sum(opponents.values())
     winning_camp = str(match.get("winning_camp") or "").strip()
     winning_camp_label = {

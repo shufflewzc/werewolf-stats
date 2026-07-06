@@ -2483,6 +2483,46 @@ def validate_csrf_token(ctx: RequestContext) -> bool:
     return hmac.compare_digest(expected, provided)
 
 
+def inject_public_security_filing(body: str) -> str:
+    if "</body>" not in body or "粤公网安备44010602016418号" in body:
+        return body
+    filing_html = """
+    <style>
+      .site-filing-footer {
+        display: flex;
+        justify-content: center;
+        padding: 18px 16px 24px;
+        color: #64748b;
+        font-size: 13px;
+      }
+      .site-filing-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        color: inherit;
+        text-decoration: none;
+      }
+      .site-filing-link:hover {
+        color: #0f172a;
+        text-decoration: underline;
+      }
+      .site-filing-icon {
+        width: 18px;
+        height: 20px;
+        object-fit: contain;
+        flex: 0 0 auto;
+      }
+    </style>
+    <footer class="site-filing-footer">
+      <a class="site-filing-link" href="https://beian.mps.gov.cn/#/query/webSearch?code=44010602016418" rel="noreferrer" target="_blank">
+        <img class="site-filing-icon" src="/assets/beian-icon.png" alt="">
+        <span>粤公网安备44010602016418号</span>
+      </a>
+    </footer>
+    """
+    return body.replace("</body>", filing_html + "</body>", 1)
+
+
 def start_response_html(
     start_response,
     status: str,
@@ -2495,6 +2535,7 @@ def start_response_html(
     if ctx is None:
         ctx = getattr(REQUEST_CONTEXT_LOCAL, "ctx", None)
     body = inject_csrf_token(body, ctx)
+    body = inject_public_security_filing(body)
     payload = body.encode("utf-8")
     start_response(
         status,

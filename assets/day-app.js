@@ -288,7 +288,7 @@
   }
 
   async function loadMatchDay() {
-    const endpoint = `${bootstrap.apiEndpoint || ""}${window.location.search || ""}`;
+    const endpoint = bootstrap.apiEndpoint || "";
     try {
       const response = await fetch(endpoint, {
         headers: {

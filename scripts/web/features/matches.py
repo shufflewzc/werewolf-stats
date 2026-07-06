@@ -1875,6 +1875,7 @@ def validate_template_metadata_scope(
         if isinstance(match, dict) and str(match.get("match_id") or "").strip()
     }
     checked_match_ids: set[str] = set()
+    scope_rule_cache: dict[tuple[str, str], dict[str, object]] = {}
     for row in rows:
         match_id = str(row.get("match_id") or "").strip()
         if not match_id or match_id in checked_match_ids:
@@ -1884,15 +1885,18 @@ def validate_template_metadata_scope(
         if not existing_match:
             continue
         match_rule_value = existing_match.get("scoring_rule")
-        match_rule = normalize_scoring_rule(
-            match_rule_value
-            if isinstance(match_rule_value, dict) and match_rule_value
-            else resolve_scoring_rule_for_scope(
-                data,
+        if isinstance(match_rule_value, dict) and match_rule_value:
+            match_rule = normalize_scoring_rule(match_rule_value)
+        else:
+            scope_key = (
                 get_match_competition_name(existing_match),
                 str(existing_match.get("season") or "").strip(),
             )
-        )
+            if scope_key not in scope_rule_cache:
+                scope_rule_cache[scope_key] = normalize_scoring_rule(
+                    resolve_scoring_rule_for_scope(data, *scope_key)
+                )
+            match_rule = scope_rule_cache[scope_key]
         match_signature = {
             "version": int(match_rule.get("version") or 1),
             "score_model": str(match_rule.get("score_model") or ""),
@@ -2491,6 +2495,7 @@ def import_matches_from_excel(
     existing_by_id = {match["match_id"]: match for match in next_matches}
     created_count = 0
     updated_count = 0
+    validated_scopes: set[tuple[str, str]] = set()
 
     source_matches = parsed_matches or []
     parsed_records_import = bool(parsed_matches)
@@ -2531,19 +2536,22 @@ def import_matches_from_excel(
             match_id = existing_match["match_id"]
         competition_name = str(current_match["competition_name"] or "").strip()
         season_name = str(current_match["season"] or "").strip()
-        if not can_manage_matches(ctx.current_user, data, competition_name):
-            return None, f"你没有权限导入 {competition_name} 下的比赛。"
-        competition_error = validate_match_competition_selection(data, competition_name)
-        if competition_error:
-            return None, competition_error
-        season_error = validate_match_season_selection(
-            data,
-            competition_name,
-            season_name,
-            include_non_ongoing=True,
-        )
-        if season_error:
-            return None, season_error
+        scope_key = (competition_name, season_name)
+        if scope_key not in validated_scopes:
+            if not can_manage_matches(ctx.current_user, data, competition_name):
+                return None, f"你没有权限导入 {competition_name} 下的比赛。"
+            competition_error = validate_match_competition_selection(data, competition_name)
+            if competition_error:
+                return None, competition_error
+            season_error = validate_match_season_selection(
+                data,
+                competition_name,
+                season_name,
+                include_non_ongoing=True,
+            )
+            if season_error:
+                return None, season_error
+            validated_scopes.add(scope_key)
         resolution_errors = resolve_match_entities(data, [current_match])
         if resolution_errors:
             return None, f"{match_key} 导入失败：{resolution_errors[0]}"

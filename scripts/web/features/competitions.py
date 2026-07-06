@@ -2742,6 +2742,42 @@ def _build_match_day_scope(ctx: RequestContext, played_on: str) -> tuple[dict[st
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     selected_competition = form_value(ctx.query, "competition").strip() or None
     selected_season = form_value(ctx.query, "season").strip() or None
+    all_day_matches = [
+        match
+        for match in sorted(
+            data["matches"],
+            key=lambda item: (
+                get_match_competition_name(item),
+                str(item.get("season") or "").strip(),
+                item["round"],
+                item["game_no"],
+                item["match_id"],
+            ),
+        )
+        if str(match.get("played_on") or "").strip() == played_on
+    ]
+    if not selected_competition or not selected_season:
+        available_scopes = sorted(
+            {
+                (
+                    get_match_competition_name(match),
+                    str(match.get("season") or "").strip(),
+                )
+                for match in all_day_matches
+                if get_match_competition_name(match)
+                and str(match.get("season") or "").strip()
+                and (
+                    not selected_competition
+                    or get_match_competition_name(match) == selected_competition
+                )
+                and (
+                    not selected_season
+                    or str(match.get("season") or "").strip() == selected_season
+                )
+            }
+        )
+        if available_scopes:
+            selected_competition, selected_season = available_scopes[0]
     completed_day_matches, day_player_rows, day_team_rows = build_match_day_leaderboards(
         data,
         played_on,
@@ -2750,18 +2786,8 @@ def _build_match_day_scope(ctx: RequestContext, played_on: str) -> tuple[dict[st
     )
     day_matches = [
         match
-        for match in sorted(
-            data["matches"],
-            key=lambda item: (
-                get_match_competition_name(item),
-                (item.get("season") or "").strip(),
-                item["round"],
-                item["game_no"],
-                item["match_id"],
-            ),
-        )
-        if str(match.get("played_on") or "").strip() == played_on
-        and (
+        for match in all_day_matches
+        if (
             not selected_competition
             or get_match_competition_name(match) == selected_competition
         )
@@ -3019,6 +3045,7 @@ def build_match_day_frontend_page(ctx: RequestContext, played_on: str) -> str:
     selected_season = form_value(ctx.query, "season").strip() or None
     api_endpoint = build_match_day_path(
         played_on,
+        next_path=form_value(ctx.query, "next").strip() or None,
         competition_name=selected_competition,
         season_name=selected_season,
     ).replace("/days/", "/api/days/", 1)

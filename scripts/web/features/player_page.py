@@ -149,7 +149,10 @@ def _resolve_same_name_player_id_for_scope(
         for candidate_id, candidate in player_lookup.items()
         if str(candidate.get("display_name") or "").strip() == display_name
     }
-    appearances = {candidate_id: 0 for candidate_id in candidate_ids}
+    appearances = {
+        candidate_id: {"total": 0, "with_team": 0}
+        for candidate_id in candidate_ids
+    }
     for match in data.get("matches", []):
         if (
             get_match_competition_name(match) != competition_name
@@ -159,12 +162,24 @@ def _resolve_same_name_player_id_for_scope(
         for participant in match.get("players", []):
             candidate_id = str(participant.get("player_id") or "").strip()
             if candidate_id in appearances:
-                appearances[candidate_id] += 1
-    if appearances.get(player_id, 0) > 0 or not any(appearances.values()):
+                appearances[candidate_id]["total"] += 1
+                if str(participant.get("team_id") or "").strip():
+                    appearances[candidate_id]["with_team"] += 1
+    current_stats = appearances.get(player_id) or {"total": 0, "with_team": 0}
+    has_team_history = any(stats["with_team"] > 0 for stats in appearances.values())
+    if current_stats["with_team"] > 0:
+        return player_id
+    if not has_team_history and current_stats["total"] > 0:
+        return player_id
+    if not any(stats["total"] > 0 for stats in appearances.values()):
         return player_id
     return max(
         candidate_ids,
-        key=lambda candidate_id: (appearances[candidate_id], candidate_id),
+        key=lambda candidate_id: (
+            appearances[candidate_id]["with_team"],
+            appearances[candidate_id]["total"],
+            candidate_id,
+        ),
     )
 
 

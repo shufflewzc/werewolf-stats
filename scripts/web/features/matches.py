@@ -1217,6 +1217,25 @@ def build_match_management_panel(
     data = load_validated_data()
     competition_name = current["competition_name"]
     season_name = current["season"]
+    if competition_name:
+        try:
+            available_seasons = list_seasons(
+                data,
+                competition_name,
+                include_non_ongoing=True,
+            )
+        except (KeyError, ValueError):
+            available_seasons = sorted(
+                {
+                    str(match.get("season") or "").strip()
+                    for match in data.get("matches", [])
+                    if str(match.get("competition_name") or "").strip() == competition_name
+                    and str(match.get("season") or "").strip()
+                }
+            )
+        if season_name not in available_seasons:
+            season_name = available_seasons[0] if available_seasons else ""
+            current["season"] = season_name
     stage_value = current["stage"]
     played_on = current["played_on"]
     keyword = current["keyword"]
@@ -1840,21 +1859,48 @@ def read_scoring_template_metadata(upload: UploadedFile) -> dict[str, object] | 
 def validate_template_metadata_scope(
     rows: list[dict[str, str]],
     metadata: dict[str, object] | None,
+    data: dict[str, object],
 ) -> None:
     if not metadata:
         return
-    expected_competition = str(metadata.get("competition_name") or "").strip()
-    expected_season = str(metadata.get("season_name") or "").strip()
+    template_rule = normalize_scoring_rule(metadata.get("scoring_rule"))
+    template_signature = {
+        "version": int(template_rule.get("version") or 1),
+        "score_model": str(template_rule.get("score_model") or ""),
+        "components": template_rule.get("components") or [],
+    }
+    existing_by_id = {
+        str(match.get("match_id") or "").strip(): match
+        for match in data.get("matches", [])
+        if isinstance(match, dict) and str(match.get("match_id") or "").strip()
+    }
+    checked_match_ids: set[str] = set()
     for row in rows:
-        competition_name = str(row.get("competition_name") or "").strip()
-        season_name = str(row.get("season_name") or "").strip()
-        if expected_competition and competition_name != expected_competition:
-            raise ValueError(
-                f"模板锁定赛事为 {expected_competition}，不能导入 {competition_name or '空赛事'}。"
+        match_id = str(row.get("match_id") or "").strip()
+        if not match_id or match_id in checked_match_ids:
+            continue
+        checked_match_ids.add(match_id)
+        existing_match = existing_by_id.get(match_id)
+        if not existing_match:
+            continue
+        match_rule_value = existing_match.get("scoring_rule")
+        match_rule = normalize_scoring_rule(
+            match_rule_value
+            if isinstance(match_rule_value, dict) and match_rule_value
+            else resolve_scoring_rule_for_scope(
+                data,
+                get_match_competition_name(existing_match),
+                str(existing_match.get("season") or "").strip(),
             )
-        if expected_season and season_name != expected_season:
+        )
+        match_signature = {
+            "version": int(match_rule.get("version") or 1),
+            "score_model": str(match_rule.get("score_model") or ""),
+            "components": match_rule.get("components") or [],
+        }
+        if match_signature != template_signature:
             raise ValueError(
-                f"模板锁定赛季为 {expected_season}，不能导入 {season_name or '空赛季'}。"
+                f"比赛 {match_id} 的计分规则与当前 Excel 模板不一致，请下载该比赛所属赛季的模板后再导入。"
             )
 
 
@@ -2404,7 +2450,7 @@ def import_matches_from_excel(
                 data,
                 require_match_id=template_metadata is not None,
             )
-            validate_template_metadata_scope(flat_rows, template_metadata)
+            validate_template_metadata_scope(flat_rows, template_metadata, data)
             if any(any(key.startswith("seat1_") for key in row.keys()) for row in flat_rows):
                 parsed_matches = [
                     build_match_from_wide_excel_row(
@@ -2429,7 +2475,7 @@ def import_matches_from_excel(
                 data,
                 require_match_id=template_metadata is not None,
             )
-            validate_template_metadata_scope(match_rows, template_metadata)
+            validate_template_metadata_scope(match_rows, template_metadata, data)
     except Exception as exc:
         return None, f"解析 Excel 失败：{exc}"
     if not parsed_matches and not match_rows:
@@ -3523,17 +3569,40 @@ def build_match_season_field(
         )
 
     season_map: dict[str, list[str]] = {}
+    if current_competition_name:
+        try:
+            scoped_match_seasons = set(
+                list_seasons(
+                    data,
+                    current_competition_name,
+                    include_non_ongoing=True,
+                )
+            )
+        except (KeyError, ValueError):
+            scoped_match_seasons = {
+                str(match.get("season") or "").strip()
+                for match in data.get("matches", [])
+                if str(match.get("competition_name") or "").strip() == current_competition_name
+                and str(match.get("season") or "").strip()
+            }
+    else:
+        scoped_match_seasons = set()
+    valid_current_season = (
+        current_season_name
+        if current_season_name in scoped_match_seasons
+        else ""
+    )
     for entry in catalog:
         season_names = list_seasons(
             data,
             entry["competition_name"],
             include_non_ongoing=include_non_ongoing,
-            selected_season=current_season_name if entry["competition_name"] == current_competition_name else "",
+            selected_season=valid_current_season if entry["competition_name"] == current_competition_name else "",
         )
         if season_names:
             season_map[entry["competition_name"]] = season_names
-    if current_competition_name and current_competition_name not in season_map and current_season_name:
-        season_map[current_competition_name] = [current_season_name]
+    if current_competition_name and current_competition_name not in season_map and valid_current_season:
+        season_map[current_competition_name] = [valid_current_season]
     selected_json = escape(json.dumps(season_map, ensure_ascii=False))
     return f"""
     <div class="match-season-picker" data-season-map='{selected_json}'>

@@ -455,9 +455,10 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         selected_competition,
         selected_season,
     )
+    ai_features_enabled = legacy.AI_PUBLIC_FEATURES_ENABLED
     ai_player_season_summary = (
         load_ai_player_season_summary(player_id, selected_competition, selected_season)
-        if selected_competition and selected_season
+        if ai_features_enabled and selected_competition and selected_season
         else None
     )
     ai_settings = load_ai_daily_brief_settings()
@@ -495,7 +496,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
             </div>
             """
     ai_player_summary_panel = ""
-    if selected_season:
+    if ai_features_enabled and selected_season:
         ai_player_summary_panel = (
             f"""
             <section class="panel shadow-sm p-3 p-lg-4 mb-4">

@@ -158,7 +158,7 @@
             <div>
               <div class="competitions-section-kicker">Regional Events</div>
               <h2 class="competitions-section-title">地区赛事页入口</h2>
-              <p class="competitions-copy">系列专题页只保留赛季和地区入口，具体赛程、榜单和 AI 总结继续进入地区赛事页查看。</p>
+              <p class="competitions-copy">系列专题页只保留赛季和地区入口，具体赛程和榜单继续进入地区赛事页查看。</p>
             </div>
           </div>
           ${renderCards(payload.cards)}

@@ -363,6 +363,9 @@
   }
 
   function renderAiPanel(ai) {
+    if (!ai || !ai.enabled) {
+      return "";
+    }
     const summary = ai.summary;
     const generateForm = ai.generate_form;
     const editForm = ai.edit_form;

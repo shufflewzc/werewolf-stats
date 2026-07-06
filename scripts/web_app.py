@@ -199,6 +199,9 @@ PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "player_manual_achievements:"
 TEAM_ACHIEVEMENT_RULES_KEY = "team_achievement_rules"
 TEAM_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "team_manual_achievements:"
 DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
+# 审核通过前默认关闭公开 AI 页面、内容和生成入口。
+# 之后在运行环境设置 AI_PUBLIC_FEATURES_ENABLED=1 即可恢复。
+AI_PUBLIC_FEATURES_ENABLED = os.getenv("AI_PUBLIC_FEATURES_ENABLED", "0").strip() == "1"
 WECHAT_MINIPROGRAM_APPID = os.getenv("WECHAT_MINIPROGRAM_APPID", "")
 WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
 WEB_LOGIN_BASE_URL = os.getenv("WEB_LOGIN_BASE_URL", "https://wolf.metauniverse-cn.xyz").rstrip("/")
@@ -2686,9 +2689,10 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         nav_links = [
             build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
             build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
-            build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"),
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
+        if AI_PUBLIC_FEATURES_ENABLED:
+            nav_links.insert(2, build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"))
         admin_nav_links = [
             build_nav_group_label("工作台"),
             build_nav_link("控制台总览", "/profile", ctx.path == "/profile"),
@@ -2757,9 +2761,10 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         nav_links = [
             build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
             build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
-            build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"),
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
+        if AI_PUBLIC_FEATURES_ENABLED:
+            nav_links.insert(2, build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"))
         user_html = """
         <div class="account-actions d-flex flex-wrap align-items-center gap-2">
           <a class="btn btn-outline-dark btn-sm" href="/login">登录</a>
@@ -12948,6 +12953,8 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
         competition_name or None,
         season_name or None,
     )
+    if action in {"save_ai_team_season_summary", "generate_ai_team_season_summary"} and not AI_PUBLIC_FEATURES_ENABLED:
+        return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
 
     if action == "save_team_manual_achievements":
         data = load_validated_data()
@@ -13551,7 +13558,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
     )
     ai_player_season_summary = (
         load_ai_player_season_summary(player_id, selected_competition, selected_season)
-        if selected_competition and selected_season
+        if AI_PUBLIC_FEATURES_ENABLED and selected_competition and selected_season
         else None
     )
     ai_settings = load_ai_daily_brief_settings()
@@ -13589,7 +13596,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
             </div>
             """
     ai_player_summary_panel = ""
-    if selected_season:
+    if AI_PUBLIC_FEATURES_ENABLED and selected_season:
         ai_player_summary_panel = (
             f"""
             <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -13839,6 +13846,8 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
         competition_name or None,
         season_name or None,
     )
+    if action in {"save_ai_player_season_summary", "generate_ai_player_season_summary"} and not AI_PUBLIC_FEATURES_ENABLED:
+        return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
 
     if action == "save_manual_achievements":
         if not can_manage_player(ctx, player_id):
@@ -16712,7 +16721,7 @@ def app(environ, start_response):
             return handle_competitions(ctx, start_response)
         if path == "/competitions/legacy":
             return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
-        if path == "/ai-analysis":
+        if path == "/ai-analysis" and AI_PUBLIC_FEATURES_ENABLED:
             return handle_ai_analysis(ctx, start_response)
         if path == "/guilds":
             return handle_guilds(ctx, start_response)

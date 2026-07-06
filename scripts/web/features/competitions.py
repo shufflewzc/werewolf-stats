@@ -1161,9 +1161,10 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         )
         season_note_text = season_entry.get("notes") or "这里展示当前赛季的进行状态、档期与补充说明。"
 
+    ai_features_enabled = legacy.AI_PUBLIC_FEATURES_ENABLED
     ai_season_summary = (
         load_ai_season_summary(selected_competition, selected_season)
-        if selected_competition and selected_season
+        if ai_features_enabled and selected_competition and selected_season
         else None
     )
     ai_settings = load_ai_daily_brief_settings()
@@ -1227,6 +1228,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         )
 
     ai_payload = {
+        "enabled": ai_features_enabled,
         "configured": ai_configured,
         "summary": None,
         "generate_form": None,
@@ -2447,6 +2449,12 @@ def generate_ai_data_question_answer(
 
 
 def handle_ai_analysis(ctx: RequestContext, start_response):
+    if not legacy.AI_PUBLIC_FEATURES_ENABLED:
+        return start_response_html(
+            start_response,
+            "404 Not Found",
+            layout("页面不存在", '<div class="alert alert-secondary">该页面暂未开放。</div>', ctx),
+        )
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", get_ai_analysis_page(ctx))
 
@@ -3088,8 +3096,9 @@ def build_match_day_api_payload(
     completed_day_matches = scope["completed_day_matches"]
     total_team_count = len({entry["team_id"] for match in completed_day_matches for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in completed_day_matches for entry in match["players"]})
+    ai_features_enabled = legacy.AI_PUBLIC_FEATURES_ENABLED
     ai_settings = scope["ai_settings"]
-    ai_report = scope["ai_report"]
+    ai_report = scope["ai_report"] if ai_features_enabled else None
     ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
     next_path = scope["next_path"]
     action_path = build_match_day_path(
@@ -3140,6 +3149,7 @@ def build_match_day_api_payload(
             "player_count": str(total_player_count),
         },
         "ai_report": {
+            "enabled": ai_features_enabled,
             "exists": bool(ai_report),
             "configured": ai_configured,
             "can_generate": ai_configured and (not ai_report or is_admin_user(ctx.current_user)),
@@ -3677,6 +3687,8 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
             </section>
         """
     )
+    if not legacy.AI_PUBLIC_FEATURES_ENABLED:
+        ai_report_panel = ""
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="hero-layout">
@@ -3752,6 +3764,8 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
     )
 
     action = form_value(ctx.form, "action").strip()
+    if action in {"save_ai_daily_brief", "generate_ai_daily_brief"} and not legacy.AI_PUBLIC_FEATURES_ENABLED:
+        return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
     if action == "save_ai_daily_brief":
         admin_guard = require_admin(ctx, start_response)
         if admin_guard is not None:
@@ -4589,6 +4603,8 @@ def handle_competitions(ctx: RequestContext, start_response):
         return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
 
     action = form_value(ctx.form, "action").strip()
+    if action in {"save_ai_season_summary", "generate_ai_season_summary"} and not legacy.AI_PUBLIC_FEATURES_ENABLED:
+        return redirect(start_response, append_alert_query("/competitions", "AI 功能暂未开放。"))
     if action == "save_ai_season_summary":
         admin_guard = require_admin(ctx, start_response)
         if admin_guard is not None:

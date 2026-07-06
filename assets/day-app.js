@@ -45,6 +45,9 @@
 
   function renderAiReport(payload) {
     const report = payload.ai_report || {};
+    if (!report.enabled) {
+      return "";
+    }
     const actions = [];
     if (report.can_generate) {
       actions.push(`

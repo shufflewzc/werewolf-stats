@@ -2542,6 +2542,7 @@ def start_response_html(
         [
             ("Content-Type", "text/html; charset=utf-8"),
             ("Content-Length", str(len(payload))),
+            ("Cache-Control", "no-store"),
         ] + extra_headers,
     )
     return [payload]
@@ -2561,6 +2562,7 @@ def start_response_json(
         [
             ("Content-Type", "application/json; charset=utf-8"),
             ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
         ] + extra_headers,
     )
     return [body]

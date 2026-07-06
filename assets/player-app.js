@@ -329,7 +329,10 @@
   async function loadPlayerPage() {
     const endpoint = `${bootstrap.apiEndpoint || ""}${window.location.search || ""}`;
     try {
-      const response = await fetch(endpoint, { headers: { Accept: "application/json" } });
+      const response = await fetch(endpoint, {
+        cache: "no-store",
+        headers: { Accept: "application/json" }
+      });
       const payload = await response.json();
       if (!response.ok || payload.error) throw Object.assign(new Error(payload.error || `HTTP ${response.status}`), { payload });
       renderPlayer(payload);

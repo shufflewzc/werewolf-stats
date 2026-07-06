@@ -1336,9 +1336,38 @@ def _serialize_player_dimension_payload(
     summary = season_summaries[selected_dimension_season]
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     latest = history[0]
+    match_team_id = next(
+        (
+            str(participant.get("team_id") or "").strip()
+            for match in sorted(
+                data["matches"],
+                key=lambda item: str(item.get("played_on") or ""),
+                reverse=True,
+            )
+            if get_match_competition_name(match) == competition_name
+            and str(match.get("season") or "").strip() == selected_dimension_season
+            for participant in match.get("players", [])
+            if str(participant.get("player_id") or "").strip() == player_id
+            and str(participant.get("team_id") or "").strip()
+        ),
+        "",
+    )
+    profile_team_id = str(
+        next(
+            (
+                player.get("team_id")
+                for player in data["players"]
+                if str(player.get("player_id") or "").strip() == player_id
+            ),
+            "",
+        )
+        or ""
+    ).strip()
     current_team_name = (
         team_lookup.get(latest.get("team_id"), {}).get("name")
         or str(latest.get("team_name") or "").strip()
+        or team_lookup.get(match_team_id, {}).get("name")
+        or team_lookup.get(profile_team_id, {}).get("name")
         or "未知战队"
     )
     avg_points_by_season = {

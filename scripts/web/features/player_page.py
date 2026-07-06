@@ -128,9 +128,55 @@ def _build_same_name_player_scopes(
     )
 
 
+def _resolve_same_name_player_id_for_scope(
+    data: dict[str, Any],
+    player_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+) -> str:
+    if not competition_name or not season_name:
+        return player_id
+    player_lookup = {
+        str(player.get("player_id") or ""): player
+        for player in data.get("players", [])
+    }
+    current_player = player_lookup.get(player_id)
+    display_name = str((current_player or {}).get("display_name") or "").strip()
+    if not display_name:
+        return player_id
+    candidate_ids = {
+        candidate_id
+        for candidate_id, candidate in player_lookup.items()
+        if str(candidate.get("display_name") or "").strip() == display_name
+    }
+    appearances = {candidate_id: 0 for candidate_id in candidate_ids}
+    for match in data.get("matches", []):
+        if (
+            get_match_competition_name(match) != competition_name
+            or str(match.get("season") or "").strip() != season_name
+        ):
+            continue
+        for participant in match.get("players", []):
+            candidate_id = str(participant.get("player_id") or "").strip()
+            if candidate_id in appearances:
+                appearances[candidate_id] += 1
+    if appearances.get(player_id, 0) > 0 or not any(appearances.values()):
+        return player_id
+    return max(
+        candidate_ids,
+        key=lambda candidate_id: (appearances[candidate_id], candidate_id),
+    )
+
+
 def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
     data = load_validated_data()
     users = load_users()
+    player_id = _resolve_same_name_player_id_for_scope(
+        data,
+        player_id,
+        form_value(ctx.query, "competition").strip() or None,
+        form_value(ctx.query, "season").strip() or None,
+    )
     player_matches = [
         match
         for match in sorted(
@@ -1069,6 +1115,12 @@ def _pct_width(value: str) -> float:
 def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
     data = load_validated_data()
     users = load_users()
+    player_id = _resolve_same_name_player_id_for_scope(
+        data,
+        player_id,
+        form_value(ctx.query, "competition").strip() or None,
+        form_value(ctx.query, "season").strip() or None,
+    )
     player_matches = [
         match
         for match in sorted(

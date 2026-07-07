@@ -416,11 +416,6 @@ def _build_guild_account_html(ctx: RequestContext) -> str:
 
 
 def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
-    data = load_validated_data()
-    guild = get_guild_by_id(data, guild_id)
-    if not guild:
-        return layout("未找到门派", '<div class="alert alert-danger">没有找到对应的门派。</div>', ctx)
-
     manage_mode = form_value(ctx.query, "view").strip() == "manage"
     bootstrap = json.dumps(
         {
@@ -437,7 +432,7 @@ def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#122238">
-    <title>{escape(str(guild.get('name') or guild_id))} 门派页</title>
+    <title>门派详情</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;800;900&family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
@@ -505,35 +500,32 @@ def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, st
     honors = build_guild_honor_rows(data, guild_id)
     competition_rows: list[dict[str, Any]] = []
     guild_match_ids: set[str] = set()
+    team_stats_index = _build_team_match_stats_index(data)
+    profile_player_ids_by_team = _build_profile_player_ids_by_team(data)
     for team in guild_teams:
         competition_name, season_name = get_team_scope(team)
-        team_status = get_team_season_status(data, team)
-        scoped_matches = [
-            match
-            for match in data["matches"]
-            if (match.get("season") or "").strip() == season_name
-            and get_match_competition_name(match) == competition_name
-            and any(entry["team_id"] == team["team_id"] for entry in match["players"])
-        ]
-        guild_match_ids.update(match["match_id"] for match in scoped_matches)
-        points_total = sum(
-            float(entry["points_earned"])
-            for match in scoped_matches
-            for entry in match["players"]
-            if entry["team_id"] == team["team_id"]
+        team_id = str(team.get("team_id") or "").strip()
+        team_status = status_by_team_id.get(team_id, "unknown")
+        stats = team_stats_index.get(
+            (competition_name, season_name, team_id),
+            {"match_ids": set(), "points_total": 0.0, "player_ids": set()},
         )
-        player_count = len(resolve_team_player_ids(data, team["team_id"], competition_name, season_name))
+        match_ids = stats["match_ids"]
+        guild_match_ids.update(match_ids)
+        player_ids = set(stats["player_ids"]) | profile_player_ids_by_team.get(team_id, set())
+        if not player_ids:
+            player_ids.update(str(player_id) for player_id in team.get("members", []) if str(player_id))
         competition_rows.append(
             {
-                "team_id": team["team_id"],
+                "team_id": team_id,
                 "team_name": team["name"],
                 "competition_name": competition_name,
                 "season_name": season_name,
                 "status": team_status,
                 "status_label": get_team_season_status_label(team_status),
-                "matches": len(scoped_matches),
-                "player_count": player_count,
-                "points_total": round(points_total, 2),
+                "matches": len(match_ids),
+                "player_count": len(player_ids),
+                "points_total": round(float(stats["points_total"]), 2),
             }
         )
     pending_requests = [
@@ -1184,7 +1176,7 @@ def handle_guild_api(ctx: RequestContext, start_response, guild_id: str):
 
 def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
     if ctx.method == "GET":
-        return start_response_html(start_response, "200 OK", get_guild_legacy_page(ctx, guild_id))
+        return start_response_html(start_response, "200 OK", build_guild_frontend_page(ctx, guild_id))
 
     guard = require_login(ctx, start_response)
     if guard is not None:

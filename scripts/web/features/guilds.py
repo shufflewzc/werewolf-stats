@@ -490,9 +490,13 @@ def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, st
     guild_teams = [
         team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild_id
     ]
+    status_by_team_id = {
+        str(team.get("team_id") or ""): get_team_season_status(data, team)
+        for team in guild_teams
+    }
     guild_teams.sort(
         key=lambda team: (
-            get_team_season_status_rank(get_team_season_status(data, team)),
+            get_team_season_status_rank(status_by_team_id.get(str(team.get("team_id") or ""), "unknown")),
             team.get("competition_name", ""),
             team.get("season_name", ""),
             team["name"],
@@ -778,6 +782,41 @@ def _serialize_guild_team_row(row: dict[str, Any], region_name: str | None = Non
     }
 
 
+def _build_team_match_stats_index(data: dict[str, Any]) -> dict[tuple[str, str, str], dict[str, Any]]:
+    index: dict[tuple[str, str, str], dict[str, Any]] = {}
+    for match in data.get("matches", []):
+        match_id = str(match.get("match_id") or "").strip()
+        if not match_id:
+            continue
+        competition_name = get_match_competition_name(match)
+        season_name = str(match.get("season") or "").strip()
+        for entry in match.get("players", []):
+            team_id = str(entry.get("team_id") or "").strip()
+            player_id = str(entry.get("player_id") or "").strip()
+            if not team_id:
+                continue
+            key = (competition_name, season_name, team_id)
+            stats = index.setdefault(
+                key,
+                {"match_ids": set(), "points_total": 0.0, "player_ids": set()},
+            )
+            stats["match_ids"].add(match_id)
+            stats["points_total"] += float(entry.get("points_earned") or 0.0)
+            if player_id:
+                stats["player_ids"].add(player_id)
+    return index
+
+
+def _build_profile_player_ids_by_team(data: dict[str, Any]) -> dict[str, set[str]]:
+    player_ids_by_team: dict[str, set[str]] = {}
+    for player in data.get("players", []):
+        team_id = str(player.get("team_id") or "").strip()
+        player_id = str(player.get("player_id") or "").strip()
+        if team_id and player_id:
+            player_ids_by_team.setdefault(team_id, set()).add(player_id)
+    return player_ids_by_team
+
+
 def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, Any]:
     data = load_validated_data()
     guild = get_guild_by_id(data, guild_id)
@@ -806,9 +845,13 @@ def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, 
     guild_teams = [
         team for team in data["teams"] if str(team.get("guild_id") or "").strip() == guild_id
     ]
+    status_by_team_id = {
+        str(team.get("team_id") or ""): get_team_season_status(data, team)
+        for team in guild_teams
+    }
     guild_teams.sort(
         key=lambda team: (
-            get_team_season_status_rank(get_team_season_status(data, team)),
+            get_team_season_status_rank(status_by_team_id.get(str(team.get("team_id") or ""), "unknown")),
             team.get("competition_name", ""),
             team.get("season_name", ""),
             team["name"],
@@ -817,35 +860,32 @@ def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, 
     honors = build_guild_honor_rows(data, guild_id)
     competition_rows: list[dict[str, Any]] = []
     guild_match_ids: set[str] = set()
+    team_stats_index = _build_team_match_stats_index(data)
+    profile_player_ids_by_team = _build_profile_player_ids_by_team(data)
     for team in guild_teams:
         competition_name, season_name = get_team_scope(team)
-        team_status = get_team_season_status(data, team)
-        scoped_matches = [
-            match
-            for match in data["matches"]
-            if (match.get("season") or "").strip() == season_name
-            and get_match_competition_name(match) == competition_name
-            and any(entry["team_id"] == team["team_id"] for entry in match["players"])
-        ]
-        guild_match_ids.update(match["match_id"] for match in scoped_matches)
-        points_total = sum(
-            float(entry["points_earned"])
-            for match in scoped_matches
-            for entry in match["players"]
-            if entry["team_id"] == team["team_id"]
+        team_id = str(team.get("team_id") or "").strip()
+        team_status = status_by_team_id.get(team_id, "unknown")
+        stats = team_stats_index.get(
+            (competition_name, season_name, team_id),
+            {"match_ids": set(), "points_total": 0.0, "player_ids": set()},
         )
-        player_count = len(resolve_team_player_ids(data, team["team_id"], competition_name, season_name))
+        match_ids = stats["match_ids"]
+        guild_match_ids.update(match_ids)
+        player_ids = set(stats["player_ids"]) | profile_player_ids_by_team.get(team_id, set())
+        if not player_ids:
+            player_ids.update(str(player_id) for player_id in team.get("members", []) if str(player_id))
         competition_rows.append(
             {
-                "team_id": team["team_id"],
+                "team_id": team_id,
                 "team_name": team["name"],
                 "competition_name": competition_name,
                 "season_name": season_name,
                 "status": team_status,
                 "status_label": get_team_season_status_label(team_status),
-                "matches": len(scoped_matches),
-                "player_count": player_count,
-                "points_total": round(points_total, 2),
+                "matches": len(match_ids),
+                "player_count": len(player_ids),
+                "points_total": round(float(stats["points_total"]), 2),
             }
         )
 
@@ -880,7 +920,11 @@ def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, 
         if item["request_type"] == "guild_join" and item.get("target_guild_id") == guild_id
     ]
     manage_post_path = f"/guilds/{guild_id}?view=manage" if manage_mode else f"/guilds/{guild_id}"
-    available_team_rows = build_available_guild_team_rows(data, guild_id)
+    available_team_rows = (
+        build_available_guild_team_rows(data, guild_id)
+        if manage_mode and can_manage_membership
+        else []
+    )
     pending_payload = []
     if manage_mode and can_manage_membership:
         for item in pending_requests:

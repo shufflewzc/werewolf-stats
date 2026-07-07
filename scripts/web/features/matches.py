@@ -4768,6 +4768,8 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error, excel_form_values=excel_form_values),
             )
+        before_players = [dict(player) for player in data.get("players", [])]
+        before_teams = [dict(team) for team in data.get("teams", [])]
         next_matches, import_message = import_matches_from_excel(ctx, data, upload, group_label)
         if next_matches is None:
             return start_response_html(
@@ -4808,6 +4810,8 @@ def handle_match_create(ctx: RequestContext, start_response):
             before_matches,
             normalized_matches,
             created_player_ids,
+            before_players,
+            before_teams,
         )
         if errors:
             update_import_batch(import_batch_id, status="failed", summary="Excel 导入保存失败：" + "；".join(errors[:3]), ctx=ctx)

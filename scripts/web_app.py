@@ -5949,6 +5949,8 @@ def save_imported_matches_state(
     before_matches: list[dict[str, Any]],
     after_matches: list[dict[str, Any]],
     created_player_ids: list[str] | None = None,
+    before_players: list[dict[str, Any]] | None = None,
+    before_teams: list[dict[str, Any]] | None = None,
 ) -> list[str]:
     invalidate_validated_data_cache()
     errors = validate_repository_state(data, users)
@@ -5977,15 +5979,39 @@ def save_imported_matches_state(
         for player_id in (created_player_ids or [])
         if str(player_id or "").strip()
     }
+    before_player_by_id = {
+        str(player.get("player_id") or ""): player
+        for player in (before_players or [])
+        if str(player.get("player_id") or "")
+    }
     players_to_upsert = [
         player
         for player in data.get("players", [])
         if str(player.get("player_id") or "").strip() in created_player_id_set
+        or str(player.get("player_id") or "").strip() not in before_player_by_id
+        or json.dumps(
+            before_player_by_id.get(str(player.get("player_id") or "").strip(), {}),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        != json.dumps(player, ensure_ascii=False, sort_keys=True)
     ]
+    before_team_by_id = {
+        str(team.get("team_id") or ""): team
+        for team in (before_teams or [])
+        if str(team.get("team_id") or "")
+    }
     teams_to_replace_members = [
         team
         for team in data.get("teams", [])
         if any(player_id in created_player_id_set for player_id in team.get("members", []))
+        or str(team.get("team_id") or "").strip() not in before_team_by_id
+        or json.dumps(
+            before_team_by_id.get(str(team.get("team_id") or "").strip(), {}),
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        != json.dumps(team, ensure_ascii=False, sort_keys=True)
     ]
     try:
         replace_matches_by_id(

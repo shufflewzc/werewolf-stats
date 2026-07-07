@@ -1322,6 +1322,42 @@ def replace_matches_by_id(
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
+            for team in member_teams:
+                connection.execute(
+                    """
+                    INSERT INTO teams (
+                        team_id, name, short_name, logo, active, founded_on,
+                        competition_name, season_name, guild_id, captain_player_id, stage_groups_json, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(team_id) DO UPDATE SET
+                        name = excluded.name,
+                        short_name = excluded.short_name,
+                        logo = excluded.logo,
+                        active = excluded.active,
+                        founded_on = excluded.founded_on,
+                        competition_name = excluded.competition_name,
+                        season_name = excluded.season_name,
+                        guild_id = excluded.guild_id,
+                        captain_player_id = excluded.captain_player_id,
+                        stage_groups_json = excluded.stage_groups_json,
+                        notes = excluded.notes
+                    """,
+                    (
+                        team["team_id"],
+                        team["name"],
+                        team["short_name"],
+                        team["logo"],
+                        1 if team.get("active") else 0,
+                        team["founded_on"],
+                        team.get("competition_name", ""),
+                        team.get("season_name", ""),
+                        team.get("guild_id", ""),
+                        team.get("captain_player_id"),
+                        json.dumps(team.get("stage_groups", []), ensure_ascii=False),
+                        team["notes"],
+                    ),
+                )
             for player in upsert_players:
                 connection.execute(
                     """

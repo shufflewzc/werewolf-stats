@@ -28,7 +28,8 @@ Page({
     selectedScope: null,
     latestDay: null,
     centerStatus: "未登录",
-    centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。"
+    centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
+    boundPlayerLabel: ""
   },
 
   onShow() {
@@ -56,8 +57,10 @@ Page({
     const selectedScope = getSelectedScope();
     let centerStatus = "未登录";
     let centerCopy = "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。";
+    let boundPlayerLabel = "";
     if (user && user.player_id) {
       centerStatus = "已绑定选手";
+      boundPlayerLabel = user.player_id;
       centerCopy = "可以直接进入我的选手页、比赛日详情和预测榜。";
     } else if (user) {
       centerStatus = "未绑定选手";
@@ -68,6 +71,7 @@ Page({
         selectedScope: null,
         latestDay: null,
         centerStatus,
+        boundPlayerLabel,
         centerCopy: user ? "先进入一个赛事，再查看我的比赛日和选手页。" : centerCopy
       });
       return;
@@ -83,7 +87,8 @@ Page({
       selectedScope,
       latestDay,
       centerStatus,
-      centerCopy
+      centerCopy,
+      boundPlayerLabel
     });
   },
 
@@ -106,7 +111,8 @@ Page({
       user: null,
       error: "",
       centerStatus: "未登录",
-      centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。"
+      centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
+      boundPlayerLabel: ""
     });
   },
 

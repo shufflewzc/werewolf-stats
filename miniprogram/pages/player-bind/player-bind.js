@@ -6,11 +6,16 @@ Page({
     error: "",
     keyword: "",
     players: [],
-    user: null
+    user: null,
+    boundPlayerId: ""
   },
 
   onShow() {
-    this.setData({ user: getCurrentUser() });
+    const user = getCurrentUser();
+    this.setData({
+      user,
+      boundPlayerId: user && user.player_id ? user.player_id : ""
+    });
   },
 
   updateKeyword(event) {
@@ -39,10 +44,20 @@ Page({
     }
     this.setData({ loading: true, error: "" });
     try {
-      await bindPlayer(playerId);
-      this.setData({ loading: false });
+      const payload = await bindPlayer(playerId);
+      const user = payload.user || getCurrentUser();
+      const players = this.data.players.map((player) => ({
+        ...player,
+        bound_to_self: player.player_id === playerId,
+        bound: player.bound || player.player_id === playerId
+      }));
+      this.setData({
+        loading: false,
+        user,
+        boundPlayerId: user && user.player_id ? user.player_id : playerId,
+        players
+      });
       wx.showToast({ title: "绑定成功", icon: "success" });
-      setTimeout(() => wx.navigateBack(), 500);
     } catch (error) {
       this.setData({ loading: false, error: error.message || "绑定失败" });
     }

@@ -36,7 +36,8 @@
       <view class="my-player-row" wx:if="{{user.player_id}}">
         <view class="list-main">
           <text class="account-label">我的选手</text>
-          <text class="account-name">{{user.display_name}}</text>
+          <text class="account-name">{{boundPlayerLabel}}</text>
+          <text class="account-meta">账号名：{{user.display_name || user.username}}</text>
           <text class="account-meta">{{latestDay ? latestDay.played_on : "暂无比赛日"}} · {{centerCopy}}</text>
         </view>
         <button class="scope-button" bindtap="openMyPlayerPage">详情</button>
@@ -61,7 +62,10 @@
       <text class="account-name">{{user.display_name}}</text>
       <text class="account-meta">@{{user.username}} · {{user.role}}</text>
       <text class="account-meta">绑定状态：{{user.wechat_bound ? "已绑定微信" : "未绑定微信"}}</text>
-      <text class="account-meta">绑定选手：{{user.player_id || "未绑定"}}</text>
+      <view class="bound-status {{user.player_id ? 'bound-status-active' : ''}}">
+        <text class="bound-status-label">绑定选手</text>
+        <text class="bound-status-value">{{user.player_id || "未绑定"}}</text>
+      </view>
       <button class="primary-button single-button" loading="{{loading}}" bindtap="scanWebLogin">扫码登录网页端</button>
       <button class="ghost-button single-button" bindtap="goBindPlayer">搜索中文名绑定选手</button>
       <button class="ghost-button single-button" bindtap="logout">退出本地登录</button>

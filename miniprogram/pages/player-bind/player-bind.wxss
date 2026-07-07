@@ -17,6 +17,30 @@
   font-size: 26rpx;
 }
 
+.bind-current {
+  margin-bottom: 18rpx;
+  padding: 18rpx;
+  border-radius: 12rpx;
+  background: #f8fafc;
+}
+
+.bind-current-label,
+.bind-current-value {
+  display: block;
+}
+
+.bind-current-label {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.bind-current-value {
+  margin-top: 6rpx;
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
 .player-card {
   display: flex;
   align-items: center;

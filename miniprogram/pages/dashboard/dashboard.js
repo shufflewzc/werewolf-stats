@@ -20,6 +20,15 @@ function decorateCompetitionChoice(card) {
   };
 }
 
+function normalizeKeyword(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function matchText(item, keyword, fields) {
+  const haystack = fields.map((field) => String(item[field] || "")).join(" ").toLowerCase();
+  return haystack.indexOf(keyword) >= 0;
+}
+
 Page({
   data: {
     loading: true,
@@ -39,7 +48,11 @@ Page({
     myPlayer: null,
     myEmptyText: "微信登录后，可以绑定选手并查看自己的赛事数据。",
     myPrimaryActionText: "去登录",
-    myStatusLabel: "未登录"
+    myStatusLabel: "未登录",
+    searchKeyword: "",
+    searchLoading: false,
+    searchSearched: false,
+    searchResults: []
   },
 
   onShow() {
@@ -120,7 +133,8 @@ Page({
         myPlayer,
         myEmptyText,
         myPrimaryActionText,
-        myStatusLabel
+        myStatusLabel,
+        searchLoading: false
       });
     } catch (error) {
       this.setData({
@@ -165,6 +179,93 @@ Page({
 
   goMine() {
     wx.switchTab({ url: "/pages/mine/mine" });
+  },
+
+  updateSearchKeyword(event) {
+    this.setData({
+      searchKeyword: event.detail.value || "",
+      searchSearched: false,
+      searchResults: []
+    });
+  },
+
+  clearSearch() {
+    this.setData({
+      searchKeyword: "",
+      searchLoading: false,
+      searchSearched: false,
+      searchResults: []
+    });
+  },
+
+  async searchSeason() {
+    const keyword = normalizeKeyword(this.data.searchKeyword);
+    const selectedScope = this.data.selectedScope;
+    if (!keyword || !selectedScope) {
+      this.setData({ searchSearched: true, searchResults: [] });
+      return;
+    }
+    this.setData({ searchLoading: true, searchSearched: true, searchResults: [] });
+    try {
+      const params = scopeParams(selectedScope);
+      const [playersPayload, guildsPayload] = await Promise.all([
+        request("/api/players", { ...params, limit: 100, offset: 0 }),
+        request("/api/guilds", params)
+      ]);
+      const playerResults = (playersPayload.players || [])
+        .filter((player) => matchText(player, keyword, ["display_name", "player_id", "team_name"]))
+        .slice(0, 8)
+        .map((player) => ({
+          key: `player:${player.player_id}`,
+          type: "player",
+          typeLabel: "选手",
+          id: player.player_id,
+          title: player.display_name || player.player_id,
+          subtitle: `${player.team_name || "未绑定门派"} · 积分 ${player.points_total || "--"} · 胜率 ${player.win_rate || "--"}`
+        }));
+      const guildResults = (guildsPayload.cards || [])
+        .filter((guild) => matchText(guild, keyword, ["name", "short_name", "notes"]))
+        .slice(0, 6)
+        .map((guild) => ({
+          key: `guild:${guild.guild_id}`,
+          type: "guild",
+          typeLabel: "门派",
+          id: guild.guild_id,
+          title: guild.name || guild.short_name || guild.guild_id,
+          subtitle: `${guild.short_name || "门派"} · 覆盖 ${guild.match_count || 0} 场 · 荣誉 ${guild.honor_count || 0}`
+        }));
+      this.setData({
+        searchLoading: false,
+        searchResults: playerResults.concat(guildResults).slice(0, 12)
+      });
+    } catch (error) {
+      this.setData({
+        searchLoading: false,
+        searchResults: [{
+          key: "error",
+          type: "error",
+          typeLabel: "错误",
+          id: "",
+          title: error.message || "搜索失败",
+          subtitle: "请稍后重试"
+        }]
+      });
+    }
+  },
+
+  openSearchResult(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const result = this.data.searchResults[index];
+    if (!result || !result.id || result.type === "error") {
+      return;
+    }
+    if (result.type === "player") {
+      wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(result.id)}` });
+      return;
+    }
+    if (result.type === "guild") {
+      wx.navigateTo({ url: `/pages/guild-detail/guild-detail?guild_id=${encodeURIComponent(result.id)}` });
+    }
   },
 
   onTeamImageError(event) {

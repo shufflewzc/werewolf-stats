@@ -65,6 +65,28 @@
       </view>
 
     <view class="section">
+      <view class="season-search-card">
+        <view class="season-search-row">
+          <input class="season-search-input" value="{{searchKeyword}}" placeholder="搜索门派/战队/选手" confirm-type="search" bindinput="updateSearchKeyword" bindconfirm="searchSeason" />
+          <button class="season-search-button" loading="{{searchLoading}}" bindtap="searchSeason">搜索</button>
+          <button class="season-clear-button" wx:if="{{searchKeyword}}" bindtap="clearSearch">清空</button>
+        </view>
+        <view class="search-results" wx:if="{{searchResults.length}}">
+          <view class="search-result" wx:for="{{searchResults}}" wx:key="key" data-index="{{index}}" bindtap="openSearchResult">
+            <text class="search-type">{{item.typeLabel}}</text>
+            <view class="list-main">
+              <text class="list-title">{{item.title}}</text>
+              <text class="list-meta">{{item.subtitle}}</text>
+            </view>
+          </view>
+        </view>
+        <view class="empty-inline" wx:if="{{searchSearched && !searchLoading && !searchResults.length}}">
+          <text>当前赛季没有匹配结果。</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
       <view class="workbench-card">
         <view class="workbench-head">
           <view>

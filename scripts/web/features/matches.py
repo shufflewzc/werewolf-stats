@@ -2042,6 +2042,29 @@ def normalize_excel_participant_results(match: dict[str, object]) -> None:
             participant["result"] = "win" if camp == winning_camp else "loss"
 
 
+def strip_excel_import_helper_fields(match: dict[str, object]) -> dict[str, object]:
+    persisted_match = dict(match)
+    for field_name in (
+        "mvp_player_name",
+        "svp_player_name",
+        "scapegoat_player_name",
+        "mvp_player_ref",
+        "svp_player_ref",
+        "scapegoat_player_ref",
+    ):
+        persisted_match.pop(field_name, None)
+    persisted_players: list[dict[str, object]] = []
+    for participant in persisted_match.get("players", []):
+        if not isinstance(participant, dict):
+            continue
+        persisted_participant = dict(participant)
+        persisted_participant.pop("player_name", None)
+        persisted_participant.pop("team_name", None)
+        persisted_players.append(persisted_participant)
+    persisted_match["players"] = persisted_players
+    return persisted_match
+
+
 def build_match_from_excel_rows(
     match_row: dict[str, str],
     player_rows: list[dict[str, str]],
@@ -2566,6 +2589,7 @@ def import_matches_from_excel(
         award_error = validate_match_awards(current_match)
         if award_error:
             return None, f"{match_key} 导入失败：{award_error}"
+        current_match = strip_excel_import_helper_fields(current_match)
 
         if import_mode == "update":
             for index, existing_match in enumerate(next_matches):

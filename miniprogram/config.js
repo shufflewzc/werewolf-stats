@@ -7,7 +7,7 @@ const activeApiEnv = "production";
 
 module.exports = {
   activeApiEnv,
-  allowLocalApi: true,
+  allowLocalApi: false,
   apiBaseUrl: apiPresets[activeApiEnv] || apiPresets.production,
   apiPresets
 };

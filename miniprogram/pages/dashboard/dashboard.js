@@ -9,6 +9,17 @@ const {
   setSelectedScope
 } = require("../../utils/scope");
 
+function decorateCompetitionChoice(card) {
+  const seasons = Array.isArray(card.seasons) ? card.seasons : [];
+  return {
+    ...card,
+    seasons,
+    selectedSeason: seasons[0] || "",
+    selectedSeasonIndex: 0,
+    hasMultipleSeasons: seasons.length > 1
+  };
+}
+
 Page({
   data: {
     loading: true,
@@ -53,7 +64,7 @@ Page({
           generatedAt: competitions.generated_at || "",
           hero: competitions.hero || {},
           metrics: take(competitions.metrics, 4),
-          competitions: competitions.cards || [],
+          competitions: (competitions.cards || []).map(decorateCompetitionChoice),
           topTeams: [],
           topPlayers: [],
           matchDays: []
@@ -201,9 +212,25 @@ Page({
   chooseCompetition(event) {
     const index = Number(event.currentTarget.dataset.index);
     const card = this.data.competitions[index];
-    const scope = buildScopeFromCompetition(card);
+    if (!card) {
+      return;
+    }
+    const scope = buildScopeFromCompetition(card, card.selectedSeason);
     setSelectedScope(scope);
     this.loadData();
+  },
+
+  chooseSeason(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    const seasonIndex = Number(event.detail && event.detail.value);
+    const card = this.data.competitions[index];
+    if (!card) {
+      return;
+    }
+    this.setData({
+      [`competitions[${index}].selectedSeasonIndex`]: seasonIndex,
+      [`competitions[${index}].selectedSeason`]: card.seasons[seasonIndex] || ""
+    });
   },
 
   changeCompetition() {

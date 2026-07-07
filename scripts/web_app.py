@@ -106,6 +106,7 @@ from sqlite_store import (
     save_membership_requests,
     save_meta_value,
     save_repository_data,
+    replace_matches_by_id,
     record_audit_log,
     record_access_log,
     record_ai_conversation,
@@ -113,7 +114,14 @@ from sqlite_store import (
     save_users,
 )
 from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
-from validate_data import validate_repository
+from validate_data import (
+    validate_guilds,
+    validate_matches,
+    validate_players,
+    validate_repository,
+    validate_rosters,
+    validate_teams,
+)
 from web_authz import (
     ADMIN_USERNAME,
     DEFAULT_EVENT_MANAGER_PERMISSION_KEYS,
@@ -5900,6 +5908,97 @@ def save_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> 
         save_repository_data(backup_data, backup_users)
         invalidate_validated_data_cache()
         raise
+
+
+def validate_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> list[str]:
+    usernames = {
+        user["username"]
+        for user in users
+        if isinstance(user, dict) and user.get("username")
+    }
+    guilds = data.get("guilds", [])
+    teams = data.get("teams", [])
+    players = data.get("players", [])
+    matches = data.get("matches", [])
+    guild_errors, guild_ids = validate_guilds(guilds, usernames)
+    team_errors, team_ids, team_members = validate_teams(teams)
+    player_errors, player_ids, player_teams = validate_players(players, team_ids)
+    roster_errors = validate_rosters(team_members, player_ids, player_teams)
+    match_errors = validate_matches(matches, team_ids, player_ids)
+    team_guild_errors = []
+    for team in teams:
+        guild_id = str(team.get("guild_id") or "").strip()
+        team_id = str(team.get("team_id") or "").strip() or "unknown"
+        if guild_id and guild_id not in guild_ids:
+            team_guild_errors.append(
+                f"teams[{team_id}].guild_id: unknown guild_id {guild_id!r}"
+            )
+    return [
+        *guild_errors,
+        *team_errors,
+        *player_errors,
+        *roster_errors,
+        *match_errors,
+        *team_guild_errors,
+    ]
+
+
+def save_imported_matches_state(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    before_matches: list[dict[str, Any]],
+    after_matches: list[dict[str, Any]],
+    created_player_ids: list[str] | None = None,
+) -> list[str]:
+    invalidate_validated_data_cache()
+    errors = validate_repository_state(data, users)
+    if errors:
+        return errors
+    before_by_id = {
+        str(match.get("match_id") or ""): match
+        for match in before_matches
+        if str(match.get("match_id") or "")
+    }
+    after_by_id = {
+        str(match.get("match_id") or ""): match
+        for match in after_matches
+        if str(match.get("match_id") or "")
+    }
+    delete_match_ids = sorted(set(before_by_id) - set(after_by_id))
+    upsert_matches = [
+        match
+        for match_id, match in after_by_id.items()
+        if match_id not in before_by_id
+        or json.dumps(before_by_id[match_id], ensure_ascii=False, sort_keys=True)
+        != json.dumps(match, ensure_ascii=False, sort_keys=True)
+    ]
+    created_player_id_set = {
+        str(player_id or "").strip()
+        for player_id in (created_player_ids or [])
+        if str(player_id or "").strip()
+    }
+    players_to_upsert = [
+        player
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip() in created_player_id_set
+    ]
+    teams_to_replace_members = [
+        team
+        for team in data.get("teams", [])
+        if any(player_id in created_player_id_set for player_id in team.get("members", []))
+    ]
+    try:
+        replace_matches_by_id(
+            delete_match_ids,
+            upsert_matches,
+            players_to_upsert=players_to_upsert,
+            teams_to_replace_members=teams_to_replace_members,
+        )
+    except Exception as exc:
+        invalidate_validated_data_cache()
+        return [f"增量保存比赛失败：{exc}"]
+    invalidate_validated_data_cache()
+    return []
 
 
 def _load_import_batches() -> list[dict[str, Any]]:

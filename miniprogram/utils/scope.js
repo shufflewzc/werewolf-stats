@@ -12,12 +12,13 @@ function parseQueryFromHref(href) {
   }, {});
 }
 
-function buildScopeFromCompetition(card) {
+function buildScopeFromCompetition(card, selectedSeason) {
   const query = parseQueryFromHref(card && card.competition_href);
   const seasons = Array.isArray(card && card.seasons) ? card.seasons : [];
+  const season = selectedSeason || (card && card.selectedSeason) || seasons[0] || query.season || "";
   return {
     competition: (card && card.competition_name) || query.competition || "",
-    season: seasons[0] || query.season || "",
+    season,
     region: (card && card.region_name) || query.region || "",
     series: query.series || "",
     seriesName: (card && card.series_name) || "",

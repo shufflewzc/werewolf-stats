@@ -4773,11 +4773,18 @@ def handle_match_create(ctx: RequestContext, start_response):
             },
         )
         users = load_users()
+        before_matches = list(data.get("matches", []))
         normalized_matches, _ = canonicalize_match_ids(next_matches)
         data["matches"] = normalized_matches
         created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
         users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
-        errors = save_repository_state(data, users)
+        errors = legacy.save_imported_matches_state(
+            data,
+            users,
+            before_matches,
+            normalized_matches,
+            created_player_ids,
+        )
         if errors:
             update_import_batch(import_batch_id, status="failed", summary="Excel 导入保存失败：" + "；".join(errors[:3]), ctx=ctx)
             return start_response_html(

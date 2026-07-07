@@ -1146,7 +1146,9 @@ body.guilds-app-shell a:not(.guilds-button):not(.shell-nav-link):not(.shell-bran
 .guild-detail-honor-card { padding: 18px; }
 .guild-detail-form { display: grid; gap: 12px; }
 .guild-detail-form label { color: #f8fbff; font-weight: 900; }
-.guild-detail-form textarea { width: 100%; padding: 14px; border: 1px solid rgba(126, 181, 255, 0.3); border-radius: 16px; color: #eef6ff; background: rgba(9, 22, 38, 0.45); resize: vertical; }
+.guild-detail-form textarea,
+.guild-detail-form select { width: 100%; padding: 14px; border: 1px solid rgba(126, 181, 255, 0.3); border-radius: 16px; color: #eef6ff; background: rgba(9, 22, 38, 0.45); }
+.guild-detail-form textarea { resize: vertical; }
 .guild-detail-action-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .guild-detail-action-row form { margin: 0; }
 .guild-detail-pending-wrap { margin-top: 18px; border: 1px solid rgba(126, 181, 255, 0.22); border-radius: 18px; }

@@ -99,6 +99,85 @@ def calculate_score_breakdown_total(
     return round(sum(float(breakdown.get(key, 0.0)) for key in component_keys), 2)
 
 
+def insert_match_rows(connection: Any, match: dict[str, Any]) -> None:
+    connection.execute(
+        """
+        INSERT INTO matches (
+            match_id, competition_name, season, stage, round, game_no, score_model, scoring_rule_json, exclude_from_team_scores, played_on, group_label, table_label, format,
+            duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            match["match_id"],
+            match.get("competition_name") or match["season"],
+            match["season"],
+            match["stage"],
+            match["round"],
+            match["game_no"],
+            normalize_match_score_model(match.get("score_model")),
+            json.dumps(match.get("scoring_rule") or {}, ensure_ascii=False),
+            1 if match.get("exclude_from_team_scores") else 0,
+            match["played_on"],
+            match.get("group_label", ""),
+            match["table_label"],
+            match["format"],
+            match["duration_minutes"],
+            match["winning_camp"],
+            match.get("mvp_player_id", ""),
+            match.get("svp_player_id", ""),
+            match.get("scapegoat_player_id", ""),
+            match["notes"],
+        ),
+    )
+    for sort_order, entry in enumerate(match["players"]):
+        score_model = normalize_match_score_model(match.get("score_model"))
+        score_breakdown = normalize_score_breakdown(entry)
+        points_earned = (
+            calculate_score_breakdown_total(entry, match.get("scoring_rule"))
+            if uses_structured_score_model(score_model)
+            else float(entry.get("points_earned", 0.0))
+        )
+        connection.execute(
+            """
+            INSERT INTO match_players (
+                match_id, sort_order, player_id, team_id, seat, role, camp, survived, result,
+                points_earned, result_points, vote_points, behavior_points, special_points, adjustment_points,
+                score_breakdown_json, points_available, stance_pick, stance_correct, notes
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                match["match_id"],
+                sort_order,
+                entry["player_id"],
+                entry["team_id"],
+                entry["seat"],
+                entry["role"],
+                entry["camp"],
+                0,
+                entry["result"],
+                points_earned,
+                score_breakdown["result_points"],
+                score_breakdown["vote_points"],
+                score_breakdown["behavior_points"],
+                score_breakdown["special_points"],
+                score_breakdown["adjustment_points"],
+                json.dumps(score_breakdown, ensure_ascii=False),
+                float(entry.get("points_available", points_earned)),
+                to_legacy_stance_columns(
+                    normalize_stance_result(entry),
+                    match["winning_camp"],
+                )[0],
+                to_legacy_stance_columns(
+                    normalize_stance_result(entry),
+                    match["winning_camp"],
+                )[1],
+                entry["notes"],
+            ),
+        )
+
+
 def derive_match_awards(
     participants: list[dict[str, Any]],
     winning_camp: str,
@@ -1179,82 +1258,7 @@ def replace_repository_data(
                 )
 
         for match in matches:
-            connection.execute(
-                """
-                INSERT INTO matches (
-                    match_id, competition_name, season, stage, round, game_no, score_model, scoring_rule_json, exclude_from_team_scores, played_on, group_label, table_label, format,
-                    duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    match["match_id"],
-                    match.get("competition_name") or match["season"],
-                    match["season"],
-                    match["stage"],
-                    match["round"],
-                    match["game_no"],
-                    normalize_match_score_model(match.get("score_model")),
-                    json.dumps(match.get("scoring_rule") or {}, ensure_ascii=False),
-                    1 if match.get("exclude_from_team_scores") else 0,
-                    match["played_on"],
-                    match.get("group_label", ""),
-                    match["table_label"],
-                    match["format"],
-                    match["duration_minutes"],
-                    match["winning_camp"],
-                    match.get("mvp_player_id", ""),
-                    match.get("svp_player_id", ""),
-                    match.get("scapegoat_player_id", ""),
-                    match["notes"],
-                ),
-            )
-            for sort_order, entry in enumerate(match["players"]):
-                score_model = normalize_match_score_model(match.get("score_model"))
-                score_breakdown = normalize_score_breakdown(entry)
-                points_earned = (
-                    calculate_score_breakdown_total(entry, match.get("scoring_rule"))
-                    if uses_structured_score_model(score_model)
-                    else float(entry.get("points_earned", 0.0))
-                )
-                connection.execute(
-                    """
-                    INSERT INTO match_players (
-                        match_id, sort_order, player_id, team_id, seat, role, camp, survived, result,
-                        points_earned, result_points, vote_points, behavior_points, special_points, adjustment_points,
-                        score_breakdown_json, points_available, stance_pick, stance_correct, notes
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        match["match_id"],
-                        sort_order,
-                        entry["player_id"],
-                        entry["team_id"],
-                        entry["seat"],
-                        entry["role"],
-                        entry["camp"],
-                        0,
-                        entry["result"],
-                        points_earned,
-                        score_breakdown["result_points"],
-                        score_breakdown["vote_points"],
-                        score_breakdown["behavior_points"],
-                        score_breakdown["special_points"],
-                        score_breakdown["adjustment_points"],
-                        json.dumps(score_breakdown, ensure_ascii=False),
-                        float(entry.get("points_available", points_earned)),
-                        to_legacy_stance_columns(
-                            normalize_stance_result(entry),
-                            match["winning_camp"],
-                        )[0],
-                        to_legacy_stance_columns(
-                            normalize_stance_result(entry),
-                            match["winning_camp"],
-                        )[1],
-                        entry["notes"],
-                    ),
-                )
+            insert_match_rows(connection, match)
 
         upsert_season_dimension_stats(
             connection,
@@ -1279,6 +1283,95 @@ def replace_repository_data(
         )
     if backend == "sqlite":
         connection.execute("PRAGMA foreign_keys = ON")
+
+
+def replace_matches_by_id(
+    match_ids_to_delete: list[str],
+    matches_to_upsert: list[dict[str, Any]],
+    players_to_upsert: list[dict[str, Any]] | None = None,
+    teams_to_replace_members: list[dict[str, Any]] | None = None,
+) -> None:
+    normalized_delete_ids = [
+        str(match_id or "").strip()
+        for match_id in match_ids_to_delete
+        if str(match_id or "").strip()
+    ]
+    upsert_matches = [
+        match
+        for match in matches_to_upsert
+        if str(match.get("match_id") or "").strip()
+    ]
+    upsert_players = [
+        player
+        for player in (players_to_upsert or [])
+        if str(player.get("player_id") or "").strip()
+    ]
+    member_teams = [
+        team
+        for team in (teams_to_replace_members or [])
+        if str(team.get("team_id") or "").strip()
+    ]
+    all_match_ids = sorted(
+        {
+            *normalized_delete_ids,
+            *(str(match.get("match_id") or "").strip() for match in upsert_matches),
+        }
+    )
+    if not all_match_ids and not upsert_matches and not upsert_players and not member_teams:
+        return
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            for player in upsert_players:
+                connection.execute(
+                    """
+                    INSERT INTO players (
+                        player_id, display_name, team_id, photo, aliases_json, active, joined_on, notes
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(player_id) DO UPDATE SET
+                        display_name = excluded.display_name,
+                        team_id = excluded.team_id,
+                        photo = excluded.photo,
+                        aliases_json = excluded.aliases_json,
+                        active = excluded.active,
+                        joined_on = excluded.joined_on,
+                        notes = excluded.notes
+                    """,
+                    (
+                        player["player_id"],
+                        player["display_name"],
+                        player["team_id"],
+                        player["photo"],
+                        json.dumps(player["aliases"], ensure_ascii=False),
+                        1 if player.get("active") else 0,
+                        player["joined_on"],
+                        player["notes"],
+                    ),
+                )
+            for team in member_teams:
+                team_id = str(team.get("team_id") or "").strip()
+                connection.execute("DELETE FROM team_members WHERE team_id = ?", (team_id,))
+                for sort_order, player_id in enumerate(team.get("members", [])):
+                    connection.execute(
+                        """
+                        INSERT INTO team_members (team_id, player_id, sort_order)
+                        VALUES (?, ?, ?)
+                        """,
+                        (team_id, player_id, sort_order),
+                    )
+            if all_match_ids:
+                placeholders = ",".join("?" for _ in all_match_ids)
+                connection.execute(
+                    f"DELETE FROM match_players WHERE match_id IN ({placeholders})",
+                    all_match_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM matches WHERE match_id IN ({placeholders})",
+                    all_match_ids,
+                )
+            for match in upsert_matches:
+                insert_match_rows(connection, match)
 
 
 def ensure_database() -> None:

@@ -366,6 +366,30 @@ def get_guild_join_approval_error(
     return ""
 
 
+def build_available_guild_team_rows(data: dict[str, Any], guild_id: str) -> list[dict[str, str]]:
+    rows: list[dict[str, str]] = []
+    for team in data.get("teams", []):
+        team_id = str(team.get("team_id") or "").strip()
+        if not team_id:
+            continue
+        if str(team.get("guild_id") or "").strip():
+            continue
+        if get_team_season_status(data, team) != "ongoing":
+            continue
+        competition_name, season_name = get_team_scope(team)
+        rows.append(
+            {
+                "team_id": team_id,
+                "team_name": str(team.get("name") or team_id).strip(),
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "label": f"{competition_name} · {season_name} · {str(team.get('name') or team_id).strip()}",
+            }
+        )
+    rows.sort(key=lambda item: (item["competition_name"], item["season_name"], item["team_name"]))
+    return rows
+
+
 def _build_guild_legacy_href(guild_id: str, manage_mode: bool) -> str:
     base_path = f"/guilds/{guild_id}/legacy"
     return f"{base_path}?view=manage" if manage_mode else base_path
@@ -514,6 +538,7 @@ def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, st
         if item["request_type"] == "guild_join" and item.get("target_guild_id") == guild_id
     ]
     manage_post_path = f"/guilds/{escape(guild_id)}?view=manage" if manage_mode else f"/guilds/{escape(guild_id)}"
+    available_team_rows = build_available_guild_team_rows(data, guild_id)
     ongoing_rows = [row for row in competition_rows if row["status"] == "ongoing"]
     historical_rows = [row for row in competition_rows if row["status"] != "ongoing"]
     featured_rows = ongoing_rows
@@ -641,12 +666,26 @@ def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, st
         """
         for item in pending_requests
     )
-    create_team_panel = ""
+    add_team_panel = ""
     if manage_mode and can_manage_membership:
-        create_team_panel = """
+        available_team_options = "".join(
+            f'<option value="{escape(item["team_id"])}">{escape(item["label"])}</option>'
+            for item in available_team_rows
+        )
+        add_team_panel = f"""
         <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-          <h2 class="section-title mb-2">赛季战队来源</h2>
-          <p class="section-copy mb-0">赛季战队不再由门派页手动创建。请先由赛事管理员批量创建，或在录入比赛结果时自动生成战队赛季档案；生成后再进入战队页认领、完善资料，并按需加入当前门派。</p>
+          <h2 class="section-title mb-2">直接添加赛季战队</h2>
+          <p class="section-copy mb-3">管理员或门派管理员可以直接把正在进行、尚未加入门派的赛季战队加入当前门派，不要求战队已被认领。</p>
+          {f'''
+          <form method="post" action="{manage_post_path}">
+            <input type="hidden" name="action" value="add_guild_team">
+            <div class="mb-3">
+              <label class="form-label">选择战队</label>
+              <select class="form-select" name="team_id">{available_team_options}</select>
+            </div>
+            <button type="submit" class="btn btn-dark">添加到门派</button>
+          </form>
+          ''' if available_team_options else '<div class="alert alert-secondary mb-0">当前没有可添加的进行中赛季战队。</div>'}
         </section>
         """
     honor_manage_panel = ""
@@ -676,7 +715,7 @@ def _build_guild_page_parts(ctx: RequestContext, guild_id: str) -> tuple[str, st
       </div>
     </section>
     {summary_cards_html}
-    {create_team_panel}
+    {add_team_panel}
     {honor_manage_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <h2 class="section-title mb-3">当前进行中的赛季战队</h2>
@@ -841,6 +880,7 @@ def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, 
         if item["request_type"] == "guild_join" and item.get("target_guild_id") == guild_id
     ]
     manage_post_path = f"/guilds/{guild_id}?view=manage" if manage_mode else f"/guilds/{guild_id}"
+    available_team_rows = build_available_guild_team_rows(data, guild_id)
     pending_payload = []
     if manage_mode and can_manage_membership:
         for item in pending_requests:
@@ -888,10 +928,11 @@ def build_guild_detail_payload(ctx: RequestContext, guild_id: str) -> dict[str, 
             for item in honors
         ],
         "pending_requests": pending_payload,
+        "available_teams": available_team_rows if manage_mode and can_manage_membership else [],
         "management": {
             "profile_href": "/profile",
             "back_href": "/guilds",
-            "source_copy": "赛季战队不再由门派页手动创建。请先由赛事管理员批量创建，或在录入比赛结果时自动生成战队赛季档案；生成后再进入战队页认领、完善资料，并按需加入当前门派。",
+            "source_copy": "可以直接把正在进行、尚未加入门派的赛季战队添加到当前门派；这个操作不要求战队已被认领。",
         },
     }
 
@@ -1163,6 +1204,63 @@ def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
         return redirect(
             start_response,
             append_alert_query(redirect_path, "门派历届荣誉已更新。"),
+        )
+
+    if action == "add_guild_team":
+        if not can_manage_membership:
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout("没有权限", '<div class="alert alert-danger">只有门主、门派管理员或管理员可以直接添加赛季战队。</div>', ctx),
+            )
+        redirect_path = f"/guilds/{guild_id}?view=manage"
+        team_id = form_value(ctx.form, "team_id").strip()
+        team = get_team_by_id(data, team_id)
+        if not team:
+            return redirect(
+                start_response,
+                append_alert_query(redirect_path, "没有找到要添加的战队。"),
+            )
+        current_guild_id = str(team.get("guild_id") or "").strip()
+        if current_guild_id == guild_id:
+            return redirect(
+                start_response,
+                append_alert_query(redirect_path, "这支战队已经在当前门派中。"),
+            )
+        if current_guild_id:
+            return redirect(
+                start_response,
+                append_alert_query(redirect_path, "这支战队已经加入其他门派，不能重复添加。"),
+            )
+        if get_team_season_status(data, team) != "ongoing":
+            return redirect(
+                start_response,
+                append_alert_query(redirect_path, "只能直接添加正在进行赛季的战队。"),
+            )
+        team["guild_id"] = guild_id
+        errors = save_repository_state(data, users)
+        if errors:
+            return redirect(
+                start_response,
+                append_alert_query(redirect_path, "添加战队失败：" + "；".join(errors[:3])),
+            )
+        requests = [
+            item
+            for item in load_membership_requests()
+            if not (item.get("request_type") == "guild_join" and item.get("source_team_id") == team_id)
+        ]
+        save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "guild.team_add",
+            target_type="guild",
+            target_id=guild_id,
+            summary=f"直接将战队 {team.get('name') or team_id} 添加到门派 {guild.get('name') or guild_id}",
+            metadata={"team_id": team_id, "guild_id": guild_id},
+        )
+        return redirect(
+            start_response,
+            append_alert_query(redirect_path, f"已将 {team.get('name') or team_id} 添加到当前门派。"),
         )
 
     if action in {"approve_guild_join", "reject_guild_join"}:

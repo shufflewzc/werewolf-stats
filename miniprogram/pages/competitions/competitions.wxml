@@ -42,10 +42,19 @@
         </view>
       </view>
       <view class="stack" wx:if="{{cards.length}}">
-        <view class="competition-card" wx:for="{{cards}}" wx:key="competition_name" data-index="{{index}}" bindtap="chooseCompetition">
+        <view class="competition-card" wx:for="{{cards}}" wx:key="competition_name">
           <text class="card-kicker">{{item.region_name || "赛区"}} · {{item.series_name || "系列赛"}}</text>
           <text class="card-title">{{item.competition_name}}</text>
-          <text class="card-copy">赛季 {{item.seasons[0] || "待录入"}} · 最近 {{item.latest_played_on || "待更新"}}</text>
+          <text class="card-copy">最近 {{item.latest_played_on || "待更新"}}</text>
+          <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-index="{{index}}" bindchange="chooseSeason">
+            <view class="season-picker">
+              <view>
+                <text class="season-label">赛季</text>
+                <text class="season-value">{{item.selectedSeason || "待录入"}}</text>
+              </view>
+              <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
+            </view>
+          </picker>
           <view class="card-stats">
             <view>
               <text class="stat-value">{{item.team_count || 0}}</text>
@@ -60,7 +69,7 @@
               <text class="stat-label">对局</text>
             </view>
           </view>
-          <text class="enter-label">{{item.enterText}}</text>
+          <button class="enter-label" data-index="{{index}}" bindtap="chooseCompetition">{{item.enterText}}</button>
         </view>
       </view>
       <view class="empty-card" wx:else>

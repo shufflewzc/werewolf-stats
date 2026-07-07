@@ -31,14 +31,21 @@
         <text class="section-note">{{competitions.length}} 个</text>
       </view>
       <view class="stack" wx:if="{{competitions.length}}">
-        <view class="competition-choice" wx:for="{{competitions}}" wx:key="competition_name" data-index="{{index}}" bindtap="chooseCompetition">
+        <view class="competition-choice" wx:for="{{competitions}}" wx:key="competition_name">
           <view class="list-main">
             <text class="list-title">{{item.competition_name}}</text>
-            <text class="list-meta">{{item.region_name}} · {{item.series_name}} · {{item.seasons[0] || "赛季待录入"}}</text>
+            <text class="list-meta">{{item.region_name}} · {{item.series_name}}</text>
+            <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-index="{{index}}" bindchange="chooseSeason">
+              <view class="season-picker compact-season-picker">
+                <text class="season-value">{{item.selectedSeason || "赛季待录入"}}</text>
+                <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
+              </view>
+            </picker>
           </view>
           <view class="choice-stats">
             <text>{{item.match_count || 0}} 场</text>
           </view>
+          <button class="choice-enter" data-index="{{index}}" bindtap="chooseCompetition">进入</button>
         </view>
       </view>
       <view class="empty-card" wx:else>

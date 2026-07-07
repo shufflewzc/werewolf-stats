@@ -30,6 +30,43 @@
   margin-top: 10rpx;
 }
 
+.season-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  margin-top: 18rpx;
+  padding: 18rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 12rpx;
+  background: #f8fafc;
+}
+
+.season-label,
+.season-value,
+.season-action {
+  display: block;
+}
+
+.season-label {
+  font-size: 22rpx;
+  color: #64748b;
+}
+
+.season-value {
+  margin-top: 6rpx;
+  font-size: 28rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.season-action {
+  flex: 0 0 auto;
+  font-size: 24rpx;
+  font-weight: 700;
+  color: #2563eb;
+}
+
 .card-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -52,6 +89,7 @@
 .enter-label {
   display: block;
   margin-top: 20rpx;
+  padding: 0;
   height: 64rpx;
   border-radius: 12rpx;
   font-size: 24rpx;

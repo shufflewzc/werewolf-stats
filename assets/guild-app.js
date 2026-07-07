@@ -146,6 +146,7 @@
     if (!payload.manage_mode) return "";
     const guild = payload.guild || {};
     const pending = payload.pending_requests || [];
+    const availableTeams = payload.available_teams || [];
     return `
       <section class="guilds-panel guilds-section guild-detail-section guild-detail-manage-section">
         <div class="guilds-section-head">
@@ -155,6 +156,24 @@
             <p class="guilds-copy">${escapeHtml((payload.management || {}).source_copy || "门派管理入口。")}</p>
           </div>
         </div>
+        ${payload.can_manage_membership ? `
+          <form method="post" action="${escapeHtml(payload.manage_post_path || "")}" class="guild-detail-form">
+            <input type="hidden" name="action" value="add_guild_team">
+            <label>直接添加进行中赛季战队</label>
+            ${availableTeams.length ? `
+              <select name="team_id">
+                ${availableTeams.map((team) => `<option value="${escapeHtml(team.team_id)}">${escapeHtml(team.label)}</option>`).join("")}
+              </select>
+              <button type="submit" class="guilds-button guilds-button-primary">添加到门派</button>
+            ` : `
+              <div class="guilds-empty-state">
+                <div class="guilds-panel-kicker">Empty</div>
+                <h3>暂无可添加战队</h3>
+                <p>当前没有正在进行、且尚未加入门派的赛季战队。</p>
+              </div>
+            `}
+          </form>
+        ` : ""}
         ${payload.can_manage_honors ? `
           <form method="post" action="${escapeHtml(payload.manage_post_path || "")}" class="guild-detail-form">
             <input type="hidden" name="action" value="update_guild_honors">

@@ -4801,7 +4801,12 @@ def handle_match_create(ctx: RequestContext, start_response):
         )
         users = load_users()
         before_matches = list(data.get("matches", []))
-        normalized_matches, _ = canonicalize_match_ids(next_matches)
+        sanitized_next_matches = [
+            strip_excel_import_helper_fields(match)
+            for match in next_matches
+            if isinstance(match, dict)
+        ]
+        normalized_matches, _ = canonicalize_match_ids(sanitized_next_matches)
         data["matches"] = normalized_matches
         created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
         users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)

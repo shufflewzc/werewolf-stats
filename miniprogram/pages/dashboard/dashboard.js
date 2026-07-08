@@ -35,6 +35,52 @@ function matchText(item, keyword, fields) {
   return haystack.indexOf(keyword) >= 0;
 }
 
+const LEADERBOARD_TABS = [
+  { key: "teams", label: "战队积分" },
+  { key: "players", label: "个人积分" },
+  { key: "mvp", label: "个人MVP" },
+  { key: "svp", label: "个人SVP" }
+];
+
+function decorateLeaderboardRows(key, rows) {
+  return (rows || []).map((row) => {
+    if (key === "teams") {
+      return {
+        key: `team:${row.team_id}`,
+        type: "team",
+        id: row.team_id,
+        rank: row.rank,
+        title: row.short_name || row.name,
+        meta: `胜率 ${row.win_rate} · 出赛 ${row.matches_represented} 场`,
+        value: row.points_total,
+        valueLabel: "积分"
+      };
+    }
+    if (key === "players") {
+      return {
+        key: `player:${row.player_id}`,
+        type: "player",
+        id: row.player_id,
+        rank: row.rank,
+        title: row.display_name,
+        meta: `${row.team_name || "未绑定战队"} · 出场 ${row.games_played} 局`,
+        value: row.points_total,
+        valueLabel: "积分"
+      };
+    }
+    return {
+      key: `${key}:${row.player_id}`,
+      type: "player",
+      id: row.player_id,
+      rank: row.rank,
+      title: row.display_name,
+      meta: `${row.team_name || "未绑定战队"} · 最近 ${row.latest_awarded_on || "待更新"}`,
+      value: row.award_count,
+      valueLabel: row.award_label || (key === "mvp" ? "MVP" : "SVP")
+    };
+  });
+}
+
 Page({
   data: {
     loading: true,
@@ -58,7 +104,11 @@ Page({
     searchKeyword: "",
     searchLoading: false,
     searchSearched: false,
-    searchResults: []
+    searchResults: [],
+    leaderboardTabs: LEADERBOARD_TABS,
+    activeLeaderboard: "teams",
+    leaderboards: {},
+    leaderboardRows: []
   },
 
   onShow() {
@@ -96,6 +146,8 @@ Page({
         ...player,
         photoUrl: assetUrl(player.photo)
       }));
+      const leaderboards = payload.leaderboards || {};
+      const activeLeaderboard = this.data.activeLeaderboard || "teams";
       const matchDays = take(payload.match_days, 4);
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
@@ -133,6 +185,8 @@ Page({
           logoUrl: assetUrl(team.logo)
         })),
         topPlayers,
+        leaderboards,
+        leaderboardRows: decorateLeaderboardRows(activeLeaderboard, leaderboards[activeLeaderboard]),
         matchDays,
         latestDay,
         currentUser,
@@ -314,6 +368,25 @@ Page({
       return;
     }
     wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
+  },
+
+  changeLeaderboard(event) {
+    const key = event.currentTarget.dataset.key;
+    const leaderboards = this.data.leaderboards || {};
+    this.setData({
+      activeLeaderboard: key,
+      leaderboardRows: decorateLeaderboardRows(key, leaderboards[key])
+    });
+  },
+
+  openLeaderboardRow(event) {
+    const row = this.data.leaderboardRows[Number(event.currentTarget.dataset.index)];
+    if (!row || !row.id) {
+      return;
+    }
+    if (row.type === "player") {
+      wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(row.id)}` });
+    }
   },
 
   chooseCompetition(event) {

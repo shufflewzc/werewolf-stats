@@ -139,51 +139,35 @@
 
     <view class="section">
       <view class="section-head">
-        <text class="section-title">战队积分</text>
-        <text class="section-note">Top 5</text>
+        <text class="section-title">排行榜</text>
+        <text class="section-note">{{leaderboardRows.length}} 名</text>
       </view>
-      <view class="stack" wx:if="{{topTeams.length}}">
-        <view class="list-card" wx:for="{{topTeams}}" wx:key="team_id">
+      <view class="leaderboard-tabs">
+        <view
+          class="leaderboard-tab {{activeLeaderboard === item.key ? 'is-active' : ''}}"
+          wx:for="{{leaderboardTabs}}"
+          wx:key="key"
+          data-key="{{item.key}}"
+          bindtap="changeLeaderboard"
+        >
+          <text class="leaderboard-tab-text">{{item.label}}</text>
+        </view>
+      </view>
+      <view class="stack" wx:if="{{leaderboardRows.length}}">
+        <view class="list-card" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>
-          <image wx:if="{{item.logoUrl}}" class="logo" src="{{item.logoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onTeamImageError"></image>
-          <view wx:else class="logo image-placeholder"></view>
           <view class="list-main">
-            <text class="list-title">{{item.short_name || item.name}}</text>
-            <text class="list-meta">胜率 {{item.win_rate}} · 出赛 {{item.matches_represented}} 场</text>
+            <text class="list-title">{{item.title}}</text>
+            <text class="list-meta">{{item.meta}}</text>
           </view>
           <view class="list-score">
-            <text class="score-value">{{item.points_total}}</text>
-            <text class="score-label">积分</text>
+            <text class="score-value">{{item.value}}</text>
+            <text class="score-label">{{item.valueLabel}}</text>
           </view>
         </view>
       </view>
       <view class="empty-card" wx:else>
-        <text class="empty-title">暂无战队数据</text>
-      </view>
-    </view>
-
-    <view class="section">
-      <view class="section-head">
-        <text class="section-title">选手积分</text>
-        <text class="section-note">Top 5</text>
-      </view>
-      <view class="stack" wx:if="{{topPlayers.length}}">
-        <view class="list-card" wx:for="{{topPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
-          <text class="rank">{{item.rank}}</text>
-          <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onPlayerImageError"></image>
-          <view wx:else class="avatar image-placeholder"></view>
-          <view class="list-main">
-            <text class="list-title">{{item.display_name}}</text>
-            <text class="list-meta">{{item.team_name}} · 出场 {{item.games_played}} 局</text>
-          </view>
-          <view class="list-score">
-            <text class="score-value">{{item.points_total}}</text>
-            <text class="score-label">积分</text>
-          </view>
-        </view>
-      </view>
-      <view class="empty-card" wx:else>
-        <text class="empty-title">暂无选手数据</text>
+        <text class="empty-title">暂无榜单数据</text>
       </view>
     </view>
 

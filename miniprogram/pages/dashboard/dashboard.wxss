@@ -207,6 +207,46 @@
   background: #dbeafe;
 }
 
+.leaderboard-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10rpx;
+  margin-bottom: 18rpx;
+  padding: 8rpx;
+  border-radius: 14rpx;
+  background: #e2e8f0;
+}
+
+.leaderboard-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: 62rpx;
+  padding: 0 6rpx;
+  border-radius: 10rpx;
+  box-sizing: border-box;
+  color: #475569;
+  background: transparent;
+}
+
+.leaderboard-tab-text {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.leaderboard-tab.is-active {
+  color: #ffffff;
+  background: #111827;
+}
+
 .workbench-card,
 .day-focus-card {
   border: 1rpx solid #e2e8f0;

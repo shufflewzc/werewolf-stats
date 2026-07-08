@@ -7905,6 +7905,71 @@ def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_dashboard_award_rows(
+    data: dict[str, Any],
+    matches: list[dict[str, Any]],
+    award_field: str,
+) -> list[dict[str, Any]]:
+    player_lookup = {
+        str(player.get("player_id") or ""): player
+        for player in data.get("players", [])
+    }
+    team_lookup = {
+        str(team.get("team_id") or ""): team
+        for team in data.get("teams", [])
+    }
+    rows_by_player: dict[str, dict[str, Any]] = {}
+    for match in matches:
+        player_id = str(match.get(award_field) or "").strip()
+        if not player_id or player_id not in player_lookup:
+            continue
+        participant = next(
+            (
+                entry
+                for entry in match.get("players", [])
+                if str(entry.get("player_id") or "").strip() == player_id
+            ),
+            {},
+        )
+        team_id = str(participant.get("team_id") or "").strip()
+        row = rows_by_player.setdefault(
+            player_id,
+            {
+                "player_id": player_id,
+                "display_name": str(player_lookup[player_id].get("display_name") or player_id),
+                "team_name": str(team_lookup.get(team_id, {}).get("name") or team_id or "未知战队"),
+                "award_count": 0,
+                "latest_awarded_on": "",
+            },
+        )
+        row["award_count"] += 1
+        row["latest_awarded_on"] = max(row["latest_awarded_on"], str(match.get("played_on") or ""))
+    rows = sorted(
+        rows_by_player.values(),
+        key=lambda item: (
+            -int(item["award_count"]),
+            str(item.get("latest_awarded_on") or ""),
+            str(item.get("display_name") or ""),
+        ),
+    )
+    for index, row in enumerate(rows, start=1):
+        row["rank"] = index
+    return rows
+
+
+def _serialize_dashboard_award_row(row: dict[str, Any], award_label: str) -> dict[str, Any]:
+    return {
+        "rank": int(row["rank"]),
+        "player_id": row["player_id"],
+        "display_name": row["display_name"],
+        "team_name": row["team_name"],
+        "award_label": award_label,
+        "award_count": int(row["award_count"]),
+        "latest_awarded_on": row.get("latest_awarded_on") or "待更新",
+        "href": f'/players/{quote(row["player_id"])}',
+    }
+
+
 def _serialize_dashboard_finalist_row(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "rank_label": str(row.get("rank_label") or ""),
@@ -8292,6 +8357,8 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         selected_region,
         selected_series_slug,
     )
+    mvp_rows = build_dashboard_award_rows(data, scoped_played_matches, "mvp_player_id")
+    svp_rows = build_dashboard_award_rows(data, scoped_played_matches, "svp_player_id")
 
     region_options = [
         {
@@ -8550,6 +8617,12 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
             _serialize_dashboard_finalist_row(row)
             for row in promotion_context["final_rows"]
         ],
+        "leaderboards": {
+            "teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows],
+            "players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows],
+            "mvp": [_serialize_dashboard_award_row(row, "MVP") for row in mvp_rows],
+            "svp": [_serialize_dashboard_award_row(row, "SVP") for row in svp_rows],
+        },
         "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
         "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
         "match_days": match_days,

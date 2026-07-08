@@ -73,6 +73,23 @@
       </view>
     </view>
 
+    <view class="section" wx:if="{{achievements.length}}">
+      <view class="section-head">
+        <text class="section-title">成就标签</text>
+        <text class="section-note">{{achievements.length}} 个</text>
+      </view>
+      <view class="achievement-grid">
+        <view class="achievement-card {{item.className}}" wx:for="{{achievements}}" wx:key="code">
+          <view class="achievement-top">
+            <text class="achievement-code">{{item.code}}</text>
+            <text class="achievement-tier">{{item.tierLabel}}</text>
+          </view>
+          <text class="achievement-title">{{item.title}}</text>
+          <text class="achievement-meta">{{item.meta || item.description}}</text>
+        </view>
+      </view>
+    </view>
+
     <view class="section" wx:if="{{roster.length}}">
       <view class="section-head">
         <text class="section-title">当前阵容</text>

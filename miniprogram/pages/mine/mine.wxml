@@ -64,24 +64,6 @@
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="openLatestDay">比赛日</button>
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="openPrediction">当日预测</button>
       </view>
-
-      <view class="achievement-panel" wx:if="{{myAchievements.length}}">
-        <view class="section-head compact-head">
-          <text class="section-title">我的成就</text>
-          <text class="section-note">{{myAchievementPlayerName}}</text>
-        </view>
-        <view class="achievement-grid">
-          <view class="achievement-card {{item.className}}" wx:for="{{myAchievements}}" wx:key="code">
-            <view class="achievement-top">
-              <text class="achievement-code">{{item.code}}</text>
-              <text class="achievement-tier">{{item.tierLabel}}</text>
-            </view>
-            <text class="achievement-title">{{item.title}}</text>
-            <text class="achievement-copy">{{item.description}}</text>
-            <text class="achievement-meta">{{item.meta}}</text>
-          </view>
-        </view>
-      </view>
     </view>
   </view>
 

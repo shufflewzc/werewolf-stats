@@ -96,6 +96,98 @@
   box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
 }
 
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+}
+
+.achievement-card {
+  min-height: 168rpx;
+  padding: 20rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  box-sizing: border-box;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.achievement-card.tier-legend {
+  border-color: #f59e0b;
+  background: #fffbeb;
+}
+
+.achievement-card.tier-gold {
+  border-color: #facc15;
+  background: #fefce8;
+}
+
+.achievement-card.tier-silver {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.achievement-card.tier-bronze {
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.achievement-card.tier-locked {
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.achievement-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+}
+
+.achievement-code,
+.achievement-tier {
+  display: block;
+  overflow: hidden;
+  font-size: 20rpx;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.achievement-code {
+  color: #0f172a;
+}
+
+.achievement-tier {
+  flex: 0 0 auto;
+  padding: 4rpx 10rpx;
+  border-radius: 999rpx;
+  color: #ffffff;
+  background: #111827;
+}
+
+.achievement-title,
+.achievement-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.achievement-title {
+  margin-top: 14rpx;
+  font-size: 26rpx;
+  font-weight: 800;
+  color: #111827;
+  white-space: nowrap;
+}
+
+.achievement-meta {
+  margin-top: 8rpx;
+  font-size: 21rpx;
+  line-height: 1.45;
+  color: #475569;
+}
+
 .role-card + .role-card {
   margin-top: 14rpx;
 }

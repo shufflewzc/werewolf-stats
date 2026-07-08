@@ -1017,6 +1017,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     ]
 
     scoped_matches = []
+    achievement_match_rows = []
     total_points = 0.0
     wins = 0
     player_stats: dict[str, dict[str, Any]] = {}
@@ -1028,6 +1029,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
         team_entries = [entry for entry in match.get("players", []) if entry.get("team_id") == team_id]
         if not team_entries:
             continue
+        achievement_match_rows.append(match)
         match_points = sum(float(entry.get("points_earned") or 0) for entry in team_entries)
         match_win = any(entry.get("result") == "win" for entry in team_entries)
         total_points += match_points
@@ -1098,6 +1100,32 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     points_per_match = (total_points / matches_played) if matches_played else 0.0
     win_width = (wins / matches_played * 100) if matches_played else 0.0
     points_width = max(0.0, min(100.0, (points_per_match / 8.0) * 100.0))
+    team_rows = {
+        row["team_id"]: row
+        for row in build_team_rows(data, selected_competition or None, selected_season or None)
+    }
+    team_stats = team_rows.get(
+        team_id,
+        {
+            "team_id": team_id,
+            "points_rank": 9999,
+            "matches_represented": matches_played,
+            "win_rate": (wins / matches_played) if matches_played else 0.0,
+            "stance_calls": 0,
+            "stance_rate": 0.0,
+            "points_earned_total": total_points,
+            "points_per_match": points_per_match,
+            "player_count": len(roster),
+            "wins": wins,
+            "losses": losses,
+        },
+    )
+    team_stats = {
+        **team_stats,
+        "player_count": int(team_stats.get("player_count") or len(roster)),
+        "wins": int(team_stats.get("wins") or wins),
+        "losses": int(team_stats.get("losses") or losses),
+    }
     recent_matches = sorted(
         scoped_matches,
         key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]),
@@ -1152,6 +1180,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
             "points_width": round(points_width, 1),
             "stage_summary": " / ".join(f"{item['label']} {item['group']}" for item in stage_groups) or "暂未设置",
         },
+        "achievements": legacy.build_team_achievement_tags(team_id, team_stats, achievement_match_rows),
         "roster": roster,
         "matches": recent_matches,
     }

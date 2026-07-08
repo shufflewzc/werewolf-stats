@@ -53,6 +53,22 @@ function decorateRecentMatch(item) {
   };
 }
 
+function decorateAchievement(item) {
+  const tier = String((item && item.tier) || "locked");
+  const labels = {
+    legend: "传奇",
+    gold: "金",
+    silver: "银",
+    bronze: "铜",
+    locked: "待解锁"
+  };
+  return {
+    ...item,
+    tierLabel: labels[tier] || "标签",
+    className: `tier-${tier}`
+  };
+}
+
 Page({
   data: {
     loading: true,
@@ -66,6 +82,7 @@ Page({
     summaryCards: [],
     roles: [],
     recentMatches: [],
+    achievements: [],
     dimension: {},
     dimensionAvailable: false
   },
@@ -97,6 +114,7 @@ Page({
           summaryCards: [],
           roles: [],
           recentMatches: [],
+          achievements: [],
           dimension: {},
           dimensionAvailable: false
         }));
@@ -127,6 +145,7 @@ Page({
         summaryCards,
         roles: take(payload.roles, 8),
         recentMatches: take(payload.recent_matches, 6).map(decorateRecentMatch),
+        achievements: take(payload.achievements, 12).map(decorateAchievement),
         dimension: normalizedDimension,
         dimensionAvailable: Boolean(normalizedDimension.available)
       });

@@ -11,6 +11,22 @@ function decorateMatch(item) {
   };
 }
 
+function decorateAchievement(item) {
+  const tier = String((item && item.tier) || "locked");
+  const labels = {
+    legend: "传奇",
+    gold: "金",
+    silver: "银",
+    bronze: "铜",
+    locked: "待解锁"
+  };
+  return {
+    ...item,
+    tierLabel: labels[tier] || "标签",
+    className: `tier-${tier}`
+  };
+}
+
 Page({
   data: {
     loading: true,
@@ -21,6 +37,7 @@ Page({
     team: {},
     metrics: [],
     insights: {},
+    achievements: [],
     roster: [],
     matches: []
   },
@@ -49,6 +66,7 @@ Page({
           team: {},
           metrics: [],
           insights: {},
+          achievements: [],
           roster: [],
           matches: []
         }));
@@ -67,6 +85,7 @@ Page({
         },
         metrics: take(payload.metrics, 6),
         insights: payload.insights || {},
+        achievements: take(payload.achievements, 12).map(decorateAchievement),
         roster: take(payload.roster, 12).map((player) => ({
           ...player,
           photoUrl: assetUrl(player.photo)

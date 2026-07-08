@@ -26,23 +26,6 @@ function boundPlayersFromUser(user) {
   }));
 }
 
-function decorateAchievement(item) {
-  const tierLabels = {
-    legend: "传奇",
-    gold: "金",
-    silver: "银",
-    bronze: "铜",
-    locked: "未解锁"
-  };
-  const tier = String(item && item.tier || "bronze");
-  return {
-    ...item,
-    tier,
-    tierLabel: tierLabels[tier] || tier,
-    className: `tier-${tier}`
-  };
-}
-
 Page({
   data: {
     loading: false,
@@ -62,9 +45,7 @@ Page({
     centerStatus: "未登录",
     centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
     boundPlayerLabel: "",
-    boundPlayers: [],
-    myAchievements: [],
-    myAchievementPlayerName: ""
+    boundPlayers: []
   },
 
   onShow() {
@@ -109,24 +90,14 @@ Page({
         centerStatus,
         boundPlayerLabel,
         boundPlayers,
-        myAchievements: [],
-        myAchievementPlayerName: "",
         centerCopy: user ? "先进入一个赛事，再查看我的比赛日和选手页。" : centerCopy
       });
       return;
     }
     let latestDay = null;
-    let myAchievements = [];
-    let myAchievementPlayerName = "";
     try {
       const dashboard = await request("/api/dashboard", scopeParams(selectedScope));
       latestDay = (dashboard.match_days || [])[0] || null;
-      const primaryPlayer = boundPlayers.find((player) => player.player_id === (user && user.player_id)) || boundPlayers[0];
-      if (primaryPlayer && primaryPlayer.player_id) {
-        const detail = await request(`/api/players/${encodeURIComponent(primaryPlayer.player_id)}`, scopeParams(selectedScope));
-        myAchievements = (detail.achievements || []).slice(0, 6).map(decorateAchievement);
-        myAchievementPlayerName = (detail.player && detail.player.name) || primaryPlayer.display_name || primaryPlayer.player_id;
-      }
     } catch (error) {
       centerCopy = error.message || "我的赛事数据加载失败。";
     }
@@ -136,9 +107,7 @@ Page({
       centerStatus,
       centerCopy,
       boundPlayerLabel,
-      boundPlayers,
-      myAchievements,
-      myAchievementPlayerName
+      boundPlayers
     });
   },
 
@@ -163,9 +132,7 @@ Page({
       centerStatus: "未登录",
       centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
       boundPlayerLabel: "",
-      boundPlayers: [],
-      myAchievements: [],
-      myAchievementPlayerName: ""
+      boundPlayers: []
     });
   },
 

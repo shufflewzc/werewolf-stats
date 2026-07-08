@@ -23,7 +23,7 @@
         </view>
       </view>
       <input class="input" value="{{keyword}}" placeholder="输入中文名，例如 琛" bindinput="updateKeyword" confirm-type="search" bindconfirm="search" />
-      <button class="primary-button single-button" loading="{{loading}}" bindtap="search">搜索</button>
+      <button class="primary-button single-button" hover-class="tap-button-hover" loading="{{loading}}" bindtap="search">搜索</button>
     </view>
   </view>
 
@@ -39,7 +39,7 @@
           <text class="list-meta">{{item.team_name}} · {{item.aliases_text || "无别名"}}</text>
           <text class="bind-state">{{item.bound_to_self ? "已绑定到当前账号" : (item.bound ? "已被其他账号绑定" : "可绑定")}}</text>
         </view>
-        <button class="bind-button" disabled="{{item.bound && !item.bound_to_self}}" data-player-id="{{item.player_id}}" bindtap="bind">
+        <button class="bind-button" hover-class="tap-button-hover" disabled="{{item.bound && !item.bound_to_self}}" data-player-id="{{item.player_id}}" bindtap="bind">
           {{item.bound_to_self ? "已绑定" : "绑定"}}
         </button>
       </view>

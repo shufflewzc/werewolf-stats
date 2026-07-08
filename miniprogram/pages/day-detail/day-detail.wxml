@@ -4,8 +4,8 @@
     <text class="title">{{hero.title || (playedOn + " 比赛日")}}</text>
     <text class="copy">{{hero.copy || "查看当天赛程、选手日榜和比赛日总分预测。"}}</text>
     <view class="button-row">
-      <button class="primary-button" bindtap="goPredictions">当日预测</button>
-      <button class="ghost-button" bindtap="goCompetitions">赛事入口</button>
+      <button class="primary-button" hover-class="tap-button-hover" bindtap="goPredictions">当日预测</button>
+      <button class="ghost-button" hover-class="tap-button-hover" bindtap="goCompetitions">赛事入口</button>
     </view>
   </view>
 
@@ -21,7 +21,7 @@
       <text class="empty-title">先进入赛事</text>
       <text class="empty-copy">选择赛事后，才能查看该赛事内的比赛日详情和预测榜。</text>
       <view class="button-row">
-        <button class="primary-button" bindtap="goCompetitions">去选择赛事</button>
+        <button class="primary-button" hover-class="tap-button-hover" bindtap="goCompetitions">去选择赛事</button>
       </view>
     </view>
   </view>
@@ -30,7 +30,7 @@
     <view class="error-card">
       <text>{{error}}</text>
       <view class="button-row">
-        <button class="ghost-button" bindtap="loadData">重试</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadData">重试</button>
       </view>
     </view>
   </view>
@@ -52,7 +52,7 @@
         <text class="section-note">{{predictionVisibleCount}} / {{predictionTotalCount}} 人</text>
       </view>
       <view class="stack">
-        <view class="list-card" wx:for="{{visiblePredictions}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayer">
+        <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{visiblePredictions}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayer">
           <text class="rank">{{index + 1}}</text>
           <view class="list-main">
             <text class="list-title">{{item.player_name}}</text>
@@ -62,10 +62,11 @@
             <text class="score-value">{{item.expected_total || item.expected_points}}</text>
             <text class="score-label">预计总分</text>
           </view>
+          <text class="tap-cue">›</text>
         </view>
       </view>
       <view class="button-row" wx:if="{{predictionHasMore}}">
-        <button class="ghost-button" bindtap="loadMorePredictions">加载更多</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadMorePredictions">加载更多</button>
       </view>
     </view>
 
@@ -75,7 +76,7 @@
         <text class="section-note">{{playerVisibleCount}} / {{playerTotalCount}} 人</text>
       </view>
       <view class="stack">
-        <view class="list-card" wx:for="{{visiblePlayerLeaderboard}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayer">
+        <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{visiblePlayerLeaderboard}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayer">
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">
             <text class="list-title">{{item.display_name}}</text>
@@ -85,10 +86,11 @@
             <text class="score-value">{{item.points_total}}</text>
             <text class="score-label">实际分</text>
           </view>
+          <text class="tap-cue">›</text>
         </view>
       </view>
       <view class="button-row" wx:if="{{playerHasMore}}">
-        <button class="ghost-button" bindtap="loadMorePlayers">加载更多</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadMorePlayers">加载更多</button>
       </view>
     </view>
 

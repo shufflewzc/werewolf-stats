@@ -5,9 +5,9 @@
     <text class="copy" wx:if="{{choosing}}">必须先进入一个赛事，之后才能查看该赛事内的门派、选手和比赛详情。</text>
     <text class="copy" wx:else>{{hero.featured_label || "当前赛事详情"}}</text>
     <view class="button-row" wx:if="{{!choosing}}">
-      <button class="primary-button" bindtap="goTeams">门派</button>
-      <button class="ghost-button" bindtap="goPlayers">选手榜</button>
-      <button class="ghost-button" bindtap="goPredictions">胜率预测</button>
+      <button class="primary-button" hover-class="tap-button-hover" bindtap="goTeams">门派</button>
+      <button class="ghost-button" hover-class="tap-button-hover" bindtap="goPlayers">选手榜</button>
+      <button class="ghost-button" hover-class="tap-button-hover" bindtap="goPredictions">胜率预测</button>
     </view>
   </view>
 
@@ -36,13 +36,13 @@
             <text class="list-title">{{item.competition_name}}</text>
             <text class="list-meta">{{item.region_name}} · {{item.series_name}}</text>
             <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-index="{{index}}" bindchange="chooseSeason">
-              <view class="season-picker compact-season-picker">
+              <view class="season-picker compact-season-picker" hover-class="tap-chip-hover">
                 <text class="season-value">{{item.selectedSeason || "赛季待录入"}}</text>
                 <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
               </view>
             </picker>
           </view>
-          <button class="choice-enter" data-index="{{index}}" bindtap="chooseCompetition">进入</button>
+          <button class="choice-enter" hover-class="tap-button-hover" data-index="{{index}}" bindtap="chooseCompetition">进入</button>
         </view>
       </view>
       <view class="empty-card" wx:else>
@@ -58,23 +58,24 @@
           <text class="selected-title">{{selectedScope.competition}}</text>
           <text class="selected-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
         </view>
-        <button class="change-button" bindtap="changeCompetition">切换</button>
+        <button class="change-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
       </view>
 
     <view class="section">
       <view class="season-search-card">
         <view class="season-search-row">
           <input class="season-search-input" value="{{searchKeyword}}" placeholder="搜索门派/战队/选手" confirm-type="search" bindinput="updateSearchKeyword" bindconfirm="searchSeason" />
-          <button class="season-search-button" loading="{{searchLoading}}" bindtap="searchSeason">搜索</button>
-          <button class="season-clear-button" wx:if="{{searchKeyword}}" bindtap="clearSearch">清空</button>
+          <button class="season-search-button" hover-class="tap-button-hover" loading="{{searchLoading}}" bindtap="searchSeason">搜索</button>
+          <button class="season-clear-button" hover-class="tap-button-hover" wx:if="{{searchKeyword}}" bindtap="clearSearch">清空</button>
         </view>
         <view class="search-results" wx:if="{{searchResults.length}}">
-          <view class="search-result" wx:for="{{searchResults}}" wx:key="key" data-index="{{index}}" bindtap="openSearchResult">
+          <view class="search-result tap-card" hover-class="tap-card-hover" wx:for="{{searchResults}}" wx:key="key" data-index="{{index}}" bindtap="openSearchResult">
             <text class="search-type">{{item.typeLabel}}</text>
             <view class="list-main">
               <text class="list-title">{{item.title}}</text>
               <text class="list-meta">{{item.subtitle}}</text>
             </view>
+            <text class="tap-cue">›</text>
           </view>
         </view>
         <view class="empty-inline" wx:if="{{searchSearched && !searchLoading && !searchResults.length}}">
@@ -90,15 +91,15 @@
             <text class="workbench-kicker">我的赛事工作台</text>
             <text class="workbench-title">{{myStatusLabel}}</text>
           </view>
-          <button class="scope-button" bindtap="goMine">我的</button>
+          <button class="scope-button" hover-class="tap-button-hover" bindtap="goMine">我的</button>
         </view>
 
-        <view class="my-player-card" wx:if="{{myPlayer}}">
-          <view class="list-main" bindtap="openMyPlayerDetail">
+        <view class="my-player-card tap-card" hover-class="tap-card-hover" wx:if="{{myPlayer}}" bindtap="openMyPlayerDetail">
+          <view class="list-main">
             <text class="list-title">{{myPlayer.display_name}}</text>
             <text class="list-meta">{{myPlayer.team_name || "未绑定门派"}} · 当前积分 {{myPlayer.points_total || "--"}} · 出场 {{myPlayer.games_played || "--"}} 局</text>
           </view>
-          <button class="scope-button" bindtap="openMyPlayerDetail">详情</button>
+          <button class="scope-button" hover-class="tap-button-hover" bindtap="openMyPlayerDetail">详情</button>
         </view>
 
         <view class="empty-inline" wx:if="{{!myPlayer}}">
@@ -106,21 +107,22 @@
         </view>
 
         <view class="quick-actions">
-          <button class="primary-button" wx:if="{{myPlayer}}" bindtap="openMyPlayerDetail">我的选手页</button>
-          <button class="primary-button" wx:else bindtap="goBindPlayer">{{myPrimaryActionText}}</button>
-          <button class="ghost-button" bindtap="openLatestDayPrediction">比赛日预测</button>
+          <button class="primary-button" hover-class="tap-button-hover" wx:if="{{myPlayer}}" bindtap="openMyPlayerDetail">我的选手页</button>
+          <button class="primary-button" hover-class="tap-button-hover" wx:else bindtap="goBindPlayer">{{myPrimaryActionText}}</button>
+          <button class="ghost-button" hover-class="tap-button-hover" bindtap="openLatestDayPrediction">比赛日预测</button>
         </view>
       </view>
     </view>
 
     <view class="section" wx:if="{{latestDay}}">
-      <view class="day-focus-card" data-played-on="{{latestDay.played_on}}" bindtap="openDayDetail">
+      <view class="day-focus-card tap-card" hover-class="tap-card-hover" data-played-on="{{latestDay.played_on}}" bindtap="openDayDetail">
         <view class="list-main">
           <text class="selected-label">最近比赛日</text>
           <text class="day-focus-title">{{latestDay.played_on}}</text>
           <text class="list-meta">{{latestDay.competition_names[0] || selectedScope.competition}} · {{latestDay.match_count}} 场 · 点开看当天赛程和日榜</text>
         </view>
         <text class="day-pill">详情</text>
+        <text class="tap-cue">›</text>
       </view>
     </view>
 
@@ -145,13 +147,14 @@
           wx:for="{{leaderboardTabs}}"
           wx:key="key"
           data-key="{{item.key}}"
+          hover-class="tap-chip-hover"
           bindtap="changeLeaderboard"
         >
           <text class="leaderboard-tab-text">{{item.label}}</text>
         </view>
       </view>
       <view class="stack" wx:if="{{leaderboardRows.length}}">
-        <view class="list-card" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
+        <view class="list-card {{item.type === 'team' ? '' : 'tap-card'}}" hover-class="{{item.type === 'team' ? 'none' : 'tap-card-hover'}}" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">
             <text class="list-title">{{item.title}}</text>
@@ -161,6 +164,7 @@
             <text class="score-value">{{item.value}}</text>
             <text class="score-label">{{item.valueLabel}}</text>
           </view>
+          <text wx:if="{{item.type !== 'team'}}" class="tap-cue">›</text>
         </view>
       </view>
       <view class="empty-card" wx:else>
@@ -173,12 +177,13 @@
         <text class="section-title">最近比赛日</text>
       </view>
       <view class="stack">
-        <view class="list-card day-card" wx:for="{{matchDays}}" wx:key="played_on" data-played-on="{{item.played_on}}" bindtap="openDayDetail">
+        <view class="list-card day-card tap-card" hover-class="tap-card-hover" wx:for="{{matchDays}}" wx:key="played_on" data-played-on="{{item.played_on}}" bindtap="openDayDetail">
           <view class="list-main">
             <text class="list-title">{{item.played_on}}</text>
             <text class="list-meta">{{item.competition_names[0] || "赛事"}} · {{item.match_count}} 场</text>
           </view>
           <text class="day-pill">Match Day</text>
+          <text class="tap-cue">›</text>
         </view>
       </view>
     </view>

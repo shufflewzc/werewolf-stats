@@ -18,7 +18,7 @@
           <text class="center-kicker">当前状态</text>
           <text class="center-title">{{centerStatus}}</text>
         </view>
-        <button class="scope-button" bindtap="goCompetitions">{{selectedScope ? "切换赛事" : "选赛事"}}</button>
+        <button class="scope-button" hover-class="tap-button-hover" bindtap="goCompetitions">{{selectedScope ? "切换赛事" : "选赛事"}}</button>
       </view>
 
       <view class="scope-mini" wx:if="{{selectedScope}}">
@@ -40,16 +40,17 @@
           <text class="account-meta">账号名：{{user.display_name || user.username}}</text>
           <text class="account-meta">{{latestDay ? latestDay.played_on : "暂无比赛日"}} · {{centerCopy}}</text>
         </view>
-        <button class="scope-button" bindtap="openMyPlayerPage">主选手</button>
+        <button class="scope-button" hover-class="tap-button-hover" bindtap="openMyPlayerPage">主选手</button>
       </view>
 
       <view class="bound-player-list" wx:if="{{boundPlayers.length}}">
-        <view class="bound-player-item" wx:for="{{boundPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openBoundPlayerPage">
+        <view class="bound-player-item tap-card" hover-class="tap-card-hover" wx:for="{{boundPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openBoundPlayerPage">
           <view class="list-main">
             <text class="bound-player-name">{{item.display_name || item.player_id}}</text>
             <text class="bound-player-id">{{item.player_id}}</text>
           </view>
           <text class="bound-player-action">详情</text>
+          <text class="tap-cue">›</text>
         </view>
       </view>
 
@@ -58,10 +59,10 @@
       </view>
 
       <view class="quick-actions">
-        <button class="primary-button" wx:if="{{boundPlayers.length}}" bindtap="openMyPlayerPage">主选手页</button>
-        <button class="primary-button" wx:else bindtap="goBindPlayer">绑定选手</button>
-        <button class="ghost-button" bindtap="openLatestDay">比赛日</button>
-        <button class="ghost-button" bindtap="openPrediction">当日预测</button>
+        <button class="primary-button" hover-class="tap-button-hover" wx:if="{{boundPlayers.length}}" bindtap="openMyPlayerPage">主选手页</button>
+        <button class="primary-button" hover-class="tap-button-hover" wx:else bindtap="goBindPlayer">绑定选手</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="openLatestDay">比赛日</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="openPrediction">当日预测</button>
       </view>
     </view>
   </view>
@@ -76,9 +77,9 @@
         <text class="bound-status-label">绑定选手</text>
         <text class="bound-status-value">{{boundPlayerLabel || "未绑定"}}</text>
       </view>
-      <button class="primary-button single-button" loading="{{loading}}" bindtap="scanWebLogin">扫码登录网页端</button>
-      <button class="ghost-button single-button" bindtap="goBindPlayer">搜索中文名绑定选手</button>
-      <button class="ghost-button single-button" bindtap="logout">退出本地登录</button>
+      <button class="primary-button single-button" hover-class="tap-button-hover" loading="{{loading}}" bindtap="scanWebLogin">扫码登录网页端</button>
+      <button class="ghost-button single-button" hover-class="tap-button-hover" bindtap="goBindPlayer">搜索中文名绑定选手</button>
+      <button class="ghost-button single-button" hover-class="tap-button-hover" bindtap="logout">退出本地登录</button>
     </view>
   </view>
 
@@ -87,7 +88,7 @@
       <text class="empty-title">尚未登录</text>
       <text class="empty-copy">点击后会使用微信身份登录；如果没有对应账号，系统会自动创建一个普通账号。</text>
       <view class="button-row">
-        <button class="primary-button" loading="{{loading}}" bindtap="login">微信登录</button>
+        <button class="primary-button" hover-class="tap-button-hover" loading="{{loading}}" bindtap="login">微信登录</button>
       </view>
     </view>
   </view>
@@ -102,10 +103,10 @@
         <input class="input" value="{{profile.region_name}}" data-field="region_name" placeholder="城市，例如 广州市" bindinput="updateProfileField" />
       </view>
       <picker mode="selector" range="{{genderLabels}}" bindchange="updateGender">
-        <view class="picker-field">性别：{{genderLabel}}</view>
+        <view class="picker-field" hover-class="tap-chip-hover">性别：{{genderLabel}}</view>
       </picker>
       <textarea class="textarea" value="{{profile.bio}}" data-field="bio" placeholder="个人简介" bindinput="updateProfileField"></textarea>
-      <button class="primary-button single-button" loading="{{loading}}" bindtap="saveProfile">保存资料</button>
+      <button class="primary-button single-button" hover-class="tap-button-hover" loading="{{loading}}" bindtap="saveProfile">保存资料</button>
     </view>
   </view>
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from pathlib import PurePosixPath
 import re
 import secrets
+import time
 from urllib.parse import quote, urlencode
 from xml.etree import ElementTree as ET
 from zipfile import BadZipFile, ZipFile
@@ -2070,6 +2071,7 @@ def build_match_from_excel_rows(
     match_row: dict[str, str],
     player_rows: list[dict[str, str]],
     scoring_rule_override: dict[str, object] | None = None,
+    source_data: dict[str, object] | None = None,
 ) -> dict[str, object]:
     match = build_empty_match(
         match_row.get("competition_name", "").strip(),
@@ -2090,7 +2092,7 @@ def build_match_from_excel_rows(
         normalize_scoring_rule(scoring_rule_override)
         if isinstance(scoring_rule_override, dict)
         else resolve_scoring_rule_for_scope(
-            load_validated_data(),
+            source_data or load_validated_data(),
             str(match["competition_name"]),
             str(match["season"]),
         )
@@ -2174,6 +2176,7 @@ def build_match_from_excel_rows(
 def build_matches_from_flat_excel_rows(
     rows: list[dict[str, str]],
     scoring_rule_override: dict[str, object] | None = None,
+    source_data: dict[str, object] | None = None,
 ) -> list[dict[str, object]]:
     grouped_rows: dict[str, list[dict[str, str]]] = {}
     for row in rows:
@@ -2205,6 +2208,7 @@ def build_matches_from_flat_excel_rows(
                 match_row,
                 player_rows,
                 scoring_rule_override=scoring_rule_override,
+                source_data=source_data,
             )
         )
     return matches
@@ -2234,6 +2238,7 @@ def build_excel_match_group_key(row: dict[str, str]) -> str:
 def build_match_from_wide_excel_row(
     row: dict[str, str],
     scoring_rule_override: dict[str, object] | None = None,
+    source_data: dict[str, object] | None = None,
 ) -> dict[str, object]:
     match = build_empty_match(
         row.get("competition_name", "").strip(),
@@ -2254,7 +2259,7 @@ def build_match_from_wide_excel_row(
         normalize_scoring_rule(scoring_rule_override)
         if isinstance(scoring_rule_override, dict)
         else resolve_scoring_rule_for_scope(
-            load_validated_data(),
+            source_data or load_validated_data(),
             str(match["competition_name"]),
             str(match["season"]),
         )
@@ -2464,6 +2469,7 @@ def import_matches_from_excel(
     upload: UploadedFile,
     group_label_override: str = "",
 ) -> tuple[list[dict[str, object]] | None, str]:
+    started_at = time.perf_counter()
     try:
         template_metadata = read_scoring_template_metadata(upload)
         scoring_rule_override = (
@@ -2484,6 +2490,7 @@ def import_matches_from_excel(
                     build_match_from_wide_excel_row(
                         row,
                         scoring_rule_override=scoring_rule_override,
+                        source_data=data,
                     )
                     for row in flat_rows
                 ]
@@ -2491,6 +2498,7 @@ def import_matches_from_excel(
                 parsed_matches = build_matches_from_flat_excel_rows(
                     flat_rows,
                     scoring_rule_override=scoring_rule_override,
+                    source_data=data,
                 )
             match_rows = []
             player_rows = []
@@ -2541,10 +2549,23 @@ def import_matches_from_excel(
                     row,
                     players_by_key.get(match_key, []),
                     scoring_rule_override=scoring_rule_override,
+                    source_data=data,
                 )
             )
 
-    for current_match in source_matches:
+    team_score_flags = {
+        str(match.get("match_id") or ""): bool(match.get("exclude_from_team_scores"))
+        for match in data["matches"]
+    }
+    for existing_match in next_matches:
+        existing_match_id = str(existing_match.get("match_id") or "")
+        if existing_match_id in team_score_flags:
+            existing_match["exclude_from_team_scores"] = team_score_flags[existing_match_id]
+
+    prepared_matches: list[dict[str, object]] = []
+    prepare_started_at = time.perf_counter()
+    for source_match in source_matches:
+        current_match = source_match
         if group_label_override:
             current_match["group_label"] = group_label_override
         match_key = describe_excel_import_match(current_match)
@@ -2576,17 +2597,33 @@ def import_matches_from_excel(
             if season_error:
                 return None, season_error
             validated_scopes.add(scope_key)
-        resolution_errors = resolve_match_entities(data, [current_match])
-        if resolution_errors:
-            return None, f"{match_key} 导入失败：{resolution_errors[0]}"
-        team_score_flags = {
-            str(match.get("match_id") or ""): bool(match.get("exclude_from_team_scores"))
-            for match in data["matches"]
-        }
-        for existing_match in next_matches:
-            existing_match_id = str(existing_match.get("match_id") or "")
-            if existing_match_id in team_score_flags:
-                existing_match["exclude_from_team_scores"] = team_score_flags[existing_match_id]
+        prepared_matches.append(
+            {
+                "match": current_match,
+                "match_key": match_key,
+                "match_id": match_id,
+                "import_mode": import_mode,
+            }
+        )
+
+    resolution_started_at = time.perf_counter()
+    matches_to_resolve = [
+        item["match"]
+        for item in prepared_matches
+        if isinstance(item.get("match"), dict)
+    ]
+    resolution_errors = resolve_match_entities(data, matches_to_resolve)
+    if resolution_errors:
+        return None, f"Excel 导入失败：{resolution_errors[0]}"
+
+    persist_started_at = time.perf_counter()
+    for item in prepared_matches:
+        current_match = item["match"]
+        if not isinstance(current_match, dict):
+            continue
+        match_key = str(item.get("match_key") or "未填写比赛")
+        import_mode = str(item.get("import_mode") or "create")
+        match_id = str(item.get("match_id") or "").strip()
         award_error = validate_match_awards(current_match)
         if award_error:
             return None, f"{match_key} 导入失败：{award_error}"
@@ -2603,6 +2640,20 @@ def import_matches_from_excel(
             next_matches.append(current_match)
             created_count += 1
 
+    print(
+        json.dumps(
+            {
+                "event": "excel_import.prepare",
+                "matches": len(source_matches),
+                "prepared_ms": round((resolution_started_at - prepare_started_at) * 1000),
+                "resolve_ms": round((persist_started_at - resolution_started_at) * 1000),
+                "persist_prepare_ms": round((time.perf_counter() - persist_started_at) * 1000),
+                "total_ms": round((time.perf_counter() - started_at) * 1000),
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
     if parsed_records_import:
         summary = f"Excel 导入完成：更新 {updated_count} 场已预创建比赛。"
         return next_matches, summary

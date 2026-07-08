@@ -6535,6 +6535,48 @@ def resolve_match_entities(
     matches: list[dict[str, Any]],
 ) -> list[str]:
     existing_player_ids = {player["player_id"] for player in data["players"]}
+    team_lookup_by_id = {team["team_id"]: team for team in data["teams"]}
+    team_by_scope_name: dict[tuple[str, str, str], dict[str, Any]] = {}
+    player_by_scope_team_name: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    player_by_blank_name: dict[str, dict[str, Any]] = {}
+
+    def index_team(team: dict[str, Any]) -> None:
+        team_name = str(team.get("name") or "").strip()
+        competition_name = str(team.get("competition_name") or "").strip()
+        season_name = str(team.get("season_name") or "").strip()
+        team_id = str(team.get("team_id") or "").strip()
+        if team_id:
+            team_lookup_by_id[team_id] = team
+        if team_name:
+            team_by_scope_name.setdefault(
+                (competition_name, season_name, team_name),
+                team,
+            )
+
+    def index_player(player: dict[str, Any]) -> None:
+        player_name = str(player.get("display_name") or "").strip()
+        if not player_name:
+            return
+        player_team = team_lookup_by_id.get(player.get("team_id"))
+        if player_team:
+            player_by_scope_team_name.setdefault(
+                (
+                    str(player_team.get("competition_name") or "").strip(),
+                    str(player_team.get("season_name") or "").strip(),
+                    str(player_team.get("name") or "").strip(),
+                    player_name,
+                ),
+                player,
+            )
+            return
+        if not str(player.get("team_id") or "").strip():
+            player_by_blank_name.setdefault(player_name, player)
+
+    for team in data["teams"]:
+        index_team(team)
+    for player in data["players"]:
+        index_player(player)
+
     errors: list[str] = []
     for match in matches:
         competition_name = get_match_competition_name(match)
@@ -6563,7 +6605,7 @@ def resolve_match_entities(
                 continue
             team = None
             if team_name:
-                team = find_team_by_name_in_scope(data, competition_name, season_name, team_name)
+                team = team_by_scope_name.get((competition_name, season_name, team_name))
                 if not team:
                     placeholder_team_id = build_team_serial(data, competition_name, season_name, data["teams"])
                     team = build_placeholder_team(
@@ -6573,6 +6615,7 @@ def resolve_match_entities(
                         season_name,
                     )
                     data["teams"].append(team)
+                    index_team(team)
                 entry["team_id"] = team["team_id"]
                 entry["team_name"] = team["name"]
             else:
@@ -6596,13 +6639,20 @@ def resolve_match_entities(
                 if team
                 else None
             )
+            if player:
+                index_player(player)
             if not player:
-                player = find_player_by_name_in_scope(
-                    data,
-                    competition_name,
-                    season_name,
-                    player_name,
-                    team["name"] if team else "",
+                player = (
+                    player_by_scope_team_name.get(
+                        (
+                            competition_name,
+                            season_name,
+                            str(team.get("name") or "").strip(),
+                            player_name,
+                        )
+                    )
+                    if team
+                    else player_by_blank_name.get(player_name)
                 )
             if not player:
                 player_id = build_unique_slug(existing_player_ids, "player", player_name, "player")
@@ -6615,6 +6665,7 @@ def resolve_match_entities(
                 )
                 data["players"].append(player)
                 existing_player_ids.add(player_id)
+                index_player(player)
             entry["player_id"] = player["player_id"]
             entry["player_name"] = player["display_name"]
             if team and entry["player_id"] not in team["members"]:

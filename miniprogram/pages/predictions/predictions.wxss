@@ -165,6 +165,11 @@
   display: flex;
   align-items: center;
   gap: 18rpx;
+  margin: -8rpx;
+  padding: 12rpx;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 12rpx;
+  background: #f8fbff;
 }
 
 .seat-pill {

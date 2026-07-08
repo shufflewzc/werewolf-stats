@@ -16,7 +16,7 @@
     <view class="error-card">
       <text>{{error}}</text>
       <view class="button-row">
-        <button class="ghost-button" bindtap="loadData">重试</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadData">重试</button>
       </view>
     </view>
   </view>
@@ -27,7 +27,7 @@
         <text class="empty-title">先进入赛事</text>
         <text class="empty-copy">选择赛事后，才能查看该赛事内的选手数据。</text>
         <view class="button-row">
-          <button class="primary-button" bindtap="goCompetitions">去选择赛事</button>
+          <button class="primary-button" hover-class="tap-button-hover" bindtap="goCompetitions">去选择赛事</button>
         </view>
       </view>
     </view>
@@ -40,7 +40,7 @@
             <text class="scope-title">{{selectedScope.competition}}</text>
             <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
           </view>
-          <button class="scope-button" bindtap="changeCompetition">切换</button>
+          <button class="scope-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
         </view>
       </view>
 
@@ -60,7 +60,7 @@
           <text class="section-note">{{playerVisibleCount}} / {{playerTotalCount}} 名</text>
         </view>
         <view class="stack" wx:if="{{players.length}}">
-          <view class="list-card player-row" wx:for="{{visiblePlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
+          <view class="list-card player-row tap-card" hover-class="tap-card-hover" wx:for="{{visiblePlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
             <text class="rank">{{item.rank}}</text>
             <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onPlayerImageError"></image>
             <view wx:else class="avatar image-placeholder"></view>
@@ -72,10 +72,11 @@
               <text class="score-value">{{item.points_total}}</text>
               <text class="score-label">积分</text>
             </view>
+            <text class="tap-cue">›</text>
           </view>
         </view>
         <view class="button-row" wx:if="{{playerHasMore}}">
-          <button class="ghost-button" bindtap="loadMorePlayers">加载更多</button>
+          <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadMorePlayers">加载更多</button>
         </view>
         <view class="empty-card" wx:if="{{!players.length}}">
           <text class="empty-title">暂无选手</text>

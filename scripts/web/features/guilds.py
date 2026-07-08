@@ -3,6 +3,7 @@ from __future__ import annotations
 from html import escape
 import json
 import secrets
+import time
 from typing import Any
 import web_app as legacy
 
@@ -50,6 +51,9 @@ user_has_permission = legacy.user_has_permission
 user_has_team_identity_in_scope = legacy.user_has_team_identity_in_scope
 validate_guild_creation = legacy.validate_guild_creation
 validate_team_creation = legacy.validate_team_creation
+
+GUILDS_API_CACHE_TTL_SECONDS = 30
+_GUILDS_API_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 
 
 def can_manage_guild_honors(user: dict[str, Any] | None) -> bool:
@@ -124,7 +128,7 @@ def build_guild_overview_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "ongoing_team_count": ongoing_team_count,
                 "historical_team_count": max(len(guild_teams) - ongoing_team_count, 0),
                 "match_count": len(guild_match_ids.get(guild_id, set())),
-                "honor_count": len(build_guild_honor_rows(data, guild_id)),
+                "honor_count": len([item for item in guild.get("honors", []) or [] if isinstance(item, dict)]),
                 "guild": guild,
             }
         )
@@ -155,6 +159,15 @@ def _serialize_guild_card(
 
 
 def build_guilds_api_payload(ctx: RequestContext) -> dict[str, Any]:
+    cache_key = (
+        str((ctx.current_user or {}).get("username") or ""),
+        form_value(ctx.query, "alert").strip(),
+    )
+    cached = _GUILDS_API_CACHE.get(cache_key)
+    now = time.monotonic()
+    if cached and now - cached[0] <= GUILDS_API_CACHE_TTL_SECONDS:
+        return cached[1]
+
     data = load_validated_data()
     overview_rows = build_guild_overview_rows(data)
     can_manage_honors = can_manage_guild_honors(ctx.current_user)
@@ -193,7 +206,7 @@ def build_guilds_api_payload(ctx: RequestContext) -> dict[str, Any]:
         if featured_row
         else None
     )
-    return {
+    payload = {
         "alert": form_value(ctx.query, "alert").strip(),
         "hero": {
             "title": "全部门派",
@@ -237,6 +250,11 @@ def build_guilds_api_payload(ctx: RequestContext) -> dict[str, Any]:
         ],
         "legacy_href": "/guilds/legacy",
     }
+    _GUILDS_API_CACHE[cache_key] = (now, payload)
+    if len(_GUILDS_API_CACHE) > 20:
+        oldest_key = min(_GUILDS_API_CACHE, key=lambda key: _GUILDS_API_CACHE[key][0])
+        _GUILDS_API_CACHE.pop(oldest_key, None)
+    return payload
 
 
 def build_guilds_frontend_page(ctx: RequestContext) -> str:

@@ -163,3 +163,49 @@
 .dimension-history:first-of-type {
   border-top: 0;
 }
+
+.recent-match-card {
+  position: relative;
+  overflow: hidden;
+  border-color: #e2e8f0;
+}
+
+.recent-match-card::before {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 8rpx;
+  content: "";
+  background: #94a3b8;
+}
+
+.recent-match-card.is-win {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.recent-match-card.is-win::before,
+.recent-match-card.is-win .score-value {
+  background: #16a34a;
+}
+
+.recent-match-card.is-win .score-value {
+  color: #15803d;
+  background: transparent;
+}
+
+.recent-match-card.is-loss {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.recent-match-card.is-loss::before,
+.recent-match-card.is-loss .score-value {
+  background: #dc2626;
+}
+
+.recent-match-card.is-loss .score-value {
+  color: #b91c1c;
+  background: transparent;
+}

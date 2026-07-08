@@ -49,7 +49,7 @@
         <text class="section-note">{{teams.length}} 支</text>
       </view>
       <view class="stack" wx:if="{{teams.length}}">
-        <view class="list-card team-row" wx:for="{{teams}}" wx:key="team_id">
+        <view class="list-card team-row tap-card" hover-class="tap-card-hover" wx:for="{{teams}}" wx:key="team_id" data-team-id="{{item.team_id}}" bindtap="openTeamDetail">
           <text class="rank">{{item.rank}}</text>
           <image wx:if="{{item.logoUrl}}" class="logo" src="{{item.logoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onTeamImageError"></image>
           <view wx:else class="logo image-placeholder"></view>
@@ -61,6 +61,7 @@
             <text class="score-value">{{item.points_total}}</text>
             <text class="score-label">积分</text>
           </view>
+          <text class="tap-cue">›</text>
         </view>
       </view>
       <view class="empty-card" wx:else>

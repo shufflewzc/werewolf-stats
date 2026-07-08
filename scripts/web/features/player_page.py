@@ -1285,6 +1285,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
         },
         "roles": roles,
         "recent_matches": history[:6],
+        "achievements": build_player_achievement_tags(detail, row, player_id),
         "season_stats": detail["season_stats"],
         "dimension": dimension,
         "competition_stats": detail["competition_stats"],

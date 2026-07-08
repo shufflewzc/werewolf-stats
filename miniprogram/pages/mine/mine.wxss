@@ -181,3 +181,110 @@
 .quick-actions {
   margin-top: 22rpx;
 }
+
+.achievement-panel {
+  margin-top: 24rpx;
+  padding-top: 22rpx;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.compact-head {
+  margin-bottom: 14rpx;
+}
+
+.achievement-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+}
+
+.achievement-card {
+  min-height: 164rpx;
+  padding: 18rpx;
+  border: 1rpx solid #dbeafe;
+  border-radius: 14rpx;
+  box-sizing: border-box;
+  background: #f8fbff;
+}
+
+.achievement-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10rpx;
+}
+
+.achievement-code,
+.achievement-tier,
+.achievement-title,
+.achievement-copy,
+.achievement-meta {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.achievement-code {
+  max-width: 128rpx;
+  font-size: 20rpx;
+  font-weight: 800;
+  color: #2563eb;
+}
+
+.achievement-tier {
+  flex: 0 0 auto;
+  padding: 4rpx 10rpx;
+  border-radius: 999rpx;
+  font-size: 19rpx;
+  font-weight: 800;
+  color: #1d4ed8;
+  background: #dbeafe;
+}
+
+.achievement-title {
+  margin-top: 12rpx;
+  font-size: 26rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.achievement-copy {
+  margin-top: 8rpx;
+  font-size: 21rpx;
+  color: #475569;
+}
+
+.achievement-meta {
+  margin-top: 8rpx;
+  font-size: 20rpx;
+  color: #64748b;
+}
+
+.achievement-card.tier-legend,
+.achievement-card.tier-gold {
+  border-color: #facc15;
+  background: #fffbeb;
+}
+
+.achievement-card.tier-legend .achievement-code,
+.achievement-card.tier-gold .achievement-code,
+.achievement-card.tier-legend .achievement-tier,
+.achievement-card.tier-gold .achievement-tier {
+  color: #92400e;
+}
+
+.achievement-card.tier-legend .achievement-tier,
+.achievement-card.tier-gold .achievement-tier {
+  background: #fef3c7;
+}
+
+.achievement-card.tier-silver {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+}
+
+.achievement-card.tier-bronze {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}

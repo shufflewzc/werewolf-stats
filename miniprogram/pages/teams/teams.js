@@ -64,5 +64,13 @@ Page({
       return;
     }
     this.setData({ [`teams[${index}].logoUrl`]: "" });
+  },
+
+  openTeamDetail(event) {
+    const teamId = event.currentTarget.dataset.teamId;
+    if (!teamId) {
+      return;
+    }
+    wx.navigateTo({ url: `/pages/team-detail/team-detail?team_id=${encodeURIComponent(teamId)}` });
   }
 });

@@ -154,7 +154,7 @@
         </view>
       </view>
       <view class="stack" wx:if="{{leaderboardRows.length}}">
-        <view class="list-card {{item.type === 'team' ? '' : 'tap-card'}}" hover-class="{{item.type === 'team' ? 'none' : 'tap-card-hover'}}" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
+        <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">
             <text class="list-title">{{item.title}}</text>
@@ -164,7 +164,7 @@
             <text class="score-value">{{item.value}}</text>
             <text class="score-label">{{item.valueLabel}}</text>
           </view>
-          <text wx:if="{{item.type !== 'team'}}" class="tap-cue">›</text>
+          <text class="tap-cue">›</text>
         </view>
       </view>
       <view class="empty-card" wx:else>

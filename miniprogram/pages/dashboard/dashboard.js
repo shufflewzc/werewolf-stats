@@ -386,6 +386,10 @@ Page({
     }
     if (row.type === "player") {
       wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(row.id)}` });
+      return;
+    }
+    if (row.type === "team") {
+      wx.navigateTo({ url: `/pages/team-detail/team-detail?team_id=${encodeURIComponent(row.id)}` });
     }
   },
 

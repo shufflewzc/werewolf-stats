@@ -1,0 +1,115 @@
+const { request, assetUrl } = require("../../utils/api");
+const { take } = require("../../utils/format");
+const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+
+function decorateMatch(item) {
+  const isWin = item.result === "胜" || item.result === "win";
+  const isLoss = item.result === "负" || item.result === "loss";
+  return {
+    ...item,
+    resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral")
+  };
+}
+
+Page({
+  data: {
+    loading: true,
+    error: "",
+    teamId: "",
+    selectedScope: null,
+    needsCompetition: false,
+    team: {},
+    metrics: [],
+    insights: {},
+    roster: [],
+    matches: []
+  },
+
+  onLoad(options) {
+    this.setData({ teamId: decodeURIComponent(options.team_id || "") });
+    this.loadData();
+  },
+
+  onPullDownRefresh() {
+    this.loadData().finally(() => wx.stopPullDownRefresh());
+  },
+
+  async loadData() {
+    const teamId = this.data.teamId;
+    if (!teamId) {
+      this.setData({ loading: false, error: "缺少战队 ID" });
+      return;
+    }
+
+    this.setData({ loading: true, error: "" });
+    try {
+      const selectedScope = getRequiredScope();
+      if (!selectedScope) {
+        this.setData(needsCompetitionState({
+          team: {},
+          metrics: [],
+          insights: {},
+          roster: [],
+          matches: []
+        }));
+        return;
+      }
+      const payload = await request(`/api/teams/${encodeURIComponent(teamId)}`, scopeParams(selectedScope));
+      const team = payload.team || {};
+      wx.setNavigationBarTitle({ title: team.short_name || team.name || "战队详情" });
+      this.setData({
+        loading: false,
+        selectedScope,
+        needsCompetition: false,
+        team: {
+          ...team,
+          logoUrl: assetUrl(team.logo)
+        },
+        metrics: take(payload.metrics, 6),
+        insights: payload.insights || {},
+        roster: take(payload.roster, 12).map((player) => ({
+          ...player,
+          photoUrl: assetUrl(player.photo)
+        })),
+        matches: take(payload.matches, 8).map(decorateMatch)
+      });
+    } catch (error) {
+      this.setData({
+        loading: false,
+        error: error.message || "战队详情加载失败"
+      });
+    }
+  },
+
+  changeCompetition() {
+    goCompetitions();
+  },
+
+  goTeams() {
+    wx.switchTab({ url: "/pages/guilds/guilds" });
+  },
+
+  goCompetitions() {
+    goCompetitions();
+  },
+
+  openPlayer(event) {
+    const playerId = event.currentTarget.dataset.playerId;
+    if (!playerId) {
+      return;
+    }
+    wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
+  },
+
+  onTeamImageError() {
+    this.setData({ "team.logoUrl": "" });
+  },
+
+  onPlayerImageError(event) {
+    const index = Number(event.currentTarget.dataset.index);
+    if (!Number.isFinite(index)) {
+      return;
+    }
+    this.setData({ [`roster[${index}].photoUrl`]: "" });
+  }
+});

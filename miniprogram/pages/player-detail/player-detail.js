@@ -42,6 +42,17 @@ function buildSummaryCards(payload, normalizedDimension) {
   ];
 }
 
+function decorateRecentMatch(item) {
+  const result = String((item && (item.result_label || item.result)) || "");
+  const isWin = result === "胜" || result === "win";
+  const isLoss = result === "负" || result === "loss";
+  return {
+    ...item,
+    resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral"),
+    resultText: item.result_label || (isWin ? "胜" : (isLoss ? "负" : item.result || "--"))
+  };
+}
+
 Page({
   data: {
     loading: true,
@@ -115,7 +126,7 @@ Page({
         insights: payload.insights || {},
         summaryCards,
         roles: take(payload.roles, 8),
-        recentMatches: take(payload.recent_matches, 6),
+        recentMatches: take(payload.recent_matches, 6).map(decorateRecentMatch),
         dimension: normalizedDimension,
         dimensionAvailable: Boolean(normalizedDimension.available)
       });

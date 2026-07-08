@@ -156,10 +156,10 @@
         <text class="section-title">最近比赛</text>
       </view>
       <view class="stack">
-        <view class="list-card" wx:for="{{recentMatches}}" wx:key="match_id">
+        <view class="list-card recent-match-card {{item.resultClass}}" wx:for="{{recentMatches}}" wx:key="match_id">
           <view class="list-main">
             <text class="list-title">{{item.played_on}} · 第{{item.round}}轮第{{item.game_no}}局</text>
-            <text class="list-meta">{{item.role}} · {{item.result_label || item.result}} · {{item.competition_name}}</text>
+            <text class="list-meta">{{item.role}} · {{item.resultText}} · {{item.competition_name}}</text>
           </view>
           <view class="list-score">
             <text class="score-value">{{item.points_earned}}</text>

@@ -31,6 +31,7 @@ from wsgiref.simple_server import make_server
 
 sys.modules.setdefault("web_app", sys.modules[__name__])
 
+from db_runtime import database_backend, database_url
 from generate_stats import (
     build_player_details,
     build_player_rows,
@@ -383,7 +384,7 @@ IMAGE_SIGNATURES = {
 }
 VALIDATED_DATA_CACHE_LOCK = threading.RLock()
 VALIDATED_DATA_CACHE: dict[str, Any] = {
-    "db_mtime_ns": None,
+    "db_signature": None,
     "cached_at": 0.0,
     "data": None,
 }
@@ -1250,16 +1251,18 @@ def render_ai_daily_brief_html(content: str) -> str:
     return render_markdown_html(content)
 
 
-def get_database_mtime_ns() -> int | None:
+def get_database_cache_signature() -> tuple[str, int | str] | None:
+    if database_backend() == "postgres":
+        return ("postgres", database_url())
     try:
-        return DB_PATH.stat().st_mtime_ns
+        return ("sqlite", DB_PATH.stat().st_mtime_ns)
     except FileNotFoundError:
         return None
 
 
 def invalidate_validated_data_cache() -> None:
     with VALIDATED_DATA_CACHE_LOCK:
-        VALIDATED_DATA_CACHE["db_mtime_ns"] = None
+        VALIDATED_DATA_CACHE["db_signature"] = None
         VALIDATED_DATA_CACHE["cached_at"] = 0.0
         VALIDATED_DATA_CACHE["data"] = None
     invalidate_prediction_api_cache()
@@ -1323,14 +1326,14 @@ def get_prediction_api_cache_metrics() -> dict[str, Any]:
 
 
 def get_cached_validated_data() -> dict[str, Any] | None:
-    current_mtime_ns = get_database_mtime_ns()
-    if current_mtime_ns is None:
+    current_signature = get_database_cache_signature()
+    if current_signature is None:
         return None
     with VALIDATED_DATA_CACHE_LOCK:
         cached_data = VALIDATED_DATA_CACHE["data"]
         if cached_data is None:
             return None
-        if VALIDATED_DATA_CACHE["db_mtime_ns"] != current_mtime_ns:
+        if VALIDATED_DATA_CACHE.get("db_signature") != current_signature:
             return None
         if (
             VALIDATED_DATA_CACHE_TTL_SECONDS > 0
@@ -1342,9 +1345,9 @@ def get_cached_validated_data() -> dict[str, Any] | None:
 
 
 def set_cached_validated_data(data: dict[str, Any]) -> None:
-    current_mtime_ns = get_database_mtime_ns()
+    current_signature = get_database_cache_signature()
     with VALIDATED_DATA_CACHE_LOCK:
-        VALIDATED_DATA_CACHE["db_mtime_ns"] = current_mtime_ns
+        VALIDATED_DATA_CACHE["db_signature"] = current_signature
         VALIDATED_DATA_CACHE["cached_at"] = time.monotonic()
         VALIDATED_DATA_CACHE["data"] = deepcopy(data)
 

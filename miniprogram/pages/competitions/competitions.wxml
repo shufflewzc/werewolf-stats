@@ -55,20 +55,6 @@
               <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
             </view>
           </picker>
-          <view class="card-stats">
-            <view>
-              <text class="stat-value">{{item.team_count || 0}}</text>
-              <text class="stat-label">战队</text>
-            </view>
-            <view>
-              <text class="stat-value">{{item.player_count || 0}}</text>
-              <text class="stat-label">选手</text>
-            </view>
-            <view>
-              <text class="stat-value">{{item.match_count || 0}}</text>
-              <text class="stat-label">对局</text>
-            </view>
-          </view>
           <button class="enter-label" data-index="{{index}}" bindtap="chooseCompetition">{{item.enterText}}</button>
         </view>
       </view>

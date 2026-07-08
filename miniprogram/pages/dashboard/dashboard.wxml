@@ -42,9 +42,6 @@
               </view>
             </picker>
           </view>
-          <view class="choice-stats">
-            <text>{{item.match_count || 0}} 场</text>
-          </view>
           <button class="choice-enter" data-index="{{index}}" bindtap="chooseCompetition">进入</button>
         </view>
       </view>

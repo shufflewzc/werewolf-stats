@@ -455,10 +455,13 @@ def check_ops_api() -> None:
         payload = json.loads(body)
     finally:
         delete_session(session_token)
-    assert_json_keys(payload, ["ok", "health", "rates", "overview", "prediction_cache"], "/api/ops")
+    assert_json_keys(payload, ["ok", "health", "rates", "overview", "prediction_cache", "public_api_cache"], "/api/ops")
     health = payload.get("health") if isinstance(payload.get("health"), dict) else {}
     if "score" not in health or "level" not in health:
         raise ReleaseCheckError("/api/ops health 缺少 score 或 level")
+    public_cache = payload.get("public_api_cache") if isinstance(payload.get("public_api_cache"), dict) else {}
+    if "enabled" not in public_cache or "hit_rate" not in public_cache:
+        raise ReleaseCheckError("/api/ops public_api_cache 缺少 enabled 或 hit_rate")
 
 
 def check_request_rate_limit() -> None:

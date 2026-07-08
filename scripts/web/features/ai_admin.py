@@ -217,6 +217,7 @@ def _ops_health_status(
     error_rate: float,
     slow_rate: float,
     cache_metrics: dict,
+    public_cache_metrics: dict,
     schema_error: str = "",
 ) -> dict[str, object]:
     issues: list[dict[str, str]] = []
@@ -244,6 +245,14 @@ def _ops_health_status(
     if not cache_metrics.get("enabled"):
         score -= 8
         issues.append({"level": "warning", "title": "预测缓存已关闭", "copy": "胜率预测会直接走实时计算，建议只在排障时关闭。"})
+    public_cache_reads = int(public_cache_metrics.get("hits") or 0) + int(public_cache_metrics.get("misses") or 0)
+    public_cache_hit_rate = float(public_cache_metrics.get("hit_rate") or 0.0)
+    if public_cache_metrics.get("enabled") and public_cache_reads >= 20 and public_cache_hit_rate < 0.50:
+        score -= 10
+        issues.append({"level": "warning", "title": "公共 API 缓存命中率偏低", "copy": f"当前命中率 {_format_rate(public_cache_hit_rate)}，建议检查是否频繁重启、频繁失效或请求参数过散。"})
+    if not public_cache_metrics.get("enabled"):
+        score -= 12
+        issues.append({"level": "warning", "title": "公共 API 缓存已关闭", "copy": "小程序高频接口会直接实时聚合，线上建议开启。"})
     score = max(0, min(100, score))
     if score >= 90:
         label = "健康"
@@ -306,6 +315,7 @@ def build_ops_payload() -> dict:
         }
         schema_error = str(exc)
     cache_metrics = legacy.get_prediction_api_cache_metrics()
+    public_cache_metrics = legacy.get_public_api_cache_metrics()
     api_total = max(1, int(overview.get("api_total") or 0))
     error_rate = int(overview.get("api_error_count") or 0) / api_total
     slow_rate = int(overview.get("api_slow_count") or 0) / api_total
@@ -313,6 +323,7 @@ def build_ops_payload() -> dict:
         error_rate=error_rate,
         slow_rate=slow_rate,
         cache_metrics=cache_metrics,
+        public_cache_metrics=public_cache_metrics,
         schema_error=schema_error,
     )
     return {
@@ -324,6 +335,7 @@ def build_ops_payload() -> dict:
         },
         "overview": overview,
         "prediction_cache": cache_metrics,
+        "public_api_cache": public_cache_metrics,
         "schema_error": schema_error,
     }
 
@@ -332,11 +344,13 @@ def get_ops_page(ctx: RequestContext, alert: str = "") -> str:
     payload = build_ops_payload()
     overview = payload["overview"]
     cache_metrics = payload["prediction_cache"]
+    public_cache_metrics = payload["public_api_cache"]
     error_rate = float(payload["rates"]["error_rate"])
     slow_rate = float(payload["rates"]["slow_rate"])
     health = payload["health"]
     schema_error = str(payload.get("schema_error") or "")
     cache_status = "已开启" if cache_metrics.get("enabled") else "已关闭"
+    public_cache_status = "已开启" if public_cache_metrics.get("enabled") else "已关闭"
     api_path_rows = _render_api_path_rows(overview.get("api_paths", []))
     problem_rows = _render_access_log_rows(
         overview.get("recent_problem_logs", []),
@@ -406,6 +420,8 @@ def get_ops_page(ctx: RequestContext, alert: str = "") -> str:
       {_stat_card("API 错误率", _format_rate(error_rate), f"错误请求 {overview.get('api_error_count') or 0} 次。")}
       {_stat_card("API 慢请求率", _format_rate(slow_rate), f"慢请求 {overview.get('api_slow_count') or 0} 次，阈值 1000ms。")}
       {_stat_card("API 平均耗时", _duration_text(int(overview.get("api_avg_duration_ms") or 0)), f"最大耗时 {_duration_text(int(overview.get('api_max_duration_ms') or 0))}。")}
+      {_stat_card("公共 API 缓存", public_cache_status, f"{public_cache_metrics.get('entries') or 0}/{public_cache_metrics.get('max_entries') or 0} 条，TTL {public_cache_metrics.get('ttl_seconds') or 0}s。")}
+      {_stat_card("公共缓存命中率", _format_rate(float(public_cache_metrics.get("hit_rate") or 0.0)), f"命中 {public_cache_metrics.get('hits') or 0}，未命中 {public_cache_metrics.get('misses') or 0}。")}
       {_stat_card("预测缓存", cache_status, f"{cache_metrics.get('entries') or 0}/{cache_metrics.get('max_entries') or 0} 条，TTL {cache_metrics.get('ttl_seconds') or 0}s。")}
       {_stat_card("预测缓存命中率", _format_rate(float(cache_metrics.get("hit_rate") or 0.0)), f"命中 {cache_metrics.get('hits') or 0}，未命中 {cache_metrics.get('misses') or 0}。")}
     </section>

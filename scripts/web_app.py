@@ -390,9 +390,19 @@ VALIDATED_DATA_CACHE: dict[str, Any] = {
 }
 PREDICTION_API_CACHE_TTL_SECONDS = int(os.getenv("PREDICTION_API_CACHE_TTL_SECONDS", "120"))
 PREDICTION_API_CACHE_MAX_ENTRIES = int(os.getenv("PREDICTION_API_CACHE_MAX_ENTRIES", "80"))
+PUBLIC_API_CACHE_TTL_SECONDS = int(os.getenv("PUBLIC_API_CACHE_TTL_SECONDS", "30"))
+PUBLIC_API_CACHE_MAX_ENTRIES = int(os.getenv("PUBLIC_API_CACHE_MAX_ENTRIES", "300"))
 PREDICTION_API_CACHE_LOCK = threading.RLock()
 PREDICTION_API_CACHE: dict[tuple[str, ...], dict[str, Any]] = {}
 PREDICTION_API_CACHE_METRICS: dict[str, int] = {
+    "hits": 0,
+    "misses": 0,
+    "sets": 0,
+    "invalidations": 0,
+}
+PUBLIC_API_CACHE_LOCK = threading.RLock()
+PUBLIC_API_CACHE: dict[tuple[Any, ...], dict[str, Any]] = {}
+PUBLIC_API_CACHE_METRICS: dict[str, int] = {
     "hits": 0,
     "misses": 0,
     "sets": 0,
@@ -1266,12 +1276,108 @@ def invalidate_validated_data_cache() -> None:
         VALIDATED_DATA_CACHE["cached_at"] = 0.0
         VALIDATED_DATA_CACHE["data"] = None
     invalidate_prediction_api_cache()
+    invalidate_public_api_cache()
 
 
 def invalidate_prediction_api_cache() -> None:
     with PREDICTION_API_CACHE_LOCK:
         PREDICTION_API_CACHE.clear()
         PREDICTION_API_CACHE_METRICS["invalidations"] += 1
+
+
+def invalidate_public_api_cache() -> None:
+    with PUBLIC_API_CACHE_LOCK:
+        PUBLIC_API_CACHE.clear()
+        PUBLIC_API_CACHE_METRICS["invalidations"] += 1
+
+
+def build_public_api_cache_key(ctx: RequestContext, *parts: Any) -> tuple[Any, ...] | None:
+    signature = get_database_cache_signature()
+    if signature is None:
+        return None
+    query_items: list[tuple[str, str]] = []
+    for key, values in sorted(ctx.query.items()):
+        for value in values:
+            query_items.append((key, value))
+    return (
+        signature,
+        ctx.method,
+        ctx.path,
+        urlencode(query_items),
+        *parts,
+    )
+
+
+def get_public_api_cache(cache_key: tuple[Any, ...] | None) -> tuple[str, bytes] | None:
+    if PUBLIC_API_CACHE_TTL_SECONDS <= 0 or cache_key is None:
+        return None
+    with PUBLIC_API_CACHE_LOCK:
+        cached = PUBLIC_API_CACHE.get(cache_key)
+        if not cached:
+            PUBLIC_API_CACHE_METRICS["misses"] += 1
+            return None
+        if time.monotonic() - float(cached.get("cached_at") or 0.0) > PUBLIC_API_CACHE_TTL_SECONDS:
+            PUBLIC_API_CACHE.pop(cache_key, None)
+            PUBLIC_API_CACHE_METRICS["misses"] += 1
+            return None
+        PUBLIC_API_CACHE_METRICS["hits"] += 1
+        return str(cached["status"]), bytes(cached["body"])
+
+
+def set_public_api_cache(cache_key: tuple[Any, ...] | None, status: str, body: bytes) -> None:
+    if PUBLIC_API_CACHE_TTL_SECONDS <= 0 or cache_key is None:
+        return
+    with PUBLIC_API_CACHE_LOCK:
+        if len(PUBLIC_API_CACHE) >= max(1, PUBLIC_API_CACHE_MAX_ENTRIES):
+            oldest_key = min(
+                PUBLIC_API_CACHE,
+                key=lambda key: float(PUBLIC_API_CACHE[key].get("cached_at") or 0.0),
+            )
+            PUBLIC_API_CACHE.pop(oldest_key, None)
+        PUBLIC_API_CACHE[cache_key] = {
+            "cached_at": time.monotonic(),
+            "status": status,
+            "body": body,
+        }
+        PUBLIC_API_CACHE_METRICS["sets"] += 1
+
+
+def start_response_json_bytes(
+    start_response,
+    status: str,
+    body: bytes,
+    headers: list[tuple[str, str]] | None = None,
+    request_id: str = "",
+):
+    extra_headers = with_request_id_header(headers, request_id)
+    start_response(
+        status,
+        [
+            ("Content-Type", "application/json; charset=utf-8"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "no-store"),
+        ] + extra_headers,
+    )
+    return [body]
+
+
+def start_cached_public_api_json(
+    ctx: RequestContext,
+    start_response,
+    cache_key: tuple[Any, ...] | None,
+    payload_builder,
+    *,
+    status_builder=None,
+):
+    cached = get_public_api_cache(cache_key)
+    if cached is not None:
+        status, body = cached
+        return start_response_json_bytes(start_response, status, body)
+    payload = payload_builder()
+    status = status_builder(payload) if status_builder else "200 OK"
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    set_public_api_cache(cache_key, status, body)
+    return start_response_json_bytes(start_response, status, body)
 
 
 def get_prediction_api_cache(cache_key: tuple[str, ...]) -> dict[str, Any] | None:
@@ -1321,6 +1427,24 @@ def get_prediction_api_cache_metrics() -> dict[str, Any]:
             "misses": misses,
             "sets": int(PREDICTION_API_CACHE_METRICS.get("sets") or 0),
             "invalidations": int(PREDICTION_API_CACHE_METRICS.get("invalidations") or 0),
+            "hit_rate": safe_rate(hits, total_reads),
+        }
+
+
+def get_public_api_cache_metrics() -> dict[str, Any]:
+    with PUBLIC_API_CACHE_LOCK:
+        hits = int(PUBLIC_API_CACHE_METRICS.get("hits") or 0)
+        misses = int(PUBLIC_API_CACHE_METRICS.get("misses") or 0)
+        total_reads = hits + misses
+        return {
+            "enabled": PUBLIC_API_CACHE_TTL_SECONDS > 0,
+            "ttl_seconds": PUBLIC_API_CACHE_TTL_SECONDS,
+            "max_entries": PUBLIC_API_CACHE_MAX_ENTRIES,
+            "entries": len(PUBLIC_API_CACHE),
+            "hits": hits,
+            "misses": misses,
+            "sets": int(PUBLIC_API_CACHE_METRICS.get("sets") or 0),
+            "invalidations": int(PUBLIC_API_CACHE_METRICS.get("invalidations") or 0),
             "hit_rate": safe_rate(hits, total_reads),
         }
 
@@ -8693,10 +8817,11 @@ def handle_dashboard_api(ctx: RequestContext, start_response):
             {"error": "dashboard api only supports GET"},
             headers=[("Allow", "GET")],
         )
-    return start_response_json(
+    return start_cached_public_api_json(
+        ctx,
         start_response,
-        "200 OK",
-        build_dashboard_api_payload(ctx),
+        build_public_api_cache_key(ctx, "dashboard"),
+        lambda: build_dashboard_api_payload(ctx),
     )
 
 
@@ -9845,9 +9970,31 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
 
 
 def handle_match_day_api(ctx: RequestContext, start_response, played_on: str):
-    from web.features.competitions import handle_match_day_api as impl
+    from web.features.competitions import _build_match_day_scope, build_match_day_api_payload
 
-    return impl(ctx, start_response, played_on)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "match day api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    cache_key = build_public_api_cache_key(ctx, "match_day", played_on)
+    cached = get_public_api_cache(cache_key)
+    if cached is not None:
+        status, body = cached
+        return start_response_json_bytes(start_response, status, body)
+    scope, error_message = _build_match_day_scope(ctx, played_on)
+    if not scope:
+        return start_response_json(
+            start_response,
+            "404 Not Found",
+            {"error": error_message, "alert": form_value(ctx.query, "alert").strip()},
+        )
+    payload = build_match_day_api_payload(ctx, played_on, scope)
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    set_public_api_cache(cache_key, "200 OK", body)
+    return start_response_json_bytes(start_response, "200 OK", body)
 
 
 def get_teams_page(ctx: RequestContext) -> str:
@@ -10838,15 +10985,33 @@ def get_team_legacy_page(ctx: RequestContext, team_id: str, alert: str = "") -> 
 
 
 def handle_team_api(ctx: RequestContext, start_response, team_id: str):
-    from web.features.team_page import handle_team_api as impl
+    from web.features.team_page import build_team_api_payload
 
-    return impl(ctx, start_response, team_id)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "team api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "team", team_id),
+        lambda: build_team_api_payload(ctx, team_id),
+        status_builder=lambda payload: "404 Not Found" if payload.get("not_found") else "200 OK",
+    )
 
 
 def handle_teams_api(ctx: RequestContext, start_response):
-    from web.features.competitions import handle_teams_api as impl
+    from web.features.competitions import build_teams_api_payload
 
-    return impl(ctx, start_response)
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "teams"),
+        lambda: build_teams_api_payload(ctx),
+    )
 
 
 def get_players_frontend_page(ctx: RequestContext) -> str:
@@ -10856,9 +11021,21 @@ def get_players_frontend_page(ctx: RequestContext) -> str:
 
 
 def handle_players_api(ctx: RequestContext, start_response):
-    from web.features.player_page import handle_players_api as impl
+    from web.features.player_page import build_players_api_payload
 
-    return impl(ctx, start_response)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "players api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "players"),
+        lambda: build_players_api_payload(ctx),
+    )
 
 
 def get_player_frontend_page(ctx: RequestContext, player_id: str) -> str:
@@ -10874,9 +11051,22 @@ def get_player_legacy_page(ctx: RequestContext, player_id: str, alert: str = "")
 
 
 def handle_player_api(ctx: RequestContext, start_response, player_id: str):
-    from web.features.player_page import handle_player_api as impl
+    from web.features.player_page import build_player_api_payload
 
-    return impl(ctx, start_response, player_id)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "player api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "player", player_id),
+        lambda: build_player_api_payload(ctx, player_id),
+        status_builder=lambda payload: "404 Not Found" if payload.get("not_found") else "200 OK",
+    )
 
 
 def handle_competitions(ctx: RequestContext, start_response):
@@ -10886,9 +11076,21 @@ def handle_competitions(ctx: RequestContext, start_response):
 
 
 def handle_competitions_api(ctx: RequestContext, start_response):
-    from web.features.competitions import handle_competitions_api as impl
+    from web.features.competitions import build_competitions_api_payload
 
-    return impl(ctx, start_response)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "competitions api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "competitions"),
+        lambda: build_competitions_api_payload(ctx),
+    )
 
 
 def handle_ai_analysis(ctx: RequestContext, start_response):
@@ -10898,9 +11100,28 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
 
 
 def handle_series_api(ctx: RequestContext, start_response, series_slug: str):
-    from web.features.competitions import handle_series_api as impl
+    from web.features.competitions import _build_series_scope, build_series_api_payload
 
-    return impl(ctx, start_response, series_slug)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "series api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    scope, error_message = _build_series_scope(ctx, series_slug)
+    if not scope:
+        return start_response_json(
+            start_response,
+            "404 Not Found",
+            {"error": error_message, "alert": form_value(ctx.query, "alert").strip()},
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "series", series_slug),
+        lambda: build_series_api_payload(ctx, series_slug, scope),
+    )
 
 
 def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[str, Any]) -> dict[str, Any]:
@@ -13156,9 +13377,21 @@ def handle_guilds(ctx: RequestContext, start_response):
 
 
 def handle_guilds_api(ctx: RequestContext, start_response):
-    from web.features.guilds import handle_guilds_api as impl
+    from web.features.guilds import build_guilds_api_payload
 
-    return impl(ctx, start_response)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "guilds api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "guilds"),
+        lambda: build_guilds_api_payload(ctx),
+    )
 
 
 def get_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
@@ -13174,9 +13407,22 @@ def get_guild_legacy_page(ctx: RequestContext, guild_id: str, alert: str = "") -
 
 
 def handle_guild_api(ctx: RequestContext, start_response, guild_id: str):
-    from web.features.guilds import handle_guild_api as impl
+    from web.features.guilds import build_guild_api_payload
 
-    return impl(ctx, start_response, guild_id)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "guild api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "guild", guild_id),
+        lambda: build_guild_api_payload(ctx, guild_id),
+        status_builder=lambda payload: "404 Not Found" if payload.get("not_found") else "200 OK",
+    )
 
 
 def handle_guild_page(ctx: RequestContext, start_response, guild_id: str):
@@ -16401,9 +16647,22 @@ def get_match_legacy_page(ctx: RequestContext, match_id: str) -> str:
 
 
 def handle_match_api(ctx: RequestContext, start_response, match_id: str):
-    from web.features.match_page import handle_match_api as impl
+    from web.features.match_page import build_match_api_payload
 
-    return impl(ctx, start_response, match_id)
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "match api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "match", match_id),
+        lambda: build_match_api_payload(ctx, match_id),
+        status_builder=lambda payload: "404 Not Found" if payload.get("not_found") else "200 OK",
+    )
 
 
 def parse_api_pagination(ctx: RequestContext, *, default_limit: int = 0, max_limit: int = 100) -> tuple[int, int] | None:

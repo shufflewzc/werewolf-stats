@@ -1,5 +1,20 @@
 const { bindPlayer, getCurrentUser, searchPlayers } = require("../../utils/auth");
 
+function boundPlayersFromUser(user) {
+  const explicitPlayers = Array.isArray(user && user.bound_players) ? user.bound_players : [];
+  if (explicitPlayers.length) {
+    return explicitPlayers;
+  }
+  const ids = []
+    .concat(user && user.player_id ? [user.player_id] : [])
+    .concat(Array.isArray(user && user.linked_player_ids) ? user.linked_player_ids : [])
+    .filter((item, index, list) => item && list.indexOf(item) === index);
+  return ids.map((playerId) => ({
+    player_id: playerId,
+    display_name: playerId
+  }));
+}
+
 Page({
   data: {
     loading: false,
@@ -7,14 +22,16 @@ Page({
     keyword: "",
     players: [],
     user: null,
-    boundPlayerId: ""
+    boundPlayerId: "",
+    boundPlayers: []
   },
 
   onShow() {
     const user = getCurrentUser();
     this.setData({
       user,
-      boundPlayerId: user && user.player_id ? user.player_id : ""
+      boundPlayerId: user && user.player_id ? user.player_id : "",
+      boundPlayers: boundPlayersFromUser(user)
     });
   },
 
@@ -55,6 +72,7 @@ Page({
         loading: false,
         user,
         boundPlayerId: user && user.player_id ? user.player_id : playerId,
+        boundPlayers: boundPlayersFromUser(user),
         players
       });
       wx.showToast({ title: "绑定成功", icon: "success" });

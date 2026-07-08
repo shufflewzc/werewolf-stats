@@ -11,11 +11,17 @@ const {
 
 function decorateCompetitionChoice(card) {
   const seasons = Array.isArray(card.seasons) ? card.seasons : [];
+  const selectedSeason = seasons[0] || "";
+  const seasonStats = (card.season_stats && card.season_stats[selectedSeason]) || {};
   return {
     ...card,
     seasons,
-    selectedSeason: seasons[0] || "",
+    selectedSeason,
     selectedSeasonIndex: 0,
+    team_count: Number(seasonStats.team_count !== undefined ? seasonStats.team_count : card.team_count || 0),
+    player_count: Number(seasonStats.player_count !== undefined ? seasonStats.player_count : card.player_count || 0),
+    match_count: Number(seasonStats.match_count !== undefined ? seasonStats.match_count : card.match_count || 0),
+    latest_played_on: seasonStats.latest_played_on || card.latest_played_on,
     hasMultipleSeasons: seasons.length > 1
   };
 }
@@ -328,9 +334,15 @@ Page({
     if (!card) {
       return;
     }
+    const selectedSeason = card.seasons[seasonIndex] || "";
+    const seasonStats = (card.season_stats && card.season_stats[selectedSeason]) || {};
     this.setData({
       [`competitions[${index}].selectedSeasonIndex`]: seasonIndex,
-      [`competitions[${index}].selectedSeason`]: card.seasons[seasonIndex] || ""
+      [`competitions[${index}].selectedSeason`]: selectedSeason,
+      [`competitions[${index}].team_count`]: Number(seasonStats.team_count !== undefined ? seasonStats.team_count : card.team_count || 0),
+      [`competitions[${index}].player_count`]: Number(seasonStats.player_count !== undefined ? seasonStats.player_count : card.player_count || 0),
+      [`competitions[${index}].match_count`]: Number(seasonStats.match_count !== undefined ? seasonStats.match_count : card.match_count || 0),
+      [`competitions[${index}].latest_played_on`]: seasonStats.latest_played_on || card.latest_played_on
     });
   },
 

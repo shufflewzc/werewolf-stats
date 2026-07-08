@@ -742,6 +742,7 @@ def _serialize_competition_card(row: dict[str, Any]) -> dict[str, Any]:
         "team_count": int(row["team_count"]),
         "player_count": int(row["player_count"]),
         "match_count": int(row["match_count"]),
+        "season_stats": row.get("season_stats") or {},
         "topic_href": build_series_topic_path(row["series_slug"]),
         "competition_href": build_scoped_path(
             "/competitions",

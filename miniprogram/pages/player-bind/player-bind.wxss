@@ -41,6 +41,26 @@
   color: #0f172a;
 }
 
+.bind-current-list {
+  margin-top: 8rpx;
+}
+
+.bind-current-item {
+  padding: 10rpx 0;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.bind-current-item:first-child {
+  border-top: 0;
+}
+
+.bind-current-id {
+  display: block;
+  margin-top: 4rpx;
+  font-size: 21rpx;
+  color: #64748b;
+}
+
 .player-card {
   display: flex;
   align-items: center;

@@ -1915,6 +1915,7 @@ def build_competition_catalog_rows(
             "player_count": int(stats.get("player_count", 0)),
             "latest_played_on": str(stats.get("latest_played_on", "")),
             "seasons": list(stats.get("seasons", [])),
+            "season_stats": dict(stats.get("season_stats", {})),
             "season_status_rank": int(stats.get("season_status_rank", 4)),
         }
         if row["active"] or row["match_count"] > 0:
@@ -7735,6 +7736,41 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 continue
             seen_seasons.add(season_name)
             seasons.append(season_name)
+        season_stats: dict[str, dict[str, Any]] = {}
+        for season_name in seasons:
+            season_matches = [
+                match
+                for match in matches
+                if str(match.get("season") or "").strip() == season_name
+            ]
+            season_team_ids = sorted(
+                {
+                    entry["team_id"]
+                    for match in season_matches
+                    for entry in match["players"]
+                    if str(entry.get("team_id") or "").strip()
+                }
+                | {
+                    team["team_id"]
+                    for team in data["teams"]
+                    if str(team.get("competition_name") or "").strip() == competition_name
+                    and str(team.get("season_name") or "").strip() == season_name
+                }
+            )
+            season_player_ids = sorted(
+                {
+                    entry["player_id"]
+                    for match in season_matches
+                    for entry in match["players"]
+                    if str(entry.get("player_id") or "").strip()
+                }
+            )
+            season_stats[season_name] = {
+                "match_count": len(season_matches),
+                "team_count": len(season_team_ids),
+                "player_count": len(season_player_ids),
+                "latest_played_on": get_scheduled_match_day_label(season_matches, china_today_label()),
+            }
         season_status_rank = min(
             (
                 {"ongoing": 0, "upcoming": 1, "draft": 2, "ended": 3}.get(
@@ -7753,6 +7789,7 @@ def build_competition_rows(data: dict[str, Any]) -> list[dict[str, Any]]:
                 "player_count": len(player_ids),
                 "latest_played_on": get_scheduled_match_day_label(matches, china_today_label()),
                 "seasons": seasons,
+                "season_stats": season_stats,
                 "season_status_rank": season_status_rank,
             }
         )
@@ -15593,13 +15630,41 @@ def handle_login(ctx: RequestContext, start_response):
     return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
 
 
+def build_miniprogram_bound_players(user: dict[str, Any]) -> list[dict[str, str]]:
+    bound_ids = get_user_bound_player_ids(user)
+    if not bound_ids:
+        return []
+    try:
+        data = load_validated_data()
+    except Exception:
+        data = {"players": []}
+    player_lookup = {
+        str(player.get("player_id") or ""): player
+        for player in data.get("players", [])
+    }
+    rows: list[dict[str, str]] = []
+    for player_id in bound_ids:
+        player = player_lookup.get(player_id) or {}
+        rows.append(
+            {
+                "player_id": player_id,
+                "display_name": str(player.get("display_name") or player_id),
+                "photo": str(player.get("photo") or DEFAULT_PLAYER_PHOTO),
+            }
+        )
+    return rows
+
+
 def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
+    bound_player_ids = get_user_bound_player_ids(user)
     return {
         "username": user["username"],
         "display_name": user.get("display_name") or user["username"],
         "role": user.get("role") or "member",
         "player_id": user.get("player_id") or "",
         "linked_player_ids": user.get("linked_player_ids") or [],
+        "bound_player_ids": bound_player_ids,
+        "bound_players": build_miniprogram_bound_players(user),
         "province_name": user.get("province_name") or "",
         "region_name": user.get("region_name") or "",
         "gender": user.get("gender") or "",
@@ -15837,23 +15902,8 @@ def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
     owner = get_user_by_player_id(users, player_id)
     if owner and owner["username"] != username:
         return start_response_json(start_response, "409 Conflict", {"error": "这个选手已绑定其他账号。"})
-    updated_user = user
-    updated_users = []
-    for item in users:
-        if item["username"] != username:
-            updated_users.append(item)
-            continue
-        next_user = {
-            **item,
-            "player_id": player_id,
-            "linked_player_ids": [
-                linked_id
-                for linked_id in (item.get("linked_player_ids") or [])
-                if linked_id and linked_id != player_id
-            ],
-        }
-        updated_user = next_user
-        updated_users.append(next_user)
+    updated_users = append_user_player_binding(users, username, player_id)
+    updated_user = next((item for item in updated_users if item["username"] == username), user)
     save_users(updated_users)
     return start_response_json(start_response, "200 OK", {"user": serialize_miniprogram_user(updated_user)})
 

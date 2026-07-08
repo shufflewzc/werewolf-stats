@@ -13,9 +13,14 @@
 
   <view class="section">
     <view class="search-card">
-      <view class="bind-current" wx:if="{{boundPlayerId}}">
+      <view class="bind-current" wx:if="{{boundPlayers.length}}">
         <text class="bind-current-label">当前已绑定选手</text>
-        <text class="bind-current-value">{{boundPlayerId}}</text>
+        <view class="bind-current-list">
+          <view class="bind-current-item" wx:for="{{boundPlayers}}" wx:key="player_id">
+            <text class="bind-current-value">{{item.display_name || item.player_id}}</text>
+            <text class="bind-current-id">{{item.player_id}}</text>
+          </view>
+        </view>
       </view>
       <input class="input" value="{{keyword}}" placeholder="输入中文名，例如 琛" bindinput="updateKeyword" confirm-type="search" bindconfirm="search" />
       <button class="primary-button single-button" loading="{{loading}}" bindtap="search">搜索</button>

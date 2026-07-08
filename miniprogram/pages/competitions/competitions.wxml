@@ -58,7 +58,7 @@
           <view class="card-stats">
             <view>
               <text class="stat-value">{{item.team_count || 0}}</text>
-              <text class="stat-label">门派</text>
+              <text class="stat-label">战队</text>
             </view>
             <view>
               <text class="stat-value">{{item.player_count || 0}}</text>

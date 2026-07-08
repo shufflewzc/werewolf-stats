@@ -11,6 +11,21 @@ const { getSelectedScope, scopeParams } = require("../../utils/scope");
 const GENDER_VALUES = ["prefer_not_to_say", "male", "female", "other"];
 const GENDER_LABELS = ["不便透露", "男", "女", "其他"];
 
+function boundPlayersFromUser(user) {
+  const explicitPlayers = Array.isArray(user && user.bound_players) ? user.bound_players : [];
+  if (explicitPlayers.length) {
+    return explicitPlayers;
+  }
+  const ids = []
+    .concat(user && user.player_id ? [user.player_id] : [])
+    .concat(Array.isArray(user && user.linked_player_ids) ? user.linked_player_ids : [])
+    .filter((item, index, list) => item && list.indexOf(item) === index);
+  return ids.map((playerId) => ({
+    player_id: playerId,
+    display_name: playerId
+  }));
+}
+
 Page({
   data: {
     loading: false,
@@ -29,7 +44,8 @@ Page({
     latestDay: null,
     centerStatus: "未登录",
     centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
-    boundPlayerLabel: ""
+    boundPlayerLabel: "",
+    boundPlayers: []
   },
 
   onShow() {
@@ -58,9 +74,10 @@ Page({
     let centerStatus = "未登录";
     let centerCopy = "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。";
     let boundPlayerLabel = "";
-    if (user && user.player_id) {
+    const boundPlayers = boundPlayersFromUser(user);
+    if (user && boundPlayers.length) {
       centerStatus = "已绑定选手";
-      boundPlayerLabel = user.player_id;
+      boundPlayerLabel = boundPlayers.map((player) => player.display_name || player.player_id).join("、");
       centerCopy = "可以直接进入我的选手页、比赛日详情和预测榜。";
     } else if (user) {
       centerStatus = "未绑定选手";
@@ -72,6 +89,7 @@ Page({
         latestDay: null,
         centerStatus,
         boundPlayerLabel,
+        boundPlayers,
         centerCopy: user ? "先进入一个赛事，再查看我的比赛日和选手页。" : centerCopy
       });
       return;
@@ -88,7 +106,8 @@ Page({
       latestDay,
       centerStatus,
       centerCopy,
-      boundPlayerLabel
+      boundPlayerLabel,
+      boundPlayers
     });
   },
 
@@ -112,7 +131,8 @@ Page({
       error: "",
       centerStatus: "未登录",
       centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
-      boundPlayerLabel: ""
+      boundPlayerLabel: "",
+      boundPlayers: []
     });
   },
 
@@ -230,6 +250,21 @@ Page({
     }
     wx.navigateTo({
       url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(user.player_id)}`
+    });
+  },
+
+  openBoundPlayerPage(event) {
+    const playerId = event.currentTarget.dataset.playerId;
+    if (!playerId) {
+      return;
+    }
+    const selectedScope = getSelectedScope();
+    if (!selectedScope || !selectedScope.competition) {
+      this.openMyPlayerPage();
+      return;
+    }
+    wx.navigateTo({
+      url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}`
     });
   }
 });

@@ -120,7 +120,7 @@
         <view class="list-card match-card {{item.resultClass}}" wx:for="{{matches}}" wx:key="match_id">
           <view class="list-main">
             <text class="list-title">{{item.played_on}} · 第{{item.round}}轮第{{item.game_no}}局</text>
-            <text class="list-meta">{{item.stage_label}} · {{item.result}} · {{item.winning_camp || "阵营未录入"}}</text>
+            <text class="list-meta">{{item.stage_label}} · {{item.result}} · {{item.roleSummaryText}}</text>
           </view>
           <view class="list-score">
             <text class="score-value">{{item.points}}</text>

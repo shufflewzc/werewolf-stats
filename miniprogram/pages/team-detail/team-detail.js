@@ -7,7 +7,8 @@ function decorateMatch(item) {
   const isLoss = item.result === "负" || item.result === "loss";
   return {
     ...item,
-    resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral")
+    resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral"),
+    roleSummaryText: item.role_summary || "角色未录入"
   };
 }
 

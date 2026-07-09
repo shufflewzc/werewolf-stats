@@ -46,6 +46,7 @@ resolve_team_player_ids = legacy.resolve_team_player_ids
 start_response_json = legacy.start_response_json
 summarize_team_match = legacy.summarize_team_match
 team_scope_label = legacy.team_scope_label
+to_chinese_camp = legacy.to_chinese_camp
 urlencode = legacy.urlencode
 
 
@@ -1032,6 +1033,11 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
         achievement_match_rows.append(match)
         match_points = sum(float(entry.get("points_earned") or 0) for entry in team_entries)
         match_win = any(entry.get("result") == "win" for entry in team_entries)
+        role_summary = "、".join(
+            str(entry.get("role") or "").strip()
+            for entry in sorted(team_entries, key=lambda item: int(item.get("seat") or 0))
+            if str(entry.get("role") or "").strip()
+        )
         total_points += match_points
         wins += 1 if match_win else 0
         scoped_matches.append(
@@ -1043,7 +1049,8 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
                 "round": int(match.get("round") or 0),
                 "game_no": int(match.get("game_no") or 0),
                 "format": match.get("format") or "",
-                "winning_camp": match.get("winning_camp") or "",
+                "winning_camp": to_chinese_camp(str(match.get("winning_camp") or "")),
+                "role_summary": role_summary,
                 "points": round(match_points, 1),
                 "result": "胜" if match_win else "负",
                 "href": f"/matches/{quote(str(match.get('match_id') or ''))}",

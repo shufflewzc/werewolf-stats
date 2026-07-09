@@ -5,10 +5,12 @@ const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } =
 function decorateMatch(item) {
   const isWin = item.result === "胜" || item.result === "win";
   const isLoss = item.result === "负" || item.result === "loss";
+  const hasIdentityField = Object.prototype.hasOwnProperty.call(item || {}, "identity_summary")
+    || Object.prototype.hasOwnProperty.call(item || {}, "role_summary");
   return {
     ...item,
     resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral"),
-    roleSummaryText: item.role_summary || "角色未录入"
+    identitySummaryText: item.identity_summary || item.role_summary || (hasIdentityField ? "身份缺失" : "接口未更新")
   };
 }
 

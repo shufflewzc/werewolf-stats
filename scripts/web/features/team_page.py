@@ -1033,7 +1033,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
         achievement_match_rows.append(match)
         match_points = sum(float(entry.get("points_earned") or 0) for entry in team_entries)
         match_win = any(entry.get("result") == "win" for entry in team_entries)
-        role_summary = "、".join(
+        identity_summary = "、".join(
             str(entry.get("role") or "").strip()
             for entry in sorted(team_entries, key=lambda item: int(item.get("seat") or 0))
             if str(entry.get("role") or "").strip()
@@ -1050,7 +1050,8 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
                 "game_no": int(match.get("game_no") or 0),
                 "format": match.get("format") or "",
                 "winning_camp": to_chinese_camp(str(match.get("winning_camp") or "")),
-                "role_summary": role_summary,
+                "identity_summary": identity_summary,
+                "role_summary": identity_summary,
                 "points": round(match_points, 1),
                 "result": "胜" if match_win else "负",
                 "href": f"/matches/{quote(str(match.get('match_id') or ''))}",

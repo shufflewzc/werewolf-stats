@@ -376,6 +376,19 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
 
     dashboard = api_get_json("/api/dashboard", scope_query)
     assert_json_keys(dashboard, ["scope", "metrics", "top_players", "top_teams", "match_days"], "/api/dashboard")
+    team_rows = dashboard.get("top_teams") if isinstance(dashboard.get("top_teams"), list) else []
+    active_team = next((row for row in team_rows if isinstance(row, dict) and row.get("team_id")), None)
+    if active_team:
+        team_id = str(active_team.get("team_id") or "").strip()
+        if team_id:
+            team_detail = api_get_json(f"/api/teams/{team_id}", scope_query)
+            assert_json_keys(team_detail, ["team", "metrics", "insights", "roster", "matches"], "/api/teams/{id}")
+            match_rows = team_detail.get("matches") if isinstance(team_detail.get("matches"), list) else []
+            for match in match_rows:
+                if not isinstance(match, dict):
+                    raise ReleaseCheckError("/api/teams/{id} matches 包含非对象数据")
+                if "identity_summary" not in match:
+                    raise ReleaseCheckError("/api/teams/{id} matches 缺少 identity_summary，战队最近比赛无法显示身份")
 
     players = api_get_json("/api/players", {**scope_query, "limit": "30", "offset": "0"})
     assert_json_keys(players, ["scope", "metrics", "players"], "/api/players")

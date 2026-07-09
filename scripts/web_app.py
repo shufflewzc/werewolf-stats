@@ -6666,6 +6666,56 @@ def resolve_match_entities(
     team_by_scope_name: dict[tuple[str, str, str], dict[str, Any]] = {}
     player_by_scope_team_name: dict[tuple[str, str, str, str], dict[str, Any]] = {}
     player_by_blank_name: dict[str, dict[str, Any]] = {}
+    participation_mode_cache: dict[tuple[str, str, str], str] = {}
+    series_catalog = load_series_catalog(data)
+    team_serial_cache: dict[tuple[str, str], dict[str, Any]] = {}
+
+    def resolve_cached_participation_mode(
+        competition_name: str,
+        season_name: str,
+        stage_name: str,
+    ) -> str:
+        cache_key = (competition_name, season_name, stage_name)
+        if cache_key not in participation_mode_cache:
+            participation_mode_cache[cache_key] = resolve_participation_mode_for_scope(
+                data,
+                competition_name,
+                season_name,
+                stage_name,
+            )
+        return participation_mode_cache[cache_key]
+
+    def build_cached_team_serial(competition_name: str, season_name: str) -> str:
+        scope_key = (competition_name, season_name)
+        state = team_serial_cache.get(scope_key)
+        if state is None:
+            context = build_series_context_from_competition(
+                competition_name,
+                series_catalog,
+            )
+            series_code = str(context.get("series_code") or "").strip() or "series"
+            city_code = build_city_code(competition_name)
+            season_code = build_season_code(season_name)
+            prefix = f"{series_code}-{city_code}-{season_code}-"
+            used_numbers = {
+                int(match.group(1))
+                for team in data["teams"]
+                for match in [re.match(re.escape(prefix) + r"(\d{3})$", str(team.get("team_id") or ""))]
+                if match
+            }
+            state = {
+                "prefix": prefix,
+                "used_numbers": used_numbers,
+                "next_number": 1,
+            }
+            team_serial_cache[scope_key] = state
+        used_numbers = state["used_numbers"]
+        next_number = int(state["next_number"])
+        while next_number in used_numbers:
+            next_number += 1
+        used_numbers.add(next_number)
+        state["next_number"] = next_number + 1
+        return f"{state['prefix']}{next_number:03d}"
 
     def index_team(team: dict[str, Any]) -> None:
         team_name = str(team.get("name") or "").strip()
@@ -6708,8 +6758,7 @@ def resolve_match_entities(
     for match in matches:
         competition_name = get_match_competition_name(match)
         season_name = str(match.get("season") or "").strip()
-        participation_mode = resolve_participation_mode_for_scope(
-            data,
+        participation_mode = resolve_cached_participation_mode(
             competition_name,
             season_name,
             str(match.get("stage") or "").strip(),
@@ -6734,7 +6783,7 @@ def resolve_match_entities(
             if team_name:
                 team = team_by_scope_name.get((competition_name, season_name, team_name))
                 if not team:
-                    placeholder_team_id = build_team_serial(data, competition_name, season_name, data["teams"])
+                    placeholder_team_id = build_cached_team_serial(competition_name, season_name)
                     team = build_placeholder_team(
                         placeholder_team_id,
                         team_name,

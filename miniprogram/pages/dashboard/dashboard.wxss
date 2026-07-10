@@ -11,6 +11,30 @@
   background: #fef3c7;
 }
 
+.match-day-actions {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.day-action {
+  width: 74rpx;
+  height: 52rpx;
+  margin: 0;
+  padding: 0;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 999rpx;
+  font-size: 21rpx;
+  font-weight: 700;
+  line-height: 52rpx;
+  color: #1d4ed8;
+  background: #eff6ff;
+}
+
+.day-action::after {
+  border: 0;
+}
+
 .competition-choice,
 .selected-bar {
   display: flex;

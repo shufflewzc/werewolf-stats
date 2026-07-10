@@ -1,5 +1,5 @@
 const { request } = require("../../utils/api");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
 
@@ -52,11 +52,14 @@ Page({
     predictionTotalCount: 0,
     predictionVisibleCount: 0,
     predictionHasMore: false,
+    loadingMore: false,
+    loadMoreError: "",
     bandSummary: [],
     notice: ""
   },
 
   onLoad(options) {
+    applyScopeFromOptions(options);
     this.initialPlayedOn = options.played_on || "";
     this.initialMatchId = options.match_id || "";
   },
@@ -72,7 +75,7 @@ Page({
 
   onPullDownRefresh() {
     const playedOn = this.data.selectedDay && this.data.selectedDay.played_on;
-    this.loadData({ playedOn: playedOn || "" }).finally(() => wx.stopPullDownRefresh());
+    this.loadData({ playedOn: playedOn || "", forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
   async loadData(options = {}) {
@@ -100,7 +103,7 @@ Page({
         limit: PAGE_SIZE,
         offset: 0
       };
-      const payload = await request("/api/predictions", paramsWithPaging);
+      const payload = await request("/api/predictions", paramsWithPaging, options);
       const predictions = (payload.predictions || []).map((item, index) => decoratePrediction(item, index));
       const pagination = payload.pagination || {};
       this.setData({
@@ -114,6 +117,8 @@ Page({
         predictionTotalCount: Number(pagination.total || predictions.length),
         predictionVisibleCount: predictions.length,
         predictionHasMore: Boolean(pagination.has_more),
+        loadingMore: false,
+        loadMoreError: "",
         bandSummary: payload.band_summary || summarizeBands(predictions),
         notice: payload.notice || ""
       });
@@ -144,9 +149,10 @@ Page({
   loadMorePredictions() {
     const selectedScope = getRequiredScope();
     const selectedDay = this.data.selectedDay || {};
-    if (!selectedScope || !this.data.predictionHasMore) {
+    if (!selectedScope || !this.data.predictionHasMore || this.data.loadingMore) {
       return;
     }
+    this.setData({ loadingMore: true, loadMoreError: "" });
     request("/api/predictions", {
       ...scopeParams(selectedScope),
       played_on: selectedDay.played_on || "",
@@ -162,10 +168,12 @@ Page({
         predictions,
         predictionVisibleCount: predictions.length,
         predictionTotalCount: Number(pagination.total || this.data.predictionTotalCount || predictions.length),
-        predictionHasMore: Boolean(pagination.has_more)
+        predictionHasMore: Boolean(pagination.has_more),
+        loadingMore: false,
+        loadMoreError: ""
       });
     }).catch((error) => {
-      this.setData({ error: error.message || "加载更多失败" });
+      this.setData({ loadingMore: false, loadMoreError: error.message || "加载更多失败" });
     });
   },
 

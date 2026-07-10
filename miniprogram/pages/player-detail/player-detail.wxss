@@ -301,3 +301,18 @@
   color: #b91c1c;
   background: transparent;
 }
+.follow-button {
+  display: inline-flex;
+  width: auto;
+  min-width: 132rpx;
+  height: 56rpx;
+  margin: 16rpx 0 0;
+  padding: 0 18rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.55);
+  border-radius: 999rpx;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 56rpx;
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+}

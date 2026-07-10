@@ -76,8 +76,9 @@
           </view>
         </view>
         <view class="button-row" wx:if="{{playerHasMore}}">
-          <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadMorePlayers">加载更多</button>
+          <button class="ghost-button" hover-class="tap-button-hover" loading="{{loadingMore}}" disabled="{{loadingMore}}" bindtap="loadMorePlayers">加载更多</button>
         </view>
+        <view class="empty-inline" wx:if="{{loadMoreError}}"><text>{{loadMoreError}}</text></view>
         <view class="empty-card" wx:if="{{!players.length}}">
           <text class="empty-title">暂无选手</text>
           <text class="empty-copy">录入比赛结果后，这里会显示选手排行。</text>

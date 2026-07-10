@@ -17,7 +17,9 @@ Page({
     visiblePlayers: [],
     playerTotalCount: 0,
     playerVisibleCount: 0,
-    playerHasMore: false
+    playerHasMore: false,
+    loadingMore: false,
+    loadMoreError: ""
   },
 
   onShow() {
@@ -25,10 +27,10 @@ Page({
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  async loadData(options = {}) {
     this.setData({ loading: true, error: "" });
     try {
       const selectedScope = getRequiredScope();
@@ -50,9 +52,9 @@ Page({
         ...scopeParams(selectedScope),
         limit: PAGE_SIZE,
         offset: 0
-      });
+      }, options);
       if (payload.requires_scope) {
-        const dashboard = await request("/api/dashboard", scopeParams(selectedScope));
+        const dashboard = await request("/api/dashboard", scopeParams(selectedScope), options);
         payload = {
           generated_at: dashboard.generated_at,
           scope: dashboard.scope || {},
@@ -79,7 +81,9 @@ Page({
         visiblePlayers: players,
         playerTotalCount: Number(pagination.total || players.length),
         playerVisibleCount: players.length,
-        playerHasMore: Boolean(pagination.has_more)
+        playerHasMore: Boolean(pagination.has_more),
+        loadingMore: false,
+        loadMoreError: ""
       });
     } catch (error) {
       this.setData({
@@ -118,9 +122,10 @@ Page({
 
   loadMorePlayers() {
     const selectedScope = getRequiredScope();
-    if (!selectedScope || !this.data.playerHasMore) {
+    if (!selectedScope || !this.data.playerHasMore || this.data.loadingMore) {
       return;
     }
+    this.setData({ loadingMore: true, loadMoreError: "" });
     request("/api/players", {
       ...scopeParams(selectedScope),
       limit: PAGE_SIZE,
@@ -137,10 +142,12 @@ Page({
         visiblePlayers: players,
         playerVisibleCount: players.length,
         playerTotalCount: Number(pagination.total || this.data.playerTotalCount || players.length),
-        playerHasMore: Boolean(pagination.has_more)
+        playerHasMore: Boolean(pagination.has_more),
+        loadingMore: false,
+        loadMoreError: ""
       });
     }).catch((error) => {
-      this.setData({ error: error.message || "加载更多失败" });
+      this.setData({ loadingMore: false, loadMoreError: error.message || "加载更多失败" });
     });
   }
 });

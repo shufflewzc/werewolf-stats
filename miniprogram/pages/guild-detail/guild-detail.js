@@ -1,6 +1,6 @@
 const { request } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 function buildGuildOverview(payload) {
   const historySections = payload.history_sections || [];
@@ -38,15 +38,16 @@ Page({
   },
 
   onLoad(options) {
+    applyScopeFromOptions(options);
     this.setData({ guildId: decodeURIComponent(options.guild_id || "") });
     this.loadData();
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  async loadData(options = {}) {
     const guildId = this.data.guildId;
     if (!guildId) {
       this.setData({ loading: false, error: "缺少门派 ID" });
@@ -69,7 +70,7 @@ Page({
         return;
       }
 
-      const payload = await request(`/api/guilds/${encodeURIComponent(guildId)}`, scopeParams(selectedScope));
+      const payload = await request(`/api/guilds/${encodeURIComponent(guildId)}`, scopeParams(selectedScope), options);
       const guild = payload.guild || {};
       const overview = buildGuildOverview(payload);
       wx.setNavigationBarTitle({ title: guild.name || "门派详情" });

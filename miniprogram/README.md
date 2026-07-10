@@ -37,10 +37,11 @@ node scripts/check_miniprogram_release.js
 
 - 确认 `config.js` 使用 `activeApiEnv = "production"`，并且 `allowLocalApi = false`。
 - 当前正式接口地址为 `https://wolf.metauniverse-cn.xyz`。
-- 在微信公众平台配置 request 合法域名。
+- 在微信公众平台配置 `request` 和 `downloadFile` 合法域名。后者用于下载战绩卡中的真实小程序码。
 - 把 `project.config.json` 里的 `appid` 换成你的小程序 AppID。
 - 后端服务需要配置 `WECHAT_MINIPROGRAM_APPID` 和 `WECHAT_MINIPROGRAM_SECRET`，用于把 `wx.login` 的 code 换成 openid。
 - 本地联调如果暂时不想请求微信接口，可以同时设置 `WECHAT_MINIPROGRAM_DEV_OPENID` 和 `ALLOW_WECHAT_DEV_LOGIN=1` 模拟 openid；生产环境不要开启。
 - 当前小程序支持微信登录自动创建账号；选手身份在“我的”页通过中文名搜索绑定。
 - 网页端登录已改为“小程序扫码确认登录”：网页显示二维码，小程序“我的”页扫码确认后网页自动登录；服务器不需要配置网页开放平台参数。
 - 请求层会统一处理网络超时、临时 5xx 重试、后端错误信息和登录过期；如果接口返回 `X-Request-ID`，错误提示会带请求编号，方便对照服务器日志。
+- 选手详情页可生成黑金战绩卡；二维码由后端 `/api/miniprogram/share-code` 生成。小程序发布时必须包含 `pages/share-entry/share-entry`，并使用已配置 `WECHAT_MINIPROGRAM_APPID` / `WECHAT_MINIPROGRAM_SECRET` 的正式后端。

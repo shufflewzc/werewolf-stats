@@ -1,0 +1,27 @@
+.intro {
+  margin-bottom: 20rpx;
+}
+
+.intro-title,
+.intro-copy {
+  display: block;
+}
+
+.intro-title {
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.intro-copy {
+  margin-top: 8rpx;
+  font-size: 24rpx;
+  color: #64748b;
+}
+
+.share-canvas {
+  width: 694rpx;
+  height: 1041rpx;
+  border-radius: 16rpx;
+  background: #0b0b0c;
+  box-shadow: 0 14rpx 36rpx rgba(15, 23, 42, 0.18);
+}

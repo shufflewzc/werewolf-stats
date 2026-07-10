@@ -1,8 +1,10 @@
 const { request, assetUrl } = require("../../utils/api");
 const { getCurrentUser } = require("../../utils/auth");
+const { getFollowedPlayers } = require("../../utils/follows");
 const { take } = require("../../utils/format");
 const {
   buildScopeFromCompetition,
+  appendScopeToPath,
   clearSelectedScope,
   getSelectedScope,
   scopeParams,
@@ -28,11 +30,6 @@ function decorateCompetitionChoice(card) {
 
 function normalizeKeyword(value) {
   return String(value || "").trim().toLowerCase();
-}
-
-function matchText(item, keyword, fields) {
-  const haystack = fields.map((field) => String(item[field] || "")).join(" ").toLowerCase();
-  return haystack.indexOf(keyword) >= 0;
 }
 
 const LEADERBOARD_TABS = [
@@ -101,6 +98,7 @@ Page({
     myEmptyText: "微信登录后，可以绑定选手并查看自己的赛事数据。",
     myPrimaryActionText: "去登录",
     myStatusLabel: "未登录",
+    followedPlayers: [],
     searchKeyword: "",
     searchLoading: false,
     searchSearched: false,
@@ -116,15 +114,26 @@ Page({
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    const latestDay = this.data.latestDay;
+    return {
+      title: latestDay
+        ? `${scope && scope.competition ? scope.competition : "狼人杀赛事"} · ${latestDay.played_on} 比赛日`
+        : `${scope && scope.competition ? scope.competition : "狼人杀赛事"} 数据中心`,
+      path: appendScopeToPath("/pages/dashboard/dashboard", scope)
+    };
+  },
+
+  async loadData(options = {}) {
     this.setData({ loading: true, error: "" });
     try {
       const selectedScope = getSelectedScope();
       if (!selectedScope || !selectedScope.competition) {
-        const competitions = await request("/api/competitions");
+        const competitions = await request("/api/competitions", {}, options);
         this.setData({
           loading: false,
           choosing: true,
@@ -135,13 +144,14 @@ Page({
           metrics: take(competitions.metrics, 4),
           competitions: (competitions.cards || []).map(decorateCompetitionChoice),
           topTeams: [],
-          topPlayers: [],
-          matchDays: []
+        topPlayers: [],
+          matchDays: [],
+          followedPlayers: []
         });
         return;
       }
 
-      const payload = await request("/api/dashboard", scopeParams(selectedScope));
+      const payload = await request("/api/dashboard", scopeParams(selectedScope), options);
       const topPlayers = take(payload.top_players, 5).map((player) => ({
         ...player,
         photoUrl: assetUrl(player.photo)
@@ -151,6 +161,7 @@ Page({
       const matchDays = take(payload.match_days, 4);
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
+      const followedPlayers = getFollowedPlayers(selectedScope).slice(0, 5);
       let myPlayer = null;
       let myEmptyText = "微信登录后，可以绑定选手并查看自己的赛事数据。";
       let myPrimaryActionText = "去登录";
@@ -194,6 +205,7 @@ Page({
         myEmptyText,
         myPrimaryActionText,
         myStatusLabel,
+        followedPlayers,
         searchLoading: false
       });
     } catch (error) {
@@ -267,36 +279,21 @@ Page({
     }
     this.setData({ searchLoading: true, searchSearched: true, searchResults: [] });
     try {
-      const params = scopeParams(selectedScope);
-      const [playersPayload, guildsPayload] = await Promise.all([
-        request("/api/players", { ...params, limit: 100, offset: 0 }),
-        request("/api/guilds", params)
-      ]);
-      const playerResults = (playersPayload.players || [])
-        .filter((player) => matchText(player, keyword, ["display_name", "player_id", "team_name"]))
-        .slice(0, 8)
-        .map((player) => ({
-          key: `player:${player.player_id}`,
-          type: "player",
-          typeLabel: "选手",
-          id: player.player_id,
-          title: player.display_name || player.player_id,
-          subtitle: `${player.team_name || "未绑定门派"} · 积分 ${player.points_total || "--"} · 胜率 ${player.win_rate || "--"}`
-        }));
-      const guildResults = (guildsPayload.cards || [])
-        .filter((guild) => matchText(guild, keyword, ["name", "short_name", "notes"]))
-        .slice(0, 6)
-        .map((guild) => ({
-          key: `guild:${guild.guild_id}`,
-          type: "guild",
-          typeLabel: "门派",
-          id: guild.guild_id,
-          title: guild.name || guild.short_name || guild.guild_id,
-          subtitle: `${guild.short_name || "门派"} · 覆盖 ${guild.match_count || 0} 场 · 荣誉 ${guild.honor_count || 0}`
-        }));
+      if (keyword.length < 2) {
+        this.setData({ searchLoading: false, searchResults: [] });
+        return;
+      }
+      const payload = await request("/api/search", {
+        ...scopeParams(selectedScope),
+        q: keyword,
+        limit: 100
+      });
       this.setData({
         searchLoading: false,
-        searchResults: playerResults.concat(guildResults).slice(0, 12)
+        searchResults: (payload.results || []).map((item) => ({
+          ...item,
+          typeLabel: item.type_label
+        }))
       });
     } catch (error) {
       this.setData({
@@ -325,6 +322,10 @@ Page({
     }
     if (result.type === "guild") {
       wx.navigateTo({ url: `/pages/guild-detail/guild-detail?guild_id=${encodeURIComponent(result.id)}` });
+      return;
+    }
+    if (result.type === "team") {
+      wx.navigateTo({ url: `/pages/team-detail/team-detail?team_id=${encodeURIComponent(result.id)}` });
     }
   },
 
@@ -360,6 +361,14 @@ Page({
       return;
     }
     wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(myPlayer.player_id)}` });
+  },
+
+  openFollowedPlayer(event) {
+    const playerId = event.currentTarget.dataset.playerId;
+    if (!playerId) {
+      return;
+    }
+    wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
   },
 
   openPlayerDetail(event) {

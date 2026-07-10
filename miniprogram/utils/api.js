@@ -2,6 +2,8 @@ const { allowLocalApi, apiBaseUrl } = require("../config");
 
 const DEFAULT_TIMEOUT_MS = 12000;
 const GET_RETRY_LIMIT = 1;
+const PUBLIC_CACHE_TTL_MS = 60000;
+const PUBLIC_CACHE_PREFIX = "werewolf:publicApi:";
 const AUTH_SESSION_KEY = "werewolf:miniprogramSession";
 const AUTH_USER_KEY = "werewolf:miniprogramUser";
 let authExpiredModalVisible = false;
@@ -183,15 +185,55 @@ async function requestWithRetry(options, retryLimit) {
   throw lastError;
 }
 
-function request(path, params = {}) {
+function publicCacheKey(url) {
+  return `${PUBLIC_CACHE_PREFIX}${url}`;
+}
+
+function getPublicCache(url) {
+  try {
+    const cached = wx.getStorageSync(publicCacheKey(url));
+    if (!cached || !cached.cachedAt || Date.now() - cached.cachedAt > PUBLIC_CACHE_TTL_MS) {
+      wx.removeStorageSync(publicCacheKey(url));
+      return null;
+    }
+    return cached.payload || null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function setPublicCache(url, payload) {
+  try {
+    wx.setStorageSync(publicCacheKey(url), { cachedAt: Date.now(), payload });
+  } catch (error) {
+    // 本地存储不足不应影响公开赛事数据的展示。
+  }
+}
+
+function isCacheablePublicPath(path) {
+  return /^\/api\/(?!miniprogram\/)/.test(String(path || ""));
+}
+
+async function request(path, params = {}, options = {}) {
   const baseUrl = normalizeBaseUrl(apiBaseUrl);
   assertUsableBaseUrl(baseUrl);
   const url = `${baseUrl}${path}${buildQuery(params)}`;
-  return requestWithRetry({
+  const useCache = options.useCache !== false && isCacheablePublicPath(path);
+  if (useCache && !options.forceRefresh) {
+    const cached = getPublicCache(url);
+    if (cached) {
+      return cached;
+    }
+  }
+  const payload = await requestWithRetry({
     url,
     method: "GET",
     timeout: DEFAULT_TIMEOUT_MS
   }, GET_RETRY_LIMIT);
+  if (useCache) {
+    setPublicCache(url, payload);
+  }
+  return payload;
 }
 
 function encodeForm(data) {

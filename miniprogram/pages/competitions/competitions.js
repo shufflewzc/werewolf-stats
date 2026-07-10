@@ -46,13 +46,13 @@ Page({
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  async loadData(options = {}) {
     this.setData({ loading: true, error: "" });
     try {
-      const payload = await request("/api/competitions");
+      const payload = await request("/api/competitions", {}, options);
       const selectedScope = getSelectedScope();
       this.setData({
         loading: false,

@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 function decorateMatch(item) {
   const isWin = item.result === "胜" || item.result === "win";
@@ -46,15 +46,16 @@ Page({
   },
 
   onLoad(options) {
+    applyScopeFromOptions(options);
     this.setData({ teamId: decodeURIComponent(options.team_id || "") });
     this.loadData();
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  async loadData(options = {}) {
     const teamId = this.data.teamId;
     if (!teamId) {
       this.setData({ loading: false, error: "缺少战队 ID" });
@@ -75,7 +76,7 @@ Page({
         }));
         return;
       }
-      const payload = await request(`/api/teams/${encodeURIComponent(teamId)}`, scopeParams(selectedScope));
+      const payload = await request(`/api/teams/${encodeURIComponent(teamId)}`, scopeParams(selectedScope), options);
       const team = payload.team || {};
       wx.setNavigationBarTitle({ title: team.short_name || team.name || "战队详情" });
       this.setData({

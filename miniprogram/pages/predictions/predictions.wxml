@@ -123,8 +123,9 @@
           </view>
         </view>
         <view class="button-row" wx:if="{{predictionHasMore}}">
-          <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadMorePredictions">加载更多</button>
+          <button class="ghost-button" hover-class="tap-button-hover" loading="{{loadingMore}}" disabled="{{loadingMore}}" bindtap="loadMorePredictions">加载更多</button>
         </view>
+        <view class="empty-inline" wx:if="{{loadMoreError}}"><text>{{loadMoreError}}</text></view>
       </view>
 
       <view class="section" wx:elif="{{selectedDay}}">

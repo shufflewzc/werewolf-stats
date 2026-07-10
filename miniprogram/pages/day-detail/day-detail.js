@@ -1,6 +1,6 @@
 const { request } = require("../../utils/api");
 const { createPagedState, nextPagedState } = require("../../utils/paging");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
 
@@ -29,16 +29,26 @@ Page({
   },
 
   onLoad(options) {
+    applyScopeFromOptions(options);
     const playedOn = decodeURIComponent(options.played_on || "");
     this.setData({ playedOn });
     this.loadData();
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    const playedOn = this.data.playedOn;
+    return {
+      title: `${scope && scope.competition ? scope.competition : "狼人杀赛事"} · ${playedOn || "比赛日"}赛程与日榜`,
+      path: appendScopeToPath(`/pages/day-detail/day-detail?played_on=${encodeURIComponent(playedOn)}`, scope)
+    };
+  },
+
+  async loadData(options = {}) {
     const playedOn = this.data.playedOn;
     if (!playedOn) {
       this.setData({ loading: false, error: "缺少比赛日期" });
@@ -69,13 +79,13 @@ Page({
     try {
       const params = scopeParams(selectedScope);
       const [dayPayload, predictionPayload] = await Promise.all([
-        request(`/api/days/${encodeURIComponent(playedOn)}`, params),
+        request(`/api/days/${encodeURIComponent(playedOn)}`, params, options),
         request("/api/predictions", {
           ...params,
           played_on: playedOn,
           limit: PAGE_SIZE,
           offset: 0
-        })
+        }, options)
       ]);
       const predictions = predictionPayload.predictions || [];
       const playerLeaderboard = dayPayload.player_leaderboard || [];

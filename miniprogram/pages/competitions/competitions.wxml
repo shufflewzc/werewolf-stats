@@ -15,6 +15,9 @@
   <view wx:elif="{{error}}" class="section">
     <view class="error-card">
       <text>{{error}}</text>
+      <view class="button-row">
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadData">重试</button>
+      </view>
     </view>
   </view>
 

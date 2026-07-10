@@ -42,6 +42,48 @@ function setSelectedScope(scope) {
   wx.setStorageSync(STORAGE_KEY, scope || null);
 }
 
+function scopeFromOptions(options = {}) {
+  const decode = (value) => {
+    try {
+      return decodeURIComponent(value || "");
+    } catch (error) {
+      return String(value || "");
+    }
+  };
+  const competition = decode(options.competition);
+  if (!competition) {
+    return null;
+  }
+  return {
+    competition,
+    season: decode(options.season),
+    region: decode(options.region),
+    series: decode(options.series),
+    seriesName: decode(options.series_name)
+  };
+}
+
+function applyScopeFromOptions(options = {}) {
+  const scope = scopeFromOptions(options);
+  if (scope) {
+    setSelectedScope(scope);
+  }
+  return scope;
+}
+
+function appendScopeToPath(path, scope = getRequiredScope()) {
+  if (!scope || !scope.competition) {
+    return path;
+  }
+  const separator = String(path).indexOf("?") >= 0 ? "&" : "?";
+  const query = scopeParams(scope);
+  const encoded = Object.keys(query)
+    .filter((key) => query[key])
+    .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(query[key])}`)
+    .join("&");
+  return encoded ? `${path}${separator}${encoded}` : path;
+}
+
 function clearSelectedScope() {
   wx.removeStorageSync(STORAGE_KEY);
 }
@@ -73,6 +115,8 @@ function goCompetitions() {
 
 module.exports = {
   buildScopeFromCompetition,
+  appendScopeToPath,
+  applyScopeFromOptions,
   clearSelectedScope,
   getRequiredScope,
   getSelectedScope,

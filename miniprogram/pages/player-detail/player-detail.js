@@ -1,6 +1,7 @@
 const { request, assetUrl } = require("../../utils/api");
+const { isFollowed, toggleFollow } = require("../../utils/follows");
 const { take } = require("../../utils/format");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 function parsePercent(value) {
   const number = Number(String(value || "").replace("%", ""));
@@ -84,19 +85,31 @@ Page({
     recentMatches: [],
     achievements: [],
     dimension: {},
-    dimensionAvailable: false
+    dimensionAvailable: false,
+    followed: false
   },
 
   onLoad(options) {
+    applyScopeFromOptions(options);
     this.setData({ playerId: decodeURIComponent(options.player_id || "") });
     this.loadData();
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  onShareAppMessage() {
+    const player = this.data.player || {};
+    const scope = this.data.selectedScope;
+    const playerId = this.data.playerId;
+    return {
+      title: `${player.name || player.display_name || "选手"} · ${scope && scope.competition ? scope.competition : "狼人杀赛事"}战绩`,
+      path: appendScopeToPath(`/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}`, scope)
+    };
+  },
+
+  async loadData(options = {}) {
     const playerId = this.data.playerId;
     if (!playerId) {
       this.setData({ loading: false, error: "缺少选手 ID" });
@@ -120,7 +133,7 @@ Page({
         }));
         return;
       }
-      const payload = await request(`/api/players/${encodeURIComponent(playerId)}`, scopeParams(selectedScope));
+      const payload = await request(`/api/players/${encodeURIComponent(playerId)}`, scopeParams(selectedScope), options);
       const player = payload.player || {};
       const dimension = payload.dimension || {};
       const normalizedDimension = {
@@ -147,7 +160,8 @@ Page({
         recentMatches: take(payload.recent_matches, 6).map(decorateRecentMatch),
         achievements: take(payload.achievements, 12).map(decorateAchievement),
         dimension: normalizedDimension,
-        dimensionAvailable: Boolean(normalizedDimension.available)
+        dimensionAvailable: Boolean(normalizedDimension.available),
+        followed: isFollowed({ player_id: playerId }.player_id, selectedScope)
       });
     } catch (error) {
       this.setData({
@@ -165,6 +179,14 @@ Page({
     wx.navigateTo({ url: "/pages/predictions/predictions" });
   },
 
+  openShareCard() {
+    const playerId = this.data.playerId;
+    if (!playerId) {
+      return;
+    }
+    wx.navigateTo({ url: `/pages/share-card/share-card?player_id=${encodeURIComponent(playerId)}` });
+  },
+
   changeCompetition() {
     goCompetitions();
   },
@@ -175,5 +197,16 @@ Page({
 
   goCompetitions() {
     goCompetitions();
+  },
+
+  toggleFollow() {
+    const followed = toggleFollow({
+      player_id: this.data.playerId,
+      name: this.data.player.name,
+      display_name: this.data.player.display_name,
+      team_name: this.data.player.team_name
+    }, this.data.selectedScope);
+    this.setData({ followed });
+    wx.showToast({ title: followed ? "已关注选手" : "已取消关注", icon: "none" });
   }
 });

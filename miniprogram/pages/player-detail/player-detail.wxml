@@ -6,6 +6,7 @@
       <text class="detail-eyebrow">{{player.team_name || "未绑定门派"}}</text>
       <text class="detail-name">{{player.name || "选手详情"}}</text>
       <text class="detail-copy">排名 #{{player.rank || "-"}} · {{player.owner || "未绑定账号"}}</text>
+      <button class="follow-button" hover-class="tap-button-hover" wx:if="{{selectedScope && selectedScope.competition}}" bindtap="toggleFollow">{{followed ? "已关注" : "关注选手"}}</button>
     </view>
   </view>
 
@@ -48,6 +49,7 @@
       <view class="quick-actions">
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="goPlayers">选手榜</button>
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="goPredictions">胜率预测</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="openShareCard">生成战绩卡</button>
       </view>
     </view>
 

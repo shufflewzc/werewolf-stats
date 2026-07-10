@@ -25,7 +25,7 @@ from http import cookies
 from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, quote, urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from wsgiref.simple_server import make_server
 
@@ -213,6 +213,9 @@ DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 AI_PUBLIC_FEATURES_ENABLED = os.getenv("AI_PUBLIC_FEATURES_ENABLED", "0").strip() == "1"
 WECHAT_MINIPROGRAM_APPID = os.getenv("WECHAT_MINIPROGRAM_APPID", "")
 WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
+WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_TTL_SECONDS = int(
+    os.getenv("WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_TTL_SECONDS", "600")
+)
 WEB_LOGIN_BASE_URL = os.getenv("WEB_LOGIN_BASE_URL", "https://wolf.metauniverse-cn.xyz").rstrip("/")
 WEB_LOGIN_TTL_SECONDS = int(os.getenv("WEB_LOGIN_TTL_SECONDS", "600"))
 WEB_LOGIN_META_PREFIX = "web_login:"
@@ -231,6 +234,10 @@ REQUEST_RATE_LIMITS: dict[str, list[float]] = {}
 REQUEST_RATE_LIMIT_LOCK = threading.RLock()
 IDEMPOTENCY_FINGERPRINTS: dict[str, float] = {}
 IDEMPOTENCY_LOCK = threading.RLock()
+WECHAT_MINIPROGRAM_ACCESS_TOKEN_CACHE: dict[str, Any] = {"value": "", "expires_at": 0.0}
+WECHAT_MINIPROGRAM_ACCESS_TOKEN_LOCK = threading.RLock()
+WECHAT_MINIPROGRAM_SHARE_CODE_CACHE: dict[str, dict[str, Any]] = {}
+WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_LOCK = threading.RLock()
 REQUEST_CONTEXT_LOCAL = threading.local()
 SLOW_REQUEST_THRESHOLD_MS = int(os.getenv("SLOW_REQUEST_THRESHOLD_MS", "1500"))
 STRUCTURED_ERROR_TRACEBACK = os.getenv("STRUCTURED_ERROR_TRACEBACK", "").strip() == "1"
@@ -11142,6 +11149,80 @@ def handle_competitions_api(ctx: RequestContext, start_response):
     )
 
 
+def build_search_api_payload(ctx: RequestContext, keyword: str) -> dict[str, Any]:
+    """Build the compact, scope-aware result set used by mini-program search."""
+    from web.features.competitions import build_teams_api_payload
+    from web.features.guilds import build_guilds_api_payload
+    from web.features.player_page import build_players_api_payload
+
+    needle = keyword.casefold()
+
+    def matches(*values: Any) -> bool:
+        return needle in " ".join(str(value or "") for value in values).casefold()
+
+    players_payload = build_players_api_payload(ctx)
+    teams_payload = build_teams_api_payload(ctx)
+    guilds_payload = build_guilds_api_payload(ctx)
+    results: list[dict[str, Any]] = []
+    for player in players_payload.get("players", []):
+        if matches(player.get("display_name"), player.get("player_id"), player.get("team_name")):
+            results.append({
+                "key": f"player:{player['player_id']}",
+                "type": "player",
+                "type_label": "选手",
+                "id": player["player_id"],
+                "title": player.get("display_name") or player["player_id"],
+                "subtitle": f"{player.get('team_name') or '未绑定战队'} · 积分 {player.get('points_total') or '--'} · 胜率 {player.get('win_rate') or '--'}",
+            })
+    for team in teams_payload.get("teams", []):
+        if matches(team.get("name"), team.get("short_name"), team.get("team_id")):
+            results.append({
+                "key": f"team:{team['team_id']}",
+                "type": "team",
+                "type_label": "战队",
+                "id": team["team_id"],
+                "title": team.get("short_name") or team.get("name") or team["team_id"],
+                "subtitle": f"{team.get('competition_name') or '当前赛事'} · 积分 {team.get('points_total') or '--'} · 胜率 {team.get('win_rate') or '--'}",
+            })
+    for guild in guilds_payload.get("cards", []):
+        if matches(guild.get("name"), guild.get("short_name"), guild.get("notes")):
+            results.append({
+                "key": f"guild:{guild['guild_id']}",
+                "type": "guild",
+                "type_label": "门派",
+                "id": guild["guild_id"],
+                "title": guild.get("name") or guild.get("short_name") or guild["guild_id"],
+                "subtitle": f"{guild.get('short_name') or '门派'} · 覆盖 {guild.get('match_count') or 0} 场 · 荣誉 {guild.get('honor_count') or 0}",
+            })
+    type_order = {"player": 0, "team": 1, "guild": 2}
+    results.sort(key=lambda item: (type_order[item["type"]], item["title"]))
+    return {"keyword": keyword, "results": results[:20]}
+
+
+def handle_search_api(ctx: RequestContext, start_response):
+    """Return a compact, scope-aware result set for the mini program search box."""
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "search api only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    keyword = form_value(ctx.query, "q").strip()
+    if len(keyword) < 2:
+        return start_response_json(
+            start_response,
+            "400 Bad Request",
+            {"error": "请输入至少 2 个字再搜索。"},
+        )
+    return start_cached_public_api_json(
+        ctx,
+        start_response,
+        build_public_api_cache_key(ctx, "search", keyword),
+        lambda: build_search_api_payload(ctx, keyword),
+    )
+
+
 def handle_ai_analysis(ctx: RequestContext, start_response):
     from web.features.competitions import handle_ai_analysis as impl
 
@@ -16120,6 +16201,58 @@ def request_wechat_session(code: str) -> dict[str, str]:
     return {"openid": openid, "unionid": str(payload.get("unionid") or "").strip()}
 
 
+def get_wechat_miniprogram_access_token() -> str:
+    now = time.monotonic()
+    with WECHAT_MINIPROGRAM_ACCESS_TOKEN_LOCK:
+        cached = str(WECHAT_MINIPROGRAM_ACCESS_TOKEN_CACHE.get("value") or "")
+        if cached and now < float(WECHAT_MINIPROGRAM_ACCESS_TOKEN_CACHE.get("expires_at") or 0):
+            return cached
+        appid = WECHAT_MINIPROGRAM_APPID.strip()
+        secret = WECHAT_MINIPROGRAM_SECRET.strip()
+        if not appid or not secret:
+            raise RuntimeError("未配置 WECHAT_MINIPROGRAM_APPID / WECHAT_MINIPROGRAM_SECRET。")
+        query = urlencode({"grant_type": "client_credential", "appid": appid, "secret": secret})
+        with urlopen(f"https://api.weixin.qq.com/cgi-bin/token?{query}", timeout=10) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+        access_token = str(payload.get("access_token") or "").strip()
+        if not access_token:
+            raise RuntimeError(str(payload.get("errmsg") or "获取微信小程序访问令牌失败。"))
+        expires_in = max(60, int(payload.get("expires_in") or 7200) - 120)
+        WECHAT_MINIPROGRAM_ACCESS_TOKEN_CACHE.update({"value": access_token, "expires_at": now + expires_in})
+        return access_token
+
+
+def request_wechat_miniprogram_share_code(scene: str) -> bytes:
+    access_token = get_wechat_miniprogram_access_token()
+    request_body = json.dumps(
+        {
+            "scene": scene,
+            "page": "pages/share-entry/share-entry",
+            "check_path": True,
+            "env_version": "release",
+            "width": 430,
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+    request = Request(
+        f"https://api.weixin.qq.com/wxa/getwxacodeunlimit?access_token={quote(access_token)}",
+        data=request_body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=15) as response:
+        body = response.read()
+    if body.lstrip().startswith(b"{"):
+        try:
+            payload = json.loads(body.decode("utf-8"))
+            raise RuntimeError(str(payload.get("errmsg") or "生成微信小程序码失败。"))
+        except UnicodeDecodeError:
+            pass
+    if not body.startswith(b"\x89PNG"):
+        raise RuntimeError("微信未返回有效的小程序码图片。")
+    return body
+
+
 def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str:
     digest = hashlib.sha1(openid.encode("utf-8")).hexdigest()[:12]
     base = f"wx_{digest}"
@@ -16129,6 +16262,89 @@ def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str
         username = f"{base}_{index}"
         index += 1
     return username
+
+
+def handle_miniprogram_share_entry(ctx: RequestContext, start_response):
+    """Resolve a compact player scene into a safe mini-program detail route."""
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "share entry only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    scene = form_value(ctx.query, "scene").strip()
+    player_id = scene[2:] if scene.startswith("p:") else ""
+    if not player_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
+        return start_response_json(start_response, "400 Bad Request", {"error": "分享码无效或已过期。"})
+    data = load_validated_data()
+    if not any(str(player.get("player_id") or "") == player_id for player in data["players"]):
+        return start_response_json(start_response, "404 Not Found", {"error": "分享的选手不存在或已下线。"})
+    player_matches = [
+        match for match in data["matches"]
+        if any(str(entry.get("player_id") or "") == player_id for entry in match.get("players", []))
+    ]
+    if not player_matches:
+        return start_response_json(start_response, "404 Not Found", {"error": "该选手暂无可分享的赛事数据。"})
+    latest_match = max(
+        player_matches,
+        key=lambda match: (str(match.get("played_on") or ""), int(match.get("round") or 0), int(match.get("game_no") or 0)),
+    )
+    competition = get_match_competition_name(latest_match)
+    return start_response_json(start_response, "200 OK", {
+        "player_id": player_id,
+        "scope": {
+            "competition": competition,
+            "season": str(latest_match.get("season") or ""),
+            "region": infer_region_name_from_competition(competition),
+            "series": "",
+            "seriesName": "",
+        },
+    })
+
+
+def handle_miniprogram_share_code(ctx: RequestContext, start_response):
+    """Return a real WeChat mini-program code for a public player share card."""
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "share code only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    player_id = form_value(ctx.query, "player_id").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
+        return start_response_json(start_response, "400 Bad Request", {"error": "选手 ID 无效。"})
+    data = load_validated_data()
+    if not any(str(player.get("player_id") or "") == player_id for player in data["players"]):
+        return start_response_json(start_response, "404 Not Found", {"error": "选手不存在或已下线。"})
+    scene = f"p:{player_id}"
+    now = time.monotonic()
+    with WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_LOCK:
+        cached = WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.get(scene)
+        if cached and now - float(cached.get("cached_at") or 0) <= WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_TTL_SECONDS:
+            body = bytes(cached["body"])
+        else:
+            body = b""
+    if not body:
+        try:
+            body = request_wechat_miniprogram_share_code(scene)
+        except Exception as exc:
+            return start_response_json(start_response, "502 Bad Gateway", {"error": str(exc) or "生成小程序码失败。"})
+        with WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_LOCK:
+            WECHAT_MINIPROGRAM_SHARE_CODE_CACHE[scene] = {"cached_at": now, "body": body}
+            if len(WECHAT_MINIPROGRAM_SHARE_CODE_CACHE) > 100:
+                oldest = min(WECHAT_MINIPROGRAM_SHARE_CODE_CACHE, key=lambda key: float(WECHAT_MINIPROGRAM_SHARE_CODE_CACHE[key].get("cached_at") or 0))
+                WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.pop(oldest, None)
+    start_response(
+        "200 OK",
+        [
+            ("Content-Type", "image/png"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "public, max-age=600"),
+        ],
+    )
+    return [body]
 
 
 def handle_miniprogram_login(ctx: RequestContext, start_response):
@@ -17309,6 +17525,10 @@ def app(environ, start_response):
             return serve_asset(start_response, path)
         if path == "/api/miniprogram/login":
             return handle_miniprogram_login(ctx, start_response)
+        if path == "/api/miniprogram/share-entry":
+            return handle_miniprogram_share_entry(ctx, start_response)
+        if path == "/api/miniprogram/share-code":
+            return handle_miniprogram_share_code(ctx, start_response)
         if path == "/api/miniprogram/profile":
             return handle_miniprogram_profile(ctx, start_response)
         if path == "/api/miniprogram/player-search":
@@ -17325,6 +17545,8 @@ def app(environ, start_response):
             return handle_dashboard_api(ctx, start_response)
         if path == "/api/competitions":
             return handle_competitions_api(ctx, start_response)
+        if path == "/api/search":
+            return handle_search_api(ctx, start_response)
         if path == "/api/guilds":
             return handle_guilds_api(ctx, start_response)
         if path.startswith("/api/guilds/"):

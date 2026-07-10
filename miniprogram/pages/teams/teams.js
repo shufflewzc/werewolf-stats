@@ -18,10 +18,10 @@ Page({
   },
 
   onPullDownRefresh() {
-    this.loadData().finally(() => wx.stopPullDownRefresh());
+    this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
-  async loadData() {
+  async loadData(options = {}) {
     this.setData({ loading: true, error: "" });
     try {
       const selectedScope = getRequiredScope();
@@ -34,7 +34,7 @@ Page({
         return;
       }
 
-      const payload = await request("/api/teams", scopeParams(selectedScope));
+      const payload = await request("/api/teams", scopeParams(selectedScope), options);
       this.setData({
         loading: false,
         selectedScope,

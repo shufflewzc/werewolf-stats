@@ -21,6 +21,9 @@
   <view wx:elif="{{error}}" class="section">
     <view class="error-card">
       <text>{{error}}</text>
+      <view class="button-row">
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadData">重试</button>
+      </view>
     </view>
   </view>
 
@@ -64,7 +67,7 @@
     <view class="section">
       <view class="season-search-card">
         <view class="season-search-row">
-          <input class="season-search-input" value="{{searchKeyword}}" placeholder="搜索门派/战队/选手" confirm-type="search" bindinput="updateSearchKeyword" bindconfirm="searchSeason" />
+          <input class="season-search-input" value="{{searchKeyword}}" placeholder="搜索选手 / 战队 / 门派（至少 2 字）" confirm-type="search" bindinput="updateSearchKeyword" bindconfirm="searchSeason" />
           <button class="season-search-button" hover-class="tap-button-hover" loading="{{searchLoading}}" bindtap="searchSeason">搜索</button>
           <button class="season-clear-button" hover-class="tap-button-hover" wx:if="{{searchKeyword}}" bindtap="clearSearch">清空</button>
         </view>
@@ -79,7 +82,7 @@
           </view>
         </view>
         <view class="empty-inline" wx:if="{{searchSearched && !searchLoading && !searchResults.length}}">
-          <text>当前赛季没有匹配结果。</text>
+          <text>{{searchKeyword.length < 2 ? "请输入至少 2 个字。" : "当前赛事没有匹配结果。"}}</text>
         </view>
       </view>
     </view>
@@ -117,12 +120,31 @@
     <view class="section" wx:if="{{latestDay}}">
       <view class="day-focus-card tap-card" hover-class="tap-card-hover" data-played-on="{{latestDay.played_on}}" bindtap="openDayDetail">
         <view class="list-main">
-          <text class="selected-label">最近比赛日</text>
+          <text class="selected-label">比赛日中心 · 最近更新</text>
           <text class="day-focus-title">{{latestDay.played_on}}</text>
           <text class="list-meta">{{latestDay.competition_names[0] || selectedScope.competition}} · {{latestDay.match_count}} 场 · 点开看当天赛程和日榜</text>
         </view>
-        <text class="day-pill">详情</text>
+        <view class="match-day-actions">
+          <button class="day-action" hover-class="tap-button-hover" data-played-on="{{latestDay.played_on}}" catchtap="openLatestDayPrediction">预测</button>
+          <text class="day-pill">详情</text>
+        </view>
         <text class="tap-cue">›</text>
+      </view>
+    </view>
+
+    <view class="section" wx:if="{{followedPlayers.length}}">
+      <view class="section-head">
+        <text class="section-title">我关注的选手</text>
+        <text class="section-note">{{followedPlayers.length}} 人</text>
+      </view>
+      <view class="stack">
+        <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{followedPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openFollowedPlayer">
+          <view class="list-main">
+            <text class="list-title">{{item.display_name}}</text>
+            <text class="list-meta">{{item.team_name}} · 已关注</text>
+          </view>
+          <text class="tap-cue">›</text>
+        </view>
       </view>
     </view>
 

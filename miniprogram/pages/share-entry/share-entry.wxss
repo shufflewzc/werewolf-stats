@@ -1,0 +1,25 @@
+.entry-card {
+  margin-top: 80rpx;
+  padding: 44rpx 32rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 16rpx;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+  text-align: center;
+}
+
+.entry-title,
+.entry-copy {
+  display: block;
+}
+
+.entry-title {
+  font-size: 32rpx;
+  font-weight: 800;
+}
+
+.entry-copy {
+  margin-top: 14rpx;
+  font-size: 25rpx;
+  color: #64748b;
+}

@@ -89,7 +89,9 @@ Page({
     const metrics = payload.metrics || [];
     const points = (metrics.find((item) => item.label && item.label.indexOf("积分") >= 0) || {}).value || "--";
     const winRate = (payload.insights || {}).overall_win_rate || "--";
-    const mvp = (metrics.find((item) => item.label && item.label.toUpperCase().indexOf("MVP") >= 0) || {}).value || "--";
+    const mvp = (payload.insights || {}).mvp_count !== undefined
+      ? String((payload.insights || {}).mvp_count)
+      : ((metrics.find((item) => item.label && item.label.toUpperCase().indexOf("MVP") >= 0) || {}).value || "0");
     ctx.fillStyle = "#0b0b0c";
     ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
     ctx.strokeStyle = "#d4af37";

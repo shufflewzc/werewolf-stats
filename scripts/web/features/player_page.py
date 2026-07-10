@@ -1228,6 +1228,12 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             }
         )
 
+    mvp_count = sum(
+        1
+        for item in history
+        if any(str(label or "").strip().upper() == "MVP" for label in item.get("award_labels", []))
+    )
+
     dimension = _serialize_player_dimension_payload(
         ctx,
         data,
@@ -1259,6 +1265,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             "joined_on": detail["joined_on"],
             "notes": detail["notes"],
             "owner": owner_user.get("display_name") or owner_user.get("username") if owner_user else "未绑定账号",
+            "mvp_count": mvp_count,
         },
         "actions": {
             "players_href": build_scoped_path("/players", selected_competition, selected_season),
@@ -1273,6 +1280,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             {"label": "总积分", "value": detail["points_total"], "copy": "当前赛季累计"},
             {"label": "场均积分", "value": detail["average_points"], "copy": "每局稳定产出"},
             {"label": "出赛局数", "value": str(detail["games_played"]), "copy": "有效比赛记录"},
+            {"label": "MVP", "value": str(mvp_count), "copy": "当前赛季获奖次数"},
             {"label": "站边率", "value": detail["stance_rate"], "copy": "已填写站边统计"},
         ],
         "insights": {
@@ -1282,6 +1290,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             "villagers_width": _pct_width(detail["villagers_win_rate"]),
             "werewolves_win_rate": detail["werewolves_win_rate"],
             "werewolves_width": _pct_width(detail["werewolves_win_rate"]),
+            "mvp_count": mvp_count,
         },
         "roles": roles,
         "recent_matches": history[:6],

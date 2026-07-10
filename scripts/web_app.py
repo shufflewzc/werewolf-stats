@@ -16296,7 +16296,7 @@ def get_wechat_miniprogram_access_token() -> str:
         return access_token
 
 
-def request_wechat_miniprogram_share_code(scene: str) -> bytes:
+def request_wechat_miniprogram_share_code(scene: str) -> tuple[bytes, str]:
     access_token = get_wechat_miniprogram_access_token()
     request_body = json.dumps(
         {
@@ -16316,15 +16316,22 @@ def request_wechat_miniprogram_share_code(scene: str) -> bytes:
     )
     with urlopen(request, timeout=15) as response:
         body = response.read()
+        content_type = str(response.headers.get("Content-Type") or "").split(";", 1)[0].lower()
     if body.lstrip().startswith(b"{"):
         try:
             payload = json.loads(body.decode("utf-8"))
             raise RuntimeError(str(payload.get("errmsg") or "生成微信小程序码失败。"))
         except UnicodeDecodeError:
             pass
-    if not body.startswith(b"\x89PNG"):
+    if body.startswith(b"\x89PNG"):
+        return body, "image/png"
+    if body.startswith(b"\xff\xd8\xff"):
+        return body, "image/jpeg"
+    if content_type.startswith("image/"):
+        return body, content_type
+    if not body:
         raise RuntimeError("微信未返回有效的小程序码图片。")
-    return body
+    raise RuntimeError("微信未返回有效的小程序码图片。")
 
 
 def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str:
@@ -16398,22 +16405,24 @@ def handle_miniprogram_share_code(ctx: RequestContext, start_response):
         cached = WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.get(scene)
         if cached and now - float(cached.get("cached_at") or 0) <= WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_TTL_SECONDS:
             body = bytes(cached["body"])
+            content_type = str(cached.get("content_type") or "image/png")
         else:
             body = b""
+            content_type = ""
     if not body:
         try:
-            body = request_wechat_miniprogram_share_code(scene)
+            body, content_type = request_wechat_miniprogram_share_code(scene)
         except Exception as exc:
             return start_response_json(start_response, "502 Bad Gateway", {"error": str(exc) or "生成小程序码失败。"})
         with WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_LOCK:
-            WECHAT_MINIPROGRAM_SHARE_CODE_CACHE[scene] = {"cached_at": now, "body": body}
+            WECHAT_MINIPROGRAM_SHARE_CODE_CACHE[scene] = {"cached_at": now, "body": body, "content_type": content_type}
             if len(WECHAT_MINIPROGRAM_SHARE_CODE_CACHE) > 100:
                 oldest = min(WECHAT_MINIPROGRAM_SHARE_CODE_CACHE, key=lambda key: float(WECHAT_MINIPROGRAM_SHARE_CODE_CACHE[key].get("cached_at") or 0))
                 WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.pop(oldest, None)
     start_response(
         "200 OK",
         [
-            ("Content-Type", "image/png"),
+            ("Content-Type", content_type or "image/png"),
             ("Content-Length", str(len(body))),
             ("Cache-Control", "public, max-age=600"),
         ],

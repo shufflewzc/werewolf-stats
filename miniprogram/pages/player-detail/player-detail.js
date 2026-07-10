@@ -187,6 +187,11 @@ Page({
     wx.navigateTo({ url: `/pages/share-card/share-card?player_id=${encodeURIComponent(playerId)}` });
   },
 
+  openCompare() {
+    if (!this.data.playerId) return;
+    wx.navigateTo({ url: `/pages/compare/compare?type=player&left_id=${encodeURIComponent(this.data.playerId)}` });
+  },
+
   changeCompetition() {
     goCompetitions();
   },

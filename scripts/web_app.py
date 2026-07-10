@@ -16796,6 +16796,12 @@ def handle_player_bindings(ctx: RequestContext, start_response):
     return impl(ctx, start_response)
 
 
+def handle_data_hygiene(ctx: RequestContext, start_response):
+    from web.features.data_hygiene import handle_data_hygiene as impl
+
+    return impl(ctx, start_response)
+
+
 def handle_player_edit(ctx: RequestContext, start_response, player_id: str):
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", get_player_edit_page(ctx, player_id))
@@ -17905,6 +17911,11 @@ def app(environ, start_response):
             if admin_guard is not None:
                 return admin_guard
             return handle_team_admin(ctx, start_response)
+        if path == "/data-hygiene":
+            admin_guard = require_admin(ctx, start_response)
+            if admin_guard is not None:
+                return admin_guard
+            return handle_data_hygiene(ctx, start_response)
         if path == "/series-manage":
             manager_guard = require_series_manager(ctx, start_response)
             if manager_guard is not None:

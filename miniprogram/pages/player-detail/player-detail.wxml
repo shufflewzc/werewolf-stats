@@ -49,6 +49,7 @@
       <view class="quick-actions">
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="goPlayers">选手榜</button>
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="goPredictions">胜率预测</button>
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="openCompare">选手对比</button>
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="openShareCard">生成战绩卡</button>
       </view>
     </view>

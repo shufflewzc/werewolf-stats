@@ -116,6 +116,11 @@ Page({
     goCompetitions();
   },
 
+  openCompare() {
+    if (!this.data.teamId) return;
+    wx.navigateTo({ url: `/pages/compare/compare?type=team&left_id=${encodeURIComponent(this.data.teamId)}` });
+  },
+
   openPlayer(event) {
     const playerId = event.currentTarget.dataset.playerId;
     if (!playerId) {

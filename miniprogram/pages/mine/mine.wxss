@@ -1,6 +1,7 @@
 .account-card,
 .form-card,
-.center-card {
+.center-card,
+.follow-card {
   padding: 28rpx;
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
@@ -114,6 +115,63 @@
 
 .bound-player-item:first-child {
   border-top: 0;
+}
+
+.follow-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18rpx;
+}
+
+.follow-title {
+  display: block;
+  margin-top: 8rpx;
+  font-size: 34rpx;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.follow-count {
+  flex: 0 0 auto;
+  padding: 8rpx 14rpx;
+  border-radius: 999rpx;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 22rpx;
+  font-weight: 700;
+}
+
+.follow-list {
+  margin-top: 22rpx;
+  padding: 0 20rpx;
+  border-radius: 12rpx;
+  background: #f8fafc;
+}
+
+.follow-item {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-height: 88rpx;
+  padding: 16rpx 0;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.follow-item:first-child {
+  border-top: 0;
+}
+
+.follow-remove {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 8rpx 12rpx;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #475569;
+  font-size: 21rpx;
+  line-height: 1.35;
 }
 
 .bound-player-name,

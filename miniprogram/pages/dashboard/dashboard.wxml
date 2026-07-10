@@ -141,7 +141,8 @@
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{followedPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openFollowedPlayer">
           <view class="list-main">
             <text class="list-title">{{item.display_name}}</text>
-            <text class="list-meta">{{item.team_name}} · 已关注</text>
+            <text class="list-meta">{{item.team_name}} · 排名 #{{item.rank || "--"}} · 积分 {{item.points_total || "--"}}</text>
+            <text class="list-meta">{{item.recent_label || "正在同步最新战绩"}}</text>
           </view>
           <text class="tap-cue">›</text>
         </view>

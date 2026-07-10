@@ -93,6 +93,28 @@
     </view>
   </view>
 
+  <view class="section" wx:if="{{selectedScope && followedPlayers.length}}">
+    <view class="follow-card">
+      <view class="follow-head">
+        <view>
+          <text class="account-label">当前赛事</text>
+          <text class="follow-title">我的关注</text>
+        </view>
+        <text class="follow-count">{{followedPlayers.length}} 人</text>
+      </view>
+      <view class="follow-list">
+        <view class="follow-item tap-card" hover-class="tap-card-hover" wx:for="{{followedPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openFollowedPlayer">
+          <view class="list-main">
+            <text class="bound-player-name">{{item.display_name}}</text>
+            <text class="account-meta">{{item.team_name || "未绑定战队"}}</text>
+          </view>
+          <button class="follow-remove" hover-class="tap-button-hover" data-player-id="{{item.player_id}}" catchtap="removeFollowedPlayer">取消关注</button>
+          <text class="tap-cue">›</text>
+        </view>
+      </view>
+    </view>
+  </view>
+
   <view class="section">
     <view class="form-card" wx:if="{{user}}">
       <text class="form-title">完善资料</text>

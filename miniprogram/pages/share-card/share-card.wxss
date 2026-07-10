@@ -25,3 +25,40 @@
   background: #0b0b0c;
   box-shadow: 0 14rpx 36rpx rgba(15, 23, 42, 0.18);
 }
+
+.share-canvas.is-landscape {
+  height: 463rpx;
+}
+
+.mode-switch,
+.achievement-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12rpx;
+}
+
+.mode-switch { margin-bottom: 20rpx; }
+
+.mode-button,
+.achievement-chip {
+  margin: 0;
+  padding: 0 20rpx;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 999rpx;
+  font-size: 23rpx;
+  line-height: 58rpx;
+  color: #334155;
+  background: #ffffff;
+}
+
+.mode-button { height: 58rpx; }
+
+.mode-button.is-active,
+.achievement-chip.is-selected {
+  border-color: #a16207;
+  color: #ffffff;
+  background: #111827;
+}
+
+.achievement-picker { margin-bottom: 20rpx; }
+.picker-label { display: block; margin-bottom: 12rpx; font-size: 24rpx; color: #475569; }

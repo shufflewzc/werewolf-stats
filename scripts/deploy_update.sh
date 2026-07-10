@@ -12,6 +12,8 @@ RUN_APPLY_SCHEMA="${RUN_APPLY_SCHEMA:-1}"
 RUN_PRE_DEPLOY_CHECK="${RUN_PRE_DEPLOY_CHECK:-1}"
 RUN_NGINX_CHECK="${RUN_NGINX_CHECK:-1}"
 RESTART_SERVICE="${RESTART_SERVICE:-1}"
+RUN_WARM_PUBLIC_CACHE="${RUN_WARM_PUBLIC_CACHE:-1}"
+WARM_CACHE_ROUNDS="${WARM_CACHE_ROUNDS:-2}"
 SHOW_STATUS="${SHOW_STATUS:-1}"
 
 usage() {
@@ -28,13 +30,15 @@ Options:
   --no-check              Skip scripts/pre_deploy_check.py
   --no-nginx-check        Skip nginx -t and reload
   --no-restart            Skip service restart
+  --no-warm-cache         Skip post-restart public API cache warming
   --no-status             Skip final service status output
   -h, --help              Show this help
 
 Environment overrides are also supported:
   APP_DIR, ENV_FILE, SERVICE_NAME, PYTHON_BIN,
   RUN_GIT_PULL, RUN_REQUIREMENTS, RUN_APPLY_SCHEMA, RUN_PRE_DEPLOY_CHECK,
-  RUN_NGINX_CHECK, RESTART_SERVICE, SHOW_STATUS
+  RUN_NGINX_CHECK, RESTART_SERVICE, RUN_WARM_PUBLIC_CACHE, WARM_CACHE_ROUNDS,
+  SHOW_STATUS
 EOF
 }
 
@@ -78,6 +82,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --no-restart)
       RESTART_SERVICE=0
+      shift
+      ;;
+    --no-warm-cache)
+      RUN_WARM_PUBLIC_CACHE=0
       shift
       ;;
     --no-status)
@@ -150,6 +158,12 @@ fi
 
 if [ "$RESTART_SERVICE" = "1" ]; then
   run sudo systemctl restart "$SERVICE_NAME"
+fi
+
+if [ "$RUN_WARM_PUBLIC_CACHE" = "1" ]; then
+  run "$PYTHON_BIN" scripts/warm_public_api_cache.py \
+    --base-url "http://127.0.0.1:8000" \
+    --rounds "$WARM_CACHE_ROUNDS"
 fi
 
 if [ "$SHOW_STATUS" = "1" ]; then

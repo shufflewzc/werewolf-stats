@@ -6,6 +6,7 @@ const {
   saveProfile: saveProfileRequest
 } = require("../../utils/auth");
 const { request } = require("../../utils/api");
+const { getFollowedPlayers, toggleFollow } = require("../../utils/follows");
 const { getSelectedScope, scopeParams } = require("../../utils/scope");
 
 const GENDER_VALUES = ["prefer_not_to_say", "male", "female", "other"];
@@ -45,7 +46,8 @@ Page({
     centerStatus: "未登录",
     centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
     boundPlayerLabel: "",
-    boundPlayers: []
+    boundPlayers: [],
+    followedPlayers: []
   },
 
   onShow() {
@@ -87,6 +89,7 @@ Page({
       this.setData({
         selectedScope: null,
         latestDay: null,
+        followedPlayers: [],
         centerStatus,
         boundPlayerLabel,
         boundPlayers,
@@ -104,6 +107,7 @@ Page({
     this.setData({
       selectedScope,
       latestDay,
+      followedPlayers: getFollowedPlayers(selectedScope),
       centerStatus,
       centerCopy,
       boundPlayerLabel,
@@ -132,7 +136,8 @@ Page({
       centerStatus: "未登录",
       centerCopy: "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。",
       boundPlayerLabel: "",
-      boundPlayers: []
+      boundPlayers: [],
+      followedPlayers: []
     });
   },
 
@@ -266,5 +271,26 @@ Page({
     wx.navigateTo({
       url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}`
     });
+  },
+
+  openFollowedPlayer(event) {
+    const playerId = event.currentTarget.dataset.playerId;
+    if (!playerId || !this.data.selectedScope || !this.data.selectedScope.competition) {
+      return;
+    }
+    wx.navigateTo({
+      url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}`
+    });
+  },
+
+  removeFollowedPlayer(event) {
+    const playerId = event.currentTarget.dataset.playerId;
+    const selectedScope = this.data.selectedScope;
+    if (!playerId || !selectedScope || !selectedScope.competition) {
+      return;
+    }
+    toggleFollow({ player_id: playerId }, selectedScope);
+    this.setData({ followedPlayers: getFollowedPlayers(selectedScope) });
+    wx.showToast({ title: "已取消关注", icon: "none" });
   }
 });

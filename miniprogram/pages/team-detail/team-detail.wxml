@@ -45,6 +45,9 @@
         </view>
         <button class="scope-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
       </view>
+      <view class="quick-actions">
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="openCompare">战队对比</button>
+      </view>
     </view>
 
     <view class="section">

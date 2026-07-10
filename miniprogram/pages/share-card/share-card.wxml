@@ -3,7 +3,19 @@
     <text class="intro-title">黑金战绩卡</text>
     <text class="intro-copy">扫码可直达该选手的小程序详情页。</text>
   </view>
-  <canvas type="2d" id="shareCanvas" class="share-canvas"></canvas>
+  <view class="mode-switch">
+    <button class="mode-button {{mode === 'vertical' ? 'is-active' : ''}}" data-mode="vertical" bindtap="setMode">竖版</button>
+    <button class="mode-button {{mode === 'landscape' ? 'is-active' : ''}}" data-mode="landscape" bindtap="setMode">横版</button>
+  </view>
+  <view class="achievement-picker" wx:if="{{achievements.length}}">
+    <text class="picker-label">选择成就（最多 2 个）</text>
+    <view class="achievement-chips">
+      <view class="achievement-chip {{item.selected ? 'is-selected' : ''}}" wx:for="{{achievements}}" wx:key="code" data-code="{{item.code}}" bindtap="toggleAchievement">
+        <text>{{item.title}}</text><text wx:if="{{item.meta}}"> · {{item.meta}}</text>
+      </view>
+    </view>
+  </view>
+  <canvas type="2d" id="shareCanvas" class="share-canvas {{mode === 'landscape' ? 'is-landscape' : ''}}"></canvas>
   <view class="button-row">
     <button class="primary-button" hover-class="tap-button-hover" loading="{{loading}}" bindtap="saveCard">保存到相册</button>
     <button class="ghost-button" hover-class="tap-button-hover" bindtap="previewCard">预览</button>

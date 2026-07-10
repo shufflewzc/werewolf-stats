@@ -78,6 +78,28 @@ function decorateLeaderboardRows(key, rows) {
   });
 }
 
+async function hydrateFollowedPlayers(items, scope, options) {
+  const follows = (items || []).slice(0, 5);
+  const results = await Promise.all(follows.map(async (item) => {
+    try {
+      const payload = await request(`/api/players/${encodeURIComponent(item.player_id)}`, scopeParams(scope), options);
+      const player = payload.player || {};
+      const recent = (payload.recent_matches || [])[0] || {};
+      return {
+        ...item,
+        display_name: player.name || player.display_name || item.display_name,
+        team_name: player.team_name || item.team_name,
+        points_total: player.points_total || "--",
+        rank: player.rank || "--",
+        recent_label: recent.played_on ? `${recent.played_on} · ${recent.result_label || recent.result || "已出战"}` : "暂无比赛记录"
+      };
+    } catch (error) {
+      return item;
+    }
+  }));
+  return results;
+}
+
 Page({
   data: {
     loading: true,
@@ -161,7 +183,7 @@ Page({
       const matchDays = take(payload.match_days, 4);
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
-      const followedPlayers = getFollowedPlayers(selectedScope).slice(0, 5);
+      const followedPlayers = await hydrateFollowedPlayers(getFollowedPlayers(selectedScope), selectedScope, options);
       let myPlayer = null;
       let myEmptyText = "微信登录后，可以绑定选手并查看自己的赛事数据。";
       let myPrimaryActionText = "去登录";

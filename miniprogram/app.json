@@ -6,6 +6,7 @@
     "pages/players/players",
     "pages/player-detail/player-detail",
     "pages/team-detail/team-detail",
+    "pages/compare/compare",
     "pages/guild-detail/guild-detail",
     "pages/mine/mine",
     "pages/player-bind/player-bind",

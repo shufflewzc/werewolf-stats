@@ -2386,6 +2386,42 @@ def record_access_log(
     return log_id
 
 
+def record_access_logs_batch(entries: list[dict[str, Any]]) -> int:
+    """Persist access logs in one transaction so request logging never creates a write per request."""
+    if not entries:
+        return 0
+    rows = [
+        (
+            "access_" + secrets.token_hex(12),
+            str(entry.get("request_id") or "").strip()[:80],
+            str(entry.get("path") or "").strip() or "/",
+            str(entry.get("method") or "").strip().upper() or "GET",
+            max(0, int(entry.get("status_code") or 0)),
+            max(0, int(entry.get("duration_ms") or 0)),
+            str(entry.get("query_string") or "").strip(),
+            str(entry.get("username") or "").strip(),
+            str(entry.get("ip_address") or "").strip(),
+            str(entry.get("user_agent") or "")[:500],
+            str(entry.get("created_at") or "").strip(),
+        )
+        for entry in entries
+    ]
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            connection.executemany(
+                """
+                INSERT INTO access_logs (
+                    log_id, request_id, path, method, status_code, duration_ms, query_string, username,
+                    ip_address, user_agent, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                rows,
+            )
+    return len(rows)
+
+
 def record_audit_log(
     *,
     action: str,

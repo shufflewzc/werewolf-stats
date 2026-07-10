@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
@@ -89,6 +90,11 @@ MAX_EXCEL_UPLOAD_BYTES = int(os.getenv("MAX_EXCEL_UPLOAD_BYTES", str(10 * 1024 *
 MAX_EXCEL_SHEET_ROWS = int(os.getenv("MAX_EXCEL_SHEET_ROWS", "2000"))
 MAX_ZIP_UPLOAD_BYTES = int(os.getenv("MAX_ZIP_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 MAX_ZIP_IMAGE_COUNT = int(os.getenv("MAX_ZIP_IMAGE_COUNT", "300"))
+IMPORT_BACKGROUND_WORKERS = max(1, int(os.getenv("IMPORT_BACKGROUND_WORKERS", "1")))
+IMPORT_EXECUTOR = ThreadPoolExecutor(
+    max_workers=IMPORT_BACKGROUND_WORKERS,
+    thread_name_prefix="match-import",
+)
 PLAYER_PHOTO_PENDING_DIR = legacy.PLAYER_UPLOAD_DIR.parent / "import-pending"
 start_response_html = legacy.start_response_html
 update_import_batch = legacy.update_import_batch
@@ -1072,6 +1078,10 @@ def _import_batch_status_label(status: str) -> str:
 def build_import_batches_panel(ctx: RequestContext) -> str:
     batches = load_import_batches()
     can_rollback = is_admin_user(ctx.current_user)
+    has_running_batch = any(
+        str(item.get("status") or "").strip() == "running"
+        for item in batches
+    )
     rows = []
     for item in batches[:20]:
         batch_id = str(item.get("batch_id") or "").strip()
@@ -1131,6 +1141,7 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
           <tbody>{''.join(rows) or '<tr><td colspan="5" class="text-secondary">暂无导入记录。</td></tr>'}</tbody>
         </table>
       </div>
+      {"<script>window.setTimeout(() => window.location.reload(), 3000);</script>" if has_running_batch else ""}
     </section>
     """
 
@@ -1452,10 +1463,24 @@ def build_match_management_panel(
 def read_excel_sheet_rows(upload: UploadedFile, sheet_name: str) -> list[dict[str, str]]:
     with ZipFile(BytesIO(upload.data)) as archive:
         shared_strings = load_excel_shared_strings(archive)
-        sheet_path = resolve_sheet_archive_path(archive, sheet_name)
-        if not sheet_path:
-            return []
-        sheet_xml = ET.fromstring(archive.read(sheet_path))
+        return read_excel_sheet_rows_from_archive(archive, sheet_name, shared_strings)
+
+
+def read_excel_sheet_rows_from_archive(
+    archive: ZipFile,
+    sheet_name: str,
+    shared_strings: list[str],
+) -> list[dict[str, str]]:
+    """Read a sheet using an already-open XLSX archive.
+
+    Import templates often probe several alternative sheet names. Keeping that
+    probe within one ZipFile avoids repeatedly opening the same upload and
+    reparsing its shared-string table.
+    """
+    sheet_path = resolve_sheet_archive_path(archive, sheet_name)
+    if not sheet_path:
+        return []
+    sheet_xml = ET.fromstring(archive.read(sheet_path))
 
     rows: list[list[str]] = []
     for row in sheet_xml.findall("main:sheetData/main:row", EXCEL_NS):
@@ -1501,11 +1526,25 @@ def read_excel_sheet_rows(upload: UploadedFile, sheet_name: str) -> list[dict[st
 
 
 def read_first_available_sheet_rows(upload: UploadedFile, sheet_names: list[str]) -> list[dict[str, str]]:
-    for sheet_name in sheet_names:
-        rows = read_excel_sheet_rows(upload, sheet_name)
-        if rows:
-            return rows
+    with ZipFile(BytesIO(upload.data)) as archive:
+        shared_strings = load_excel_shared_strings(archive)
+        for sheet_name in sheet_names:
+            rows = read_excel_sheet_rows_from_archive(archive, sheet_name, shared_strings)
+            if rows:
+                return rows
     return []
+
+
+def read_excel_sheets_rows(
+    upload: UploadedFile,
+    sheet_names: list[str],
+) -> dict[str, list[dict[str, str]]]:
+    with ZipFile(BytesIO(upload.data)) as archive:
+        shared_strings = load_excel_shared_strings(archive)
+        return {
+            sheet_name: read_excel_sheet_rows_from_archive(archive, sheet_name, shared_strings)
+            for sheet_name in sheet_names
+        }
 
 
 def load_excel_shared_strings(archive: ZipFile) -> list[str]:
@@ -1819,10 +1858,12 @@ def get_excel_row_value(row: dict[str, str], *keys: str) -> str:
 
 
 def read_optional_sheet_rows(upload: UploadedFile, sheet_names: list[str]) -> list[dict[str, str]]:
-    for sheet_name in sheet_names:
-        rows = read_excel_sheet_rows(upload, sheet_name)
-        if rows:
-            return rows
+    with ZipFile(BytesIO(upload.data)) as archive:
+        shared_strings = load_excel_shared_strings(archive)
+        for sheet_name in sheet_names:
+            rows = read_excel_sheet_rows_from_archive(archive, sheet_name, shared_strings)
+            if rows:
+                return rows
     return []
 
 
@@ -2504,8 +2545,9 @@ def import_matches_from_excel(
             player_rows = []
         else:
             parsed_matches = []
-            match_rows = read_excel_sheet_rows(upload, "matches")
-            player_rows = read_excel_sheet_rows(upload, "players")
+            workbook_rows = read_excel_sheets_rows(upload, ["matches", "players"])
+            match_rows = workbook_rows["matches"]
+            player_rows = workbook_rows["players"]
             hydrate_excel_rows_from_match_ids(
                 match_rows,
                 data,
@@ -4414,6 +4456,109 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
     return redirect(start_response, next_path)
 
 
+def run_match_excel_import_job(
+    ctx: RequestContext,
+    upload: UploadedFile,
+    group_label: str,
+    import_batch_id: str,
+) -> None:
+    """Execute the expensive Excel parse and database update after the HTTP response."""
+    try:
+        data = load_validated_data()
+        before_players = deepcopy(data.get("players", []))
+        before_teams = deepcopy(data.get("teams", []))
+        next_matches, import_message = import_matches_from_excel(ctx, data, upload, group_label)
+        if next_matches is None:
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary="Excel 导入失败：" + import_message,
+                ctx=ctx,
+            )
+            return
+        before_match_by_id = {
+            str(match.get("match_id") or ""): match
+            for match in data.get("matches", [])
+        }
+        next_match_by_id = {
+            str(match.get("match_id") or ""): match
+            for match in next_matches
+        }
+        created_match_ids = [
+            match_id
+            for match_id in next_match_by_id
+            if match_id and match_id not in before_match_by_id
+        ]
+        updated_match_ids = [
+            match_id
+            for match_id, match in next_match_by_id.items()
+            if match_id in before_match_by_id
+            and json.dumps(before_match_by_id[match_id], ensure_ascii=False, sort_keys=True)
+            != json.dumps(match, ensure_ascii=False, sort_keys=True)
+        ]
+        users = load_users()
+        before_matches = list(data.get("matches", []))
+        sanitized_next_matches = [
+            strip_excel_import_helper_fields(match)
+            for match in next_matches
+            if isinstance(match, dict)
+        ]
+        normalized_matches, _ = canonicalize_match_ids(sanitized_next_matches)
+        data["matches"] = normalized_matches
+        created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
+        users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
+        errors = legacy.save_imported_matches_state(
+            data,
+            users,
+            before_matches,
+            normalized_matches,
+            created_player_ids,
+            before_players,
+            before_teams,
+        )
+        if errors:
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary="Excel 导入保存失败：" + "；".join(errors[:3]),
+                ctx=ctx,
+            )
+            return
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=import_message,
+            metadata={
+                "created_matches": len(created_match_ids),
+                "updated_matches": len(updated_match_ids),
+                "created_players": len(created_player_ids),
+                "created_match_ids": created_match_ids[:100],
+                "updated_match_ids": updated_match_ids[:100],
+            },
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "matches.import_excel",
+            target_type="competition",
+            target_id=group_label,
+            summary=import_message,
+            metadata={
+                "group_label": group_label,
+                "match_count": len(normalized_matches),
+                "placeholder_player_ids": created_player_ids,
+                "async": True,
+            },
+        )
+    except Exception as exc:
+        update_import_batch(
+            import_batch_id,
+            status="failed",
+            summary=f"Excel 后台导入异常：{exc}",
+            ctx=ctx,
+        )
+
+
 def handle_match_create(ctx: RequestContext, start_response):
     if ctx.method == "GET":
         action = form_value(ctx.query, "action").strip()
@@ -4820,25 +4965,21 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error, excel_form_values=excel_form_values),
             )
-        before_players = deepcopy(data.get("players", []))
-        before_teams = deepcopy(data.get("teams", []))
-        next_matches, import_message = import_matches_from_excel(ctx, data, upload, group_label)
-        if next_matches is None:
+        running_batches = [
+            item
+            for item in load_import_batches()
+            if str(item.get("status") or "").strip() == "running"
+        ]
+        if running_batches:
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=import_message, excel_form_values=excel_form_values),
+                get_match_create_page(
+                    ctx,
+                    alert="已有导入任务正在处理中，请等待完成后再提交新的 Excel。",
+                    excel_form_values=excel_form_values,
+                ),
             )
-        before_match_by_id = {str(match.get("match_id") or ""): match for match in data.get("matches", [])}
-        next_match_by_id = {str(match.get("match_id") or ""): match for match in next_matches}
-        created_match_ids = [match_id for match_id in next_match_by_id if match_id and match_id not in before_match_by_id]
-        updated_match_ids = [
-            match_id
-            for match_id, match in next_match_by_id.items()
-            if match_id in before_match_by_id
-            and json.dumps(before_match_by_id[match_id], ensure_ascii=False, sort_keys=True)
-            != json.dumps(match, ensure_ascii=False, sort_keys=True)
-        ]
         import_batch_id = create_import_batch(
             ctx=ctx,
             action="matches.import_excel",
@@ -4846,71 +4987,38 @@ def handle_match_create(ctx: RequestContext, start_response):
             filename=getattr(upload, "filename", "") or "",
             metadata={
                 "group_label": group_label,
-                "created_matches": len(created_match_ids),
-                "updated_matches": len(updated_match_ids),
+                "background": True,
             },
         )
-        users = load_users()
-        before_matches = list(data.get("matches", []))
-        sanitized_next_matches = [
-            strip_excel_import_helper_fields(match)
-            for match in next_matches
-            if isinstance(match, dict)
-        ]
-        normalized_matches, _ = canonicalize_match_ids(sanitized_next_matches)
-        data["matches"] = normalized_matches
-        created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
-        users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
-        errors = legacy.save_imported_matches_state(
-            data,
-            users,
-            before_matches,
-            normalized_matches,
-            created_player_ids,
-            before_players,
-            before_teams,
-        )
-        if errors:
-            update_import_batch(import_batch_id, status="failed", summary="Excel 导入保存失败：" + "；".join(errors[:3]), ctx=ctx)
+        try:
+            IMPORT_EXECUTOR.submit(
+                run_match_excel_import_job,
+                ctx,
+                upload,
+                group_label,
+                import_batch_id,
+            )
+        except Exception as exc:
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary=f"Excel 后台任务启动失败：{exc}",
+                ctx=ctx,
+            )
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_match_create_page(
                     ctx,
-                    alert="Excel 导入保存失败：" + "；".join(errors[:3]),
+                    alert=f"Excel 后台任务启动失败：{exc}",
                     excel_form_values=excel_form_values,
                 ),
             )
-        update_import_batch(
-            import_batch_id,
-            status="succeeded",
-            summary=import_message,
-            metadata={
-                "created_matches": len(created_match_ids),
-                "updated_matches": len(updated_match_ids),
-                "created_players": len(created_player_ids),
-                "created_match_ids": created_match_ids[:100],
-                "updated_match_ids": updated_match_ids[:100],
-            },
-            ctx=ctx,
-        )
-        audit_action(
-            ctx,
-            "matches.import_excel",
-            target_type="competition",
-            target_id=group_label,
-            summary=import_message,
-            metadata={
-                "group_label": group_label,
-                "match_count": len(normalized_matches),
-                "placeholder_player_ids": created_player_ids,
-            },
-        )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(ctx)
-        alert_message = import_message
-        if created_player_ids:
-            alert_message += " 系统还为模板里不存在的参赛 ID 自动创建了赛季档案。"
-        return redirect(start_response, append_alert_query(next_path, alert_message))
+        return redirect(
+            start_response,
+            append_alert_query(next_path, f"Excel 已进入后台导入队列（批次 {import_batch_id}），页面会自动刷新状态。"),
+        )
     if action == "import_dimension_excel":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()

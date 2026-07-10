@@ -10,6 +10,7 @@ import json
 import math
 import mimetypes
 import os
+import queue
 import re
 import secrets
 import sys
@@ -110,6 +111,7 @@ from sqlite_store import (
     replace_matches_by_id,
     record_audit_log,
     record_access_log,
+    record_access_logs_batch,
     record_ai_conversation,
     update_ai_job_status,
     save_users,
@@ -415,6 +417,16 @@ PUBLIC_API_CACHE_METRICS: dict[str, int] = {
     "sets": 0,
     "invalidations": 0,
 }
+ACCESS_LOG_ASYNC_ENABLED = os.getenv("ACCESS_LOG_ASYNC_ENABLED", "1").strip() != "0"
+ACCESS_LOG_QUEUE_MAX_ENTRIES = int(os.getenv("ACCESS_LOG_QUEUE_MAX_ENTRIES", "5000"))
+ACCESS_LOG_BATCH_SIZE = int(os.getenv("ACCESS_LOG_BATCH_SIZE", "100"))
+ACCESS_LOG_FLUSH_SECONDS = float(os.getenv("ACCESS_LOG_FLUSH_SECONDS", "0.5"))
+ACCESS_LOG_QUEUE: queue.Queue[dict[str, Any]] = queue.Queue(
+    maxsize=max(1, ACCESS_LOG_QUEUE_MAX_ENTRIES)
+)
+ACCESS_LOG_WORKER_LOCK = threading.Lock()
+ACCESS_LOG_WORKER_STARTED = False
+ACCESS_LOG_QUEUE_DROPPED = 0
 PLAYER_ACHIEVEMENT_METRIC_OPTIONS = {
     "rank": "个人积分排名",
     "games_played": "出场局数",
@@ -2485,6 +2497,68 @@ def wrap_start_response_with_security_headers(start_response):
     return wrapped_start_response
 
 
+def _flush_access_log_batch(first_entry: dict[str, Any]) -> None:
+    entries = [first_entry]
+    for _index in range(max(1, ACCESS_LOG_BATCH_SIZE) - 1):
+        try:
+            entries.append(ACCESS_LOG_QUEUE.get_nowait())
+        except queue.Empty:
+            break
+    try:
+        record_access_logs_batch(entries)
+    except Exception as exc:
+        emit_structured_log(
+            "access_log.batch_write_failed",
+            "error",
+            count=len(entries),
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+
+
+def _access_log_worker() -> None:
+    while True:
+        try:
+            first_entry = ACCESS_LOG_QUEUE.get(timeout=max(0.05, ACCESS_LOG_FLUSH_SECONDS))
+        except queue.Empty:
+            continue
+        _flush_access_log_batch(first_entry)
+
+
+def ensure_access_log_worker() -> None:
+    global ACCESS_LOG_WORKER_STARTED
+    if not ACCESS_LOG_ASYNC_ENABLED or ACCESS_LOG_WORKER_STARTED:
+        return
+    with ACCESS_LOG_WORKER_LOCK:
+        if ACCESS_LOG_WORKER_STARTED:
+            return
+        worker = threading.Thread(
+            target=_access_log_worker,
+            name="access-log-writer",
+            daemon=True,
+        )
+        worker.start()
+        ACCESS_LOG_WORKER_STARTED = True
+
+
+def enqueue_access_log(**entry: Any) -> None:
+    global ACCESS_LOG_QUEUE_DROPPED
+    if not ACCESS_LOG_ASYNC_ENABLED:
+        record_access_log(**entry)
+        return
+    ensure_access_log_worker()
+    try:
+        ACCESS_LOG_QUEUE.put_nowait(entry)
+    except queue.Full:
+        ACCESS_LOG_QUEUE_DROPPED += 1
+        emit_structured_log(
+            "access_log.queue_full",
+            "warning",
+            dropped=ACCESS_LOG_QUEUE_DROPPED,
+            queue_max=ACCESS_LOG_QUEUE_MAX_ENTRIES,
+        )
+
+
 def wrap_start_response_with_access_log(start_response, ctx: RequestContext, environ: dict[str, Any], started_at: float):
     should_log = not ctx.path.startswith("/assets/") and ctx.path not in {"/healthz", "/readyz"}
     logged = False
@@ -2499,7 +2573,7 @@ def wrap_start_response_with_access_log(start_response, ctx: RequestContext, env
             except ValueError:
                 status_code = 0
             try:
-                record_access_log(
+                enqueue_access_log(
                     path=ctx.path,
                     method=ctx.method,
                     status_code=status_code,
@@ -16872,6 +16946,10 @@ def serve_asset(start_response, path: str):
         [
             ("Content-Type", content_type),
             ("Content-Length", str(len(payload))),
+            # Assets are immutable between deployments in normal use. A short browser
+            # cache removes repeated Python/Gunicorn file reads without risking long
+            # stale windows after an emergency asset replacement.
+            ("Cache-Control", "public, max-age=600"),
             ("X-Content-Type-Options", "nosniff"),
             ("Cross-Origin-Resource-Policy", "cross-origin"),
             ("Access-Control-Allow-Origin", "*"),

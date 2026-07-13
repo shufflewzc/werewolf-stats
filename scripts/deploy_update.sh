@@ -14,6 +14,8 @@ RUN_NGINX_CHECK="${RUN_NGINX_CHECK:-1}"
 RESTART_SERVICE="${RESTART_SERVICE:-1}"
 RUN_WARM_PUBLIC_CACHE="${RUN_WARM_PUBLIC_CACHE:-1}"
 WARM_CACHE_ROUNDS="${WARM_CACHE_ROUNDS:-2}"
+SERVICE_READY_ATTEMPTS="${SERVICE_READY_ATTEMPTS:-30}"
+SERVICE_READY_DELAY="${SERVICE_READY_DELAY:-1}"
 SHOW_STATUS="${SHOW_STATUS:-1}"
 
 usage() {
@@ -38,7 +40,7 @@ Environment overrides are also supported:
   APP_DIR, ENV_FILE, SERVICE_NAME, PYTHON_BIN,
   RUN_GIT_PULL, RUN_REQUIREMENTS, RUN_APPLY_SCHEMA, RUN_PRE_DEPLOY_CHECK,
   RUN_NGINX_CHECK, RESTART_SERVICE, RUN_WARM_PUBLIC_CACHE, WARM_CACHE_ROUNDS,
-  SHOW_STATUS
+  SERVICE_READY_ATTEMPTS, SERVICE_READY_DELAY, SHOW_STATUS
 EOF
 }
 
@@ -110,6 +112,25 @@ run() {
   "$@"
 }
 
+wait_for_service() {
+  ready_url="http://127.0.0.1:8000/readyz"
+  attempt=1
+  echo
+  echo "[deploy] waiting for service readiness: $ready_url"
+  while [ "$attempt" -le "$SERVICE_READY_ATTEMPTS" ]; do
+    if curl --fail --silent --show-error --max-time 3 "$ready_url" >/dev/null 2>&1; then
+      echo "[deploy] service ready after $attempt attempt(s)"
+      return 0
+    fi
+    sleep "$SERVICE_READY_DELAY"
+    attempt=$((attempt + 1))
+  done
+
+  echo "[deploy] service did not become ready after $SERVICE_READY_ATTEMPTS attempts" >&2
+  sudo systemctl --no-pager --lines=40 status "$SERVICE_NAME" || true
+  return 1
+}
+
 if [ ! -d "$APP_DIR" ]; then
   echo "[deploy] app directory not found: $APP_DIR" >&2
   exit 1
@@ -161,6 +182,7 @@ if [ "$RESTART_SERVICE" = "1" ]; then
 fi
 
 if [ "$RUN_WARM_PUBLIC_CACHE" = "1" ]; then
+  wait_for_service
   run "$PYTHON_BIN" scripts/warm_public_api_cache.py \
     --base-url "http://127.0.0.1:8000" \
     --rounds "$WARM_CACHE_ROUNDS"

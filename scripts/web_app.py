@@ -8292,6 +8292,28 @@ def _serialize_dashboard_finalist_row(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_dashboard_leaderboards(
+    data: dict[str, Any],
+    matches: list[dict[str, Any]],
+    selected_competition: str | None,
+    selected_season: str | None,
+) -> dict[str, list[dict[str, Any]]]:
+    """Build all dashboard boards from one explicitly scoped match collection."""
+    scoped_data = {**data, "matches": matches}
+    player_rows = build_player_rows(scoped_data, selected_competition, selected_season)
+    team_rows = build_team_rows(scoped_data, selected_competition, selected_season)
+    displayed_player_rows = [row for row in player_rows if row["games_played"] > 0]
+    displayed_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
+    mvp_rows = build_dashboard_award_rows(data, matches, "mvp_player_id")
+    svp_rows = build_dashboard_award_rows(data, matches, "svp_player_id")
+    return {
+        "teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows],
+        "players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows],
+        "mvp": [_serialize_dashboard_award_row(row, "MVP") for row in mvp_rows],
+        "svp": [_serialize_dashboard_award_row(row, "SVP") for row in svp_rows],
+    }
+
+
 def _build_dashboard_activity_feed(
     data: dict[str, Any],
     selected_competition: str | None,
@@ -8667,6 +8689,25 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     )
     mvp_rows = build_dashboard_award_rows(data, scoped_played_matches, "mvp_player_id")
     svp_rows = build_dashboard_award_rows(data, scoped_played_matches, "svp_player_id")
+    stage_keys = list(dict.fromkeys(
+        str(match.get("stage") or "").strip()
+        for match in scoped_played_matches
+        if str(match.get("stage") or "").strip()
+    ))
+    stage_keys.sort(key=lambda key: list(STAGE_OPTIONS).index(key) if key in STAGE_OPTIONS else len(STAGE_OPTIONS))
+    leaderboards_by_stage = {
+        stage_key: build_dashboard_leaderboards(
+            data,
+            [
+                match
+                for match in scoped_played_matches
+                if str(match.get("stage") or "").strip() == stage_key
+            ],
+            selected_competition,
+            selected_season,
+        )
+        for stage_key in stage_keys
+    }
 
     region_options = [
         {
@@ -8931,6 +8972,14 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "mvp": [_serialize_dashboard_award_row(row, "MVP") for row in mvp_rows],
             "svp": [_serialize_dashboard_award_row(row, "SVP") for row in svp_rows],
         },
+        "leaderboard_stages": [
+            {"key": "all", "label": "全部"},
+            *[
+                {"key": stage_key, "label": STAGE_OPTIONS.get(stage_key, stage_key)}
+                for stage_key in stage_keys
+            ],
+        ],
+        "leaderboards_by_stage": leaderboards_by_stage,
         "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
         "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
         "match_days": match_days,

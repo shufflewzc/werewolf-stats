@@ -231,6 +231,37 @@
   background: #e2e8f0;
 }
 
+.leaderboard-stage-scroll {
+  width: 100%;
+  margin-bottom: 16rpx;
+  white-space: nowrap;
+}
+
+.leaderboard-stages {
+  display: inline-flex;
+  gap: 12rpx;
+  min-width: 100%;
+}
+
+.leaderboard-stage {
+  flex: none;
+  height: 52rpx;
+  padding: 0 24rpx;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 999rpx;
+  color: #475569;
+  background: #ffffff;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 52rpx;
+}
+
+.leaderboard-stage.is-active {
+  border-color: #2563eb;
+  color: #ffffff;
+  background: #2563eb;
+}
+
 .leaderboard-tab {
   display: flex;
   align-items: center;

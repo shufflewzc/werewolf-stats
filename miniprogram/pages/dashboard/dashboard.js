@@ -127,7 +127,10 @@ Page({
     searchResults: [],
     leaderboardTabs: LEADERBOARD_TABS,
     activeLeaderboard: "teams",
+    leaderboardStages: [{ key: "all", label: "全部" }],
+    activeLeaderboardStage: "all",
     leaderboards: {},
+    leaderboardsByStage: {},
     leaderboardRows: []
   },
 
@@ -179,7 +182,16 @@ Page({
         photoUrl: assetUrl(player.photo)
       }));
       const leaderboards = payload.leaderboards || {};
+      const leaderboardStages = payload.leaderboard_stages || [{ key: "all", label: "全部" }];
+      const leaderboardsByStage = payload.leaderboards_by_stage || {};
       const activeLeaderboard = this.data.activeLeaderboard || "teams";
+      const currentStage = this.data.activeLeaderboardStage || "all";
+      const activeLeaderboardStage = leaderboardStages.some((item) => item.key === currentStage)
+        ? currentStage
+        : "all";
+      const activeLeaderboards = activeLeaderboardStage === "all"
+        ? leaderboards
+        : (leaderboardsByStage[activeLeaderboardStage] || {});
       const matchDays = take(payload.match_days, 4);
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
@@ -219,7 +231,10 @@ Page({
         })),
         topPlayers,
         leaderboards,
-        leaderboardRows: decorateLeaderboardRows(activeLeaderboard, leaderboards[activeLeaderboard]),
+        leaderboardStages,
+        activeLeaderboardStage,
+        leaderboardsByStage,
+        leaderboardRows: decorateLeaderboardRows(activeLeaderboard, activeLeaderboards[activeLeaderboard]),
         matchDays,
         latestDay,
         currentUser,
@@ -403,10 +418,24 @@ Page({
 
   changeLeaderboard(event) {
     const key = event.currentTarget.dataset.key;
-    const leaderboards = this.data.leaderboards || {};
+    const stage = this.data.activeLeaderboardStage;
+    const leaderboards = stage === "all"
+      ? (this.data.leaderboards || {})
+      : ((this.data.leaderboardsByStage || {})[stage] || {});
     this.setData({
       activeLeaderboard: key,
       leaderboardRows: decorateLeaderboardRows(key, leaderboards[key])
+    });
+  },
+
+  changeLeaderboardStage(event) {
+    const stage = event.currentTarget.dataset.stage;
+    const leaderboards = stage === "all"
+      ? (this.data.leaderboards || {})
+      : ((this.data.leaderboardsByStage || {})[stage] || {});
+    this.setData({
+      activeLeaderboardStage: stage,
+      leaderboardRows: decorateLeaderboardRows(this.data.activeLeaderboard, leaderboards[this.data.activeLeaderboard])
     });
   },
 

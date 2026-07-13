@@ -164,6 +164,18 @@
         <text class="section-title">排行榜</text>
         <text class="section-note">{{leaderboardRows.length}} 名</text>
       </view>
+      <scroll-view class="leaderboard-stage-scroll" scroll-x enhanced show-scrollbar="{{false}}" wx:if="{{leaderboardStages.length > 1}}">
+        <view class="leaderboard-stages">
+          <view
+            class="leaderboard-stage {{activeLeaderboardStage === item.key ? 'is-active' : ''}}"
+            wx:for="{{leaderboardStages}}"
+            wx:key="key"
+            data-stage="{{item.key}}"
+            hover-class="tap-chip-hover"
+            bindtap="changeLeaderboardStage"
+          >{{item.label}}</view>
+        </view>
+      </scroll-view>
       <view class="leaderboard-tabs">
         <view
           class="leaderboard-tab {{activeLeaderboard === item.key ? 'is-active' : ''}}"

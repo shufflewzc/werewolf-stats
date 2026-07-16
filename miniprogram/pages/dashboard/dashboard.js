@@ -32,6 +32,14 @@ function normalizeKeyword(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function sameScope(left, right) {
+  if (!left || !right) {
+    return false;
+  }
+  return ["competition", "season", "region", "series"]
+    .every((key) => String(left[key] || "") === String(right[key] || ""));
+}
+
 const LEADERBOARD_TABS = [
   { key: "teams", label: "战队积分" },
   { key: "players", label: "个人积分" },
@@ -103,6 +111,8 @@ async function hydrateFollowedPlayers(items, scope, options) {
 Page({
   data: {
     loading: true,
+    hasLoaded: false,
+    refreshing: false,
     error: "",
     selectedScope: null,
     choosing: false,
@@ -154,13 +164,23 @@ Page({
   },
 
   async loadData(options = {}) {
-    this.setData({ loading: true, error: "" });
+    const requestId = (this._loadRequestId || 0) + 1;
+    const hasLoaded = this.data.hasLoaded;
+    this._loadRequestId = requestId;
+    this.setData(hasLoaded
+      ? { refreshing: true, error: "" }
+      : { loading: true, refreshing: false, error: "" });
     try {
       const selectedScope = getSelectedScope();
       if (!selectedScope || !selectedScope.competition) {
         const competitions = await request("/api/competitions", {}, options);
+        if (requestId !== this._loadRequestId) {
+          return;
+        }
         this.setData({
           loading: false,
+          hasLoaded: true,
+          refreshing: false,
           choosing: true,
           selectedScope: null,
           scopeLabel: "选择赛事",
@@ -177,6 +197,9 @@ Page({
       }
 
       const payload = await request("/api/dashboard", scopeParams(selectedScope), options);
+      if (requestId !== this._loadRequestId) {
+        return;
+      }
       const topPlayers = take(payload.top_players, 5).map((player) => ({
         ...player,
         photoUrl: assetUrl(player.photo)
@@ -195,7 +218,8 @@ Page({
       const matchDays = take(payload.match_days, 4);
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
-      const followedPlayers = await hydrateFollowedPlayers(getFollowedPlayers(selectedScope), selectedScope, options);
+      const followedPlayerSeeds = getFollowedPlayers(selectedScope);
+      const keepFollowedPlayers = sameScope(this.data.selectedScope, selectedScope);
       let myPlayer = null;
       let myEmptyText = "微信登录后，可以绑定选手并查看自己的赛事数据。";
       let myPrimaryActionText = "去登录";
@@ -218,6 +242,8 @@ Page({
       }
       this.setData({
         loading: false,
+        hasLoaded: true,
+        refreshing: false,
         choosing: false,
         selectedScope,
         competitions: [],
@@ -242,12 +268,33 @@ Page({
         myEmptyText,
         myPrimaryActionText,
         myStatusLabel,
-        followedPlayers,
+        followedPlayers: keepFollowedPlayers ? this.data.followedPlayers : [],
         searchLoading: false
       });
+      if (!followedPlayerSeeds.length) {
+        if (this.data.followedPlayers.length) {
+          this.setData({ followedPlayers: [] });
+        }
+        return;
+      }
+      hydrateFollowedPlayers(followedPlayerSeeds, selectedScope, options).then((followedPlayers) => {
+        if (requestId !== this._loadRequestId || !sameScope(getSelectedScope(), selectedScope)) {
+          return;
+        }
+        this.setData({ followedPlayers });
+      });
     } catch (error) {
+      if (requestId !== this._loadRequestId) {
+        return;
+      }
+      if (hasLoaded) {
+        this.setData({ refreshing: false });
+        wx.showToast({ title: error.message || "刷新失败，请稍后重试", icon: "none" });
+        return;
+      }
       this.setData({
         loading: false,
+        refreshing: false,
         error: error.message || "首页数据加载失败"
       });
     }

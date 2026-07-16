@@ -3,7 +3,7 @@
     <image wx:if="{{player.photoUrl}}" class="detail-avatar" src="{{player.photoUrl}}" mode="aspectFill" binderror="onPlayerImageError"></image>
     <view wx:else class="detail-avatar image-placeholder"></view>
     <view class="detail-main">
-      <text class="detail-eyebrow">{{player.team_name || "未绑定门派"}}</text>
+      <text class="detail-eyebrow">{{player.team_name || "未绑定战队"}}</text>
       <text class="detail-name">{{player.name || "选手详情"}}</text>
       <text class="detail-copy">排名 #{{player.rank || "-"}} · {{player.owner || "未绑定账号"}}</text>
       <button class="follow-button" hover-class="tap-button-hover" wx:if="{{selectedScope && selectedScope.competition}}" bindtap="toggleFollow">{{followed ? "已关注" : "关注选手"}}</button>

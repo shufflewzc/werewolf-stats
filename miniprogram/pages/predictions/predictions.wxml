@@ -106,7 +106,7 @@
                 <view class="prediction-title-line">
                   <text class="prediction-name">{{item.player_name}}</text>
                 </view>
-                <text class="prediction-meta">{{item.team_name || "未绑定门派"}} · 当日 {{item.match_count}} 场 · 场均 {{item.average_expected_points}} · 置信度 {{item.confidence}}</text>
+                <text class="prediction-meta">{{item.team_name || "未绑定战队"}} · 当日 {{item.match_count}} 场 · 场均 {{item.average_expected_points}} · 置信度 {{item.confidence}}</text>
               </view>
               <view class="expected-box">
                 <text class="expected-value">{{item.expected_total || item.expected_points}}</text>

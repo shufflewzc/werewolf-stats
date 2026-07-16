@@ -18,7 +18,7 @@
           <text class="center-kicker">当前状态</text>
           <text class="center-title">{{centerStatus}}</text>
         </view>
-        <button class="scope-button" hover-class="tap-button-hover" bindtap="goCompetitions">{{selectedScope ? "切换赛事" : "选赛事"}}</button>
+        <button class="scope-button scope-switch-button" hover-class="tap-button-hover" bindtap="goCompetitions">{{selectedScope ? "切换赛事" : "选赛事"}}</button>
       </view>
 
       <view class="scope-mini" wx:if="{{selectedScope}}">

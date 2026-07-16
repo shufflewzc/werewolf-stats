@@ -62,7 +62,7 @@
         <view class="stack" wx:if="{{players.length}}">
           <view class="list-card player-row tap-card" hover-class="tap-card-hover" wx:for="{{visiblePlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayerDetail">
             <text class="rank">{{item.rank}}</text>
-            <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" data-index="{{index}}" binderror="onPlayerImageError"></image>
+            <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" lazy-load="{{true}}" aria-label="{{item.display_name}}头像" data-index="{{index}}" binderror="onPlayerImageError"></image>
             <view wx:else class="avatar image-placeholder"></view>
             <view class="list-main">
               <text class="list-title">{{item.display_name}}</text>

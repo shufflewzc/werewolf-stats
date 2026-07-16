@@ -64,26 +64,18 @@
         <button class="change-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
       </view>
 
-    <view class="section">
-      <view class="season-search-card">
-        <view class="season-search-row">
-          <input class="season-search-input" value="{{searchKeyword}}" placeholder="搜索选手 / 战队 / 门派（至少 2 字）" confirm-type="search" bindinput="updateSearchKeyword" bindconfirm="searchSeason" />
-          <button class="season-search-button" hover-class="tap-button-hover" loading="{{searchLoading}}" bindtap="searchSeason">搜索</button>
-          <button class="season-clear-button" hover-class="tap-button-hover" wx:if="{{searchKeyword}}" bindtap="clearSearch">清空</button>
+    <view class="section" wx:if="{{latestDay}}">
+      <view class="day-focus-card tap-card" hover-class="tap-card-hover" data-played-on="{{latestDay.played_on}}" bindtap="openDayDetail">
+        <view class="list-main">
+          <text class="selected-label">比赛日中心 · 最近更新</text>
+          <text class="day-focus-title">{{latestDay.played_on}}</text>
+          <text class="list-meta">{{latestDay.competition_names[0] || selectedScope.competition}} · {{latestDay.match_count}} 场 · 点开看当天赛程和日榜</text>
         </view>
-        <view class="search-results" wx:if="{{searchResults.length}}">
-          <view class="search-result tap-card" hover-class="tap-card-hover" wx:for="{{searchResults}}" wx:key="key" data-index="{{index}}" bindtap="openSearchResult">
-            <text class="search-type">{{item.typeLabel}}</text>
-            <view class="list-main">
-              <text class="list-title">{{item.title}}</text>
-              <text class="list-meta">{{item.subtitle}}</text>
-            </view>
-            <text class="tap-cue">›</text>
-          </view>
+        <view class="match-day-actions">
+          <button class="day-action" hover-class="tap-button-hover" data-played-on="{{latestDay.played_on}}" catchtap="openLatestDayPrediction">预测</button>
+          <text class="day-pill">详情</text>
         </view>
-        <view class="empty-inline" wx:if="{{searchSearched && !searchLoading && !searchResults.length}}">
-          <text>{{searchKeyword.length < 2 ? "请输入至少 2 个字。" : "当前赛事没有匹配结果。"}}</text>
-        </view>
+        <text class="tap-cue">›</text>
       </view>
     </view>
 
@@ -100,9 +92,9 @@
         <view class="my-player-card tap-card" hover-class="tap-card-hover" wx:if="{{myPlayer}}" bindtap="openMyPlayerDetail">
           <view class="list-main">
             <text class="list-title">{{myPlayer.display_name}}</text>
-            <text class="list-meta">{{myPlayer.team_name || "未绑定门派"}} · 当前积分 {{myPlayer.points_total || "--"}} · 出场 {{myPlayer.games_played || "--"}} 局</text>
+            <text class="list-meta">{{myPlayer.team_name || "未绑定战队"}} · 当前积分 {{myPlayer.points_total || "--"}} · 出场 {{myPlayer.games_played || "--"}} 局</text>
           </view>
-          <button class="scope-button" hover-class="tap-button-hover" bindtap="openMyPlayerDetail">详情</button>
+          <button class="scope-button" hover-class="tap-button-hover" catchtap="openMyPlayerDetail">详情</button>
         </view>
 
         <view class="empty-inline" wx:if="{{!myPlayer}}">
@@ -117,18 +109,26 @@
       </view>
     </view>
 
-    <view class="section" wx:if="{{latestDay}}">
-      <view class="day-focus-card tap-card" hover-class="tap-card-hover" data-played-on="{{latestDay.played_on}}" bindtap="openDayDetail">
-        <view class="list-main">
-          <text class="selected-label">比赛日中心 · 最近更新</text>
-          <text class="day-focus-title">{{latestDay.played_on}}</text>
-          <text class="list-meta">{{latestDay.competition_names[0] || selectedScope.competition}} · {{latestDay.match_count}} 场 · 点开看当天赛程和日榜</text>
+    <view class="section">
+      <view class="season-search-card">
+        <view class="season-search-row">
+          <input class="season-search-input" value="{{searchKeyword}}" placeholder="搜索选手 / 战队 / 门派（至少 2 字）" aria-label="搜索当前赛事中的选手、战队或门派" confirm-type="search" bindinput="updateSearchKeyword" bindconfirm="searchSeason" />
+          <button class="season-search-button" hover-class="tap-button-hover" loading="{{searchLoading}}" bindtap="searchSeason">搜索</button>
+          <button class="season-clear-button" hover-class="tap-button-hover" wx:if="{{searchKeyword}}" bindtap="clearSearch">清空</button>
         </view>
-        <view class="match-day-actions">
-          <button class="day-action" hover-class="tap-button-hover" data-played-on="{{latestDay.played_on}}" catchtap="openLatestDayPrediction">预测</button>
-          <text class="day-pill">详情</text>
+        <view class="search-results" wx:if="{{searchResults.length}}">
+          <view class="search-result tap-card" hover-class="tap-card-hover" wx:for="{{searchResults}}" wx:key="key" data-index="{{index}}" bindtap="openSearchResult">
+            <text class="search-type">{{item.typeLabel}}</text>
+            <view class="list-main">
+              <text class="list-title">{{item.title}}</text>
+              <text class="list-meta">{{item.subtitle}}</text>
+            </view>
+            <text class="tap-cue">›</text>
+          </view>
         </view>
-        <text class="tap-cue">›</text>
+        <view class="empty-inline" wx:if="{{searchSearched && !searchLoading && !searchResults.length}}">
+          <text>{{searchKeyword.length < 2 ? "请输入至少 2 个字。" : "当前赛事没有匹配结果。"}}</text>
+        </view>
       </view>
     </view>
 

@@ -129,8 +129,8 @@
 }
 
 .change-button {
-  flex: 0 0 132rpx;
-  width: 132rpx;
+  flex: 0 0 156rpx;
+  width: 156rpx;
   height: 64rpx;
   border-radius: 12rpx;
   font-size: 24rpx;
@@ -138,6 +138,7 @@
   color: #111827;
   background: #f8fafc;
   border: 1rpx solid #cbd5e1;
+  white-space: nowrap;
 }
 
 .season-search-card {

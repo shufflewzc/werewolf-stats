@@ -56,7 +56,7 @@
           <text class="rank">{{index + 1}}</text>
           <view class="list-main">
             <text class="list-title">{{item.player_name}}</text>
-            <text class="list-meta">{{item.team_name || "未绑定门派"}} · {{item.match_count}} 场 · 场均 {{item.average_expected_points}}</text>
+            <text class="list-meta">{{item.team_name || "未绑定战队"}} · {{item.match_count}} 场 · 场均 {{item.average_expected_points}}</text>
           </view>
           <view class="list-score">
             <text class="score-value">{{item.expected_total || item.expected_points}}</text>
@@ -80,7 +80,7 @@
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">
             <text class="list-title">{{item.display_name}}</text>
-            <text class="list-meta">{{item.team_name || "未绑定门派"}} · {{item.games_played}} 局 · 胜率 {{item.win_rate}}</text>
+            <text class="list-meta">{{item.team_name || "未绑定战队"}} · {{item.games_played}} 局 · 胜率 {{item.win_rate}}</text>
           </view>
           <view class="list-score">
             <text class="score-value">{{item.points_total}}</text>

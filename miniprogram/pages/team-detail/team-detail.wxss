@@ -44,6 +44,10 @@
   margin-top: 10rpx;
 }
 
+.team-main .power-rating-badge {
+  margin-top: 14rpx;
+}
+
 .insight-card {
   padding: 24rpx;
   border: 1rpx solid #e2e8f0;

@@ -353,6 +353,16 @@ def assert_pagination(payload: dict, name: str) -> None:
             raise ReleaseCheckError(f"{name} pagination 缺少字段：{key}")
 
 
+def assert_power_rating(payload: object, name: str) -> None:
+    if not isinstance(payload, dict):
+        raise ReleaseCheckError(f"{name} 缺少 power_rating 对象")
+    for key in ["grade", "auto_grade", "score", "source", "source_label"]:
+        if key not in payload:
+            raise ReleaseCheckError(f"{name} power_rating 缺少字段：{key}")
+    if payload.get("grade") not in {"S", "A", "B", "C", "D"}:
+        raise ReleaseCheckError(f"{name} power_rating.grade 不是 S/A/B/C/D")
+
+
 def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
     competitions = api_get_json("/api/competitions")
     assert_json_keys(competitions, ["cards", "metrics", "hero"], "/api/competitions")
@@ -382,7 +392,8 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
         team_id = str(active_team.get("team_id") or "").strip()
         if team_id:
             team_detail = api_get_json(f"/api/teams/{team_id}", scope_query)
-            assert_json_keys(team_detail, ["team", "metrics", "insights", "roster", "matches"], "/api/teams/{id}")
+            assert_json_keys(team_detail, ["team", "metrics", "insights", "roster", "matches", "power_rating"], "/api/teams/{id}")
+            assert_power_rating(team_detail.get("power_rating"), "/api/teams/{id}")
             match_rows = team_detail.get("matches") if isinstance(team_detail.get("matches"), list) else []
             for match in match_rows:
                 if not isinstance(match, dict):
@@ -394,6 +405,8 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
     assert_json_keys(players, ["scope", "metrics", "players"], "/api/players")
     assert_pagination(players, "/api/players")
     player_rows = players.get("players") if isinstance(players.get("players"), list) else []
+    if player_rows:
+        assert_power_rating(player_rows[0].get("power_rating"), "/api/players players[0]")
     active_player = next(
         (
             row
@@ -406,7 +419,8 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
         player_id = str(active_player.get("player_id") or "").strip()
         if player_id:
             player_detail = api_get_json(f"/api/players/{player_id}", scope_query)
-            assert_json_keys(player_detail, ["player", "metrics", "insights", "dimension"], "/api/players/{id}")
+            assert_json_keys(player_detail, ["player", "metrics", "insights", "dimension", "power_rating"], "/api/players/{id}")
+            assert_power_rating(player_detail.get("power_rating"), "/api/players/{id}")
 
     guilds = api_get_json("/api/guilds", scope_query)
     assert_json_keys(guilds, ["hero", "metrics", "cards"], "/api/guilds")

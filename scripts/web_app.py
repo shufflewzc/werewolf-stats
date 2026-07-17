@@ -174,6 +174,10 @@ from ai.client import (
 )
 from ai.context import render_ai_prompt_template as ai_render_ai_prompt_template
 from ai.jobs import run_ai_generation_job as ai_run_ai_generation_job
+from power_rating import (
+    POWER_RATING_GRADES,
+    save_power_rating_override,
+)
 
 from zoneinfo import ZoneInfo
 
@@ -213,6 +217,53 @@ DEFAULT_AI_DAILY_BRIEF_MODEL = os.getenv("AI_DAILY_BRIEF_MODEL", "gpt-4.1-mini")
 # 审核通过前默认关闭公开 AI 页面、内容和生成入口。
 # 之后在运行环境设置 AI_PUBLIC_FEATURES_ENABLED=1 即可恢复。
 AI_PUBLIC_FEATURES_ENABLED = os.getenv("AI_PUBLIC_FEATURES_ENABLED", "0").strip() == "1"
+
+
+def build_power_rating_admin_panel(
+    ctx: "RequestContext",
+    *,
+    entity_type: str,
+    entity_id: str,
+    competition_name: str | None,
+    season_name: str | None,
+    rating: dict[str, Any] | None,
+) -> str:
+    if not rating or not competition_name or not season_name:
+        return ""
+    grade = str(rating.get("grade") or "D")
+    auto_grade = str(rating.get("auto_grade") or grade)
+    source_label = str(rating.get("source_label") or "系统评级")
+    editor = ""
+    if is_admin_user(ctx.current_user):
+        options = ['<option value="">恢复系统自动评级</option>'] + [
+            f'<option value="{item}"{" selected" if item == grade and rating.get("source") == "manual" else ""}>{item} 级</option>'
+            for item in POWER_RATING_GRADES
+        ]
+        entity_path = "players" if entity_type == "player" else "teams"
+        editor = f"""
+        <form method="post" action="/{entity_path}/{escape(entity_id)}" class="d-flex flex-wrap gap-2 align-items-end mt-3">
+          <input type="hidden" name="action" value="save_power_rating">
+          <input type="hidden" name="competition_name" value="{escape(competition_name)}">
+          <input type="hidden" name="season_name" value="{escape(season_name)}">
+          <div>
+            <label class="form-label">人工评级</label>
+            <select class="form-select" name="power_rating_grade">{''.join(options)}</select>
+          </div>
+          <button type="submit" class="btn btn-dark">保存战力评价</button>
+        </form>
+        """
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3">
+        <div>
+          <div class="eyebrow mb-2">战力评价</div>
+          <div class="display-6 fw-bold">{escape(grade)} 级</div>
+          <p class="section-copy mb-0">{escape(source_label)} · 自动计算结果 {escape(auto_grade)} 级 · 综合分 {float(rating.get('score') or 0):.1f}</p>
+        </div>
+        {editor}
+      </div>
+    </section>
+    """
 WECHAT_MINIPROGRAM_APPID = os.getenv("WECHAT_MINIPROGRAM_APPID", "")
 WECHAT_MINIPROGRAM_SECRET = os.getenv("WECHAT_MINIPROGRAM_SECRET", "")
 WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_TTL_SECONDS = int(
@@ -2904,6 +2955,7 @@ def is_management_path(path: str) -> bool:
         "/bindings",
         "/team-center",
         "/team-admin",
+        "/data-hygiene",
         "/series-manage",
         "/matches/new",
         "/prediction-admin",
@@ -3014,6 +3066,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             )
             admin_nav_links.append(
                 build_nav_link("战队管理", "/team-admin", ctx.path == "/team-admin")
+            )
+            admin_nav_links.append(
+                build_nav_link("选手档案合并", "/data-hygiene", ctx.path == "/data-hygiene")
             )
         if is_admin_layout:
             nav_links = admin_nav_links
@@ -12661,6 +12716,20 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             "matches_represented": 0,
         },
     )
+    from web.features.team_page import _build_team_power_rating_map
+    team_power_rating = _build_team_power_rating_map(
+        list(team_rows.values()),
+        selected_competition or "",
+        selected_season or "",
+    ).get(team_id)
+    team_power_rating_panel = build_power_rating_admin_panel(
+        ctx,
+        entity_type="team",
+        entity_id=team_id,
+        competition_name=selected_competition,
+        season_name=selected_season,
+        rating=team_power_rating,
+    )
     players = []
     for player_id in roster_player_ids:
         player = player_lookup.get(player_id)
@@ -13128,6 +13197,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
         </div>
       </div>
     </section>
+    {team_power_rating_panel}
     {claim_panel}
     {(
       '<div class="alert alert-secondary mb-4">当前战队所属赛季已结束，战队资料和门派申请入口已关闭，页面仅保留公开展示。</div>'
@@ -13784,6 +13854,34 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
         competition_name or None,
         season_name or None,
     )
+    if action == "save_power_rating":
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
+        grade = form_value(ctx.form, "power_rating_grade").strip().upper()
+        if not competition_name or not season_name or grade not in {"", *POWER_RATING_GRADES}:
+            return redirect(start_response, append_alert_query(redirect_path, "战力评级参数无效。"))
+        save_power_rating_override(
+            load_meta_value,
+            save_meta_value,
+            entity_type="team",
+            entity_id=team_id,
+            competition_name=competition_name,
+            season_name=season_name,
+            grade=grade,
+            updated_by=str(ctx.current_user.get("username") or "admin"),
+            updated_at=china_now_label(),
+        )
+        invalidate_public_api_cache()
+        audit_action(
+            ctx,
+            "team.power_rating_update",
+            target_type="team",
+            target_id=team_id,
+            summary=f"更新战队 {team_id} 的战力评级",
+            metadata={"competition_name": competition_name, "season_name": season_name, "grade": grade or "auto"},
+        )
+        return redirect(start_response, append_alert_query(redirect_path, "战力评价已更新。"))
     if action in {"save_ai_team_season_summary", "generate_ai_team_season_summary"} and not AI_PUBLIC_FEATURES_ENABLED:
         return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
 
@@ -14041,6 +14139,20 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
     player = players[player_id]
     owner_user = get_user_by_player_id(users, player_id)
     player_row = row_lookup[player_id]
+    from web.features.player_page import _build_player_power_rating_map
+    player_power_rating = _build_player_power_rating_map(
+        player_rows,
+        selected_competition or "",
+        selected_season or "",
+    ).get(player_id)
+    player_power_rating_panel = build_power_rating_admin_panel(
+        ctx,
+        entity_type="player",
+        entity_id=player_id,
+        competition_name=selected_competition,
+        season_name=selected_season,
+        rating=player_power_rating,
+    )
     team_id = player_row["team_id"]
     aliases = "、".join(detail["aliases"]) if detail["aliases"] else "无"
     photo_html = build_player_photo_html(detail["photo"], detail["display_name"])
@@ -14481,6 +14593,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
         </div>
       </div>
     </section>
+    {player_power_rating_panel}
     {player_dimension_panel}
     {ai_player_summary_panel}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -14677,6 +14790,34 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
         competition_name or None,
         season_name or None,
     )
+    if action == "save_power_rating":
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
+        grade = form_value(ctx.form, "power_rating_grade").strip().upper()
+        if not competition_name or not season_name or grade not in {"", *POWER_RATING_GRADES}:
+            return redirect(start_response, append_alert_query(redirect_path, "战力评级参数无效。"))
+        save_power_rating_override(
+            load_meta_value,
+            save_meta_value,
+            entity_type="player",
+            entity_id=player_id,
+            competition_name=competition_name,
+            season_name=season_name,
+            grade=grade,
+            updated_by=str(ctx.current_user.get("username") or "admin"),
+            updated_at=china_now_label(),
+        )
+        invalidate_public_api_cache()
+        audit_action(
+            ctx,
+            "player.power_rating_update",
+            target_type="player",
+            target_id=player_id,
+            summary=f"更新选手 {player_id} 的战力评级",
+            metadata={"competition_name": competition_name, "season_name": season_name, "grade": grade or "auto"},
+        )
+        return redirect(start_response, append_alert_query(redirect_path, "战力评价已更新。"))
     if action in {"save_ai_player_season_summary", "generate_ai_player_season_summary"} and not AI_PUBLIC_FEATURES_ENABLED:
         return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
 

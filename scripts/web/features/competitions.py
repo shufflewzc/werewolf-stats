@@ -6,6 +6,12 @@ from datetime import datetime, date
 
 import web_app as legacy
 from ai.workflows import run_match_day_report_workflow
+from power_rating import (
+    POWER_RATING_OVERRIDES_KEY,
+    apply_power_rating_override,
+    calculate_power_ratings,
+    parse_power_rating_overrides,
+)
 
 Any = legacy.Any
 CAMP_OPTIONS = legacy.CAMP_OPTIONS
@@ -3990,6 +3996,17 @@ def build_teams_api_payload(ctx: RequestContext) -> dict[str, Any]:
             row.get("name") or "",
         )
     )
+    team_power_ratings = calculate_power_ratings(
+        displayed_rows,
+        id_key="team_id",
+        total_key="points_earned_total",
+        efficiency_key="points_per_match",
+        win_rate_key="win_rate",
+        games_key="matches_represented",
+    )
+    rating_overrides = parse_power_rating_overrides(
+        legacy.load_meta_value(POWER_RATING_OVERRIDES_KEY)
+    )
     scope_label = " / ".join(
         item
         for item in [
@@ -4060,6 +4077,14 @@ def build_teams_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "points_total": f"{float(row.get('points_earned_total') or 0.0):.2f}",
             "average_points": f"{float(row.get('average_points') or 0.0):.2f}",
             "win_rate": format_pct(float(row.get("win_rate") or 0.0)),
+            "power_rating": apply_power_rating_override(
+                team_power_ratings.get(row["team_id"], {}),
+                rating_overrides,
+                entity_type="team",
+                entity_id=row["team_id"],
+                competition_name=selected_competition or str(row.get("competition_name") or ""),
+                season_name=selected_season or str(row.get("season_name") or ""),
+            ),
             "href": build_scoped_path(
                 "/teams/" + row["team_id"],
                 selected_competition or row.get("competition_name"),

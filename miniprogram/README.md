@@ -44,4 +44,5 @@ node scripts/check_miniprogram_release.js
 - 当前小程序支持微信登录自动创建账号；选手身份在“我的”页通过中文名搜索绑定。
 - 网页端登录已改为“小程序扫码确认登录”：网页显示二维码，小程序“我的”页扫码确认后网页自动登录；服务器不需要配置网页开放平台参数。
 - 请求层会统一处理网络超时、临时 5xx 重试、后端错误信息和登录过期；如果接口返回 `X-Request-ID`，错误提示会带请求编号，方便对照服务器日志。
+- 选手与战队战力评价按当前赛事赛季的总积分、积分效率和胜率自动计算，分为 S/A/B/C/D；管理员可在网页端对应详情页人工覆盖，或恢复系统自动评级。
 - 选手详情页可生成黑金战绩卡；二维码由后端 `/api/miniprogram/share-code` 生成。小程序发布时必须包含 `pages/share-entry/share-entry`，并使用已配置 `WECHAT_MINIPROGRAM_APPID` / `WECHAT_MINIPROGRAM_SECRET` 的正式后端。

@@ -351,6 +351,44 @@ page {
   background: #dbeafe;
 }
 
+.power-rating-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  min-width: 54rpx;
+  padding: 6rpx 12rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.28);
+  border-radius: 999rpx;
+  box-sizing: border-box;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1.2;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.58);
+}
+
+.power-rating-badge.is-compact {
+  flex: 0 0 auto;
+  justify-content: center;
+  min-width: 52rpx;
+  padding: 7rpx 10rpx;
+  border-color: #cbd5e1;
+  color: #334155;
+  background: #f8fafc;
+}
+
+.power-rating-badge.grade-s { border-color: #fbbf24; color: #fef3c7; background: #78350f; }
+.power-rating-badge.grade-a { border-color: #c4b5fd; color: #ede9fe; background: #5b21b6; }
+.power-rating-badge.grade-b { border-color: #93c5fd; color: #dbeafe; background: #1d4ed8; }
+.power-rating-badge.grade-c { border-color: #86efac; color: #dcfce7; background: #15803d; }
+.power-rating-badge.grade-d { border-color: #cbd5e1; color: #e2e8f0; background: #475569; }
+
+.power-rating-source {
+  font-size: 18rpx;
+  font-weight: 500;
+  opacity: 0.82;
+}
+
 .tap-button-hover,
 .tap-card-hover,
 .tap-chip-hover {

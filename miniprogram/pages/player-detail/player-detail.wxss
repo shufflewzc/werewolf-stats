@@ -44,6 +44,10 @@
   margin-top: 10rpx;
 }
 
+.detail-main .power-rating-badge {
+  margin-top: 14rpx;
+}
+
 .summary-strip {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

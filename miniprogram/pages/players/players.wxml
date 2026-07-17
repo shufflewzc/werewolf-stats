@@ -68,6 +68,7 @@
               <text class="list-title">{{item.display_name}}</text>
               <text class="list-meta">{{item.team_name}} · {{item.record}} · 胜率 {{item.win_rate}}</text>
             </view>
+            <view wx:if="{{item.power_rating}}" class="power-rating-badge is-compact {{item.power_rating.class_name}}">{{item.power_rating.grade}}</view>
             <view class="list-score">
               <text class="score-value">{{item.points_total}}</text>
               <text class="score-label">积分</text>

@@ -4,6 +4,13 @@ import json
 
 import web_app as legacy
 
+from power_rating import (
+    POWER_RATING_OVERRIDES_KEY,
+    apply_power_rating_override,
+    calculate_power_ratings,
+    parse_power_rating_overrides,
+)
+
 Any = legacy.Any
 DEFAULT_TEAM_LOGO = legacy.DEFAULT_TEAM_LOGO
 DEFAULT_PLAYER_PHOTO = legacy.DEFAULT_PLAYER_PHOTO
@@ -48,6 +55,33 @@ summarize_team_match = legacy.summarize_team_match
 team_scope_label = legacy.team_scope_label
 to_chinese_camp = legacy.to_chinese_camp
 urlencode = legacy.urlencode
+
+
+def _build_team_power_rating_map(
+    rows: list[dict[str, Any]],
+    competition_name: str,
+    season_name: str,
+) -> dict[str, dict[str, Any]]:
+    ratings = calculate_power_ratings(
+        rows,
+        id_key="team_id",
+        total_key="points_earned_total",
+        efficiency_key="points_per_match",
+        win_rate_key="win_rate",
+        games_key="matches_represented",
+    )
+    overrides = parse_power_rating_overrides(legacy.load_meta_value(POWER_RATING_OVERRIDES_KEY))
+    return {
+        team_id: apply_power_rating_override(
+            rating,
+            overrides,
+            entity_type="team",
+            entity_id=team_id,
+            competition_name=competition_name,
+            season_name=season_name,
+        )
+        for team_id, rating in ratings.items()
+    }
 
 
 def _build_team_legacy_href(
@@ -1108,10 +1142,13 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     points_per_match = (total_points / matches_played) if matches_played else 0.0
     win_width = (wins / matches_played * 100) if matches_played else 0.0
     points_width = max(0.0, min(100.0, (points_per_match / 8.0) * 100.0))
-    team_rows = {
-        row["team_id"]: row
-        for row in build_team_rows(data, selected_competition or None, selected_season or None)
-    }
+    team_row_list = build_team_rows(data, selected_competition or None, selected_season or None)
+    team_rows = {row["team_id"]: row for row in team_row_list}
+    power_rating = _build_team_power_rating_map(
+        team_row_list,
+        selected_competition,
+        selected_season,
+    ).get(team_id)
     team_stats = team_rows.get(
         team_id,
         {
@@ -1165,7 +1202,9 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
             "captain": captain.get("display_name") if captain else "暂未认领",
             "guild": guild.get("name") if guild else "未加入门派",
             "stage_groups": stage_groups,
+            "power_rating": power_rating,
         },
+        "power_rating": power_rating,
         "actions": {
             "teams_href": "/teams",
             "competition_href": competition_href,

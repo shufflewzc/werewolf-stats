@@ -4,6 +4,13 @@ import json
 
 import web_app as legacy
 
+from power_rating import (
+    POWER_RATING_OVERRIDES_KEY,
+    apply_power_rating_override,
+    calculate_power_ratings,
+    parse_power_rating_overrides,
+)
+
 Any = legacy.Any
 DEFAULT_PLAYER_PHOTO = legacy.DEFAULT_PLAYER_PHOTO
 DEFAULT_REGION_NAME = legacy.DEFAULT_REGION_NAME
@@ -48,6 +55,33 @@ start_response_json = legacy.start_response_json
 summarize_dimension_rows = legacy.summarize_dimension_rows
 urlencode = legacy.urlencode
 paginate_api_items = legacy.paginate_api_items
+
+
+def _build_player_power_rating_map(
+    rows: list[dict[str, Any]],
+    competition_name: str,
+    season_name: str,
+) -> dict[str, dict[str, Any]]:
+    ratings = calculate_power_ratings(
+        rows,
+        id_key="player_id",
+        total_key="points_earned_total",
+        efficiency_key="average_points",
+        win_rate_key="win_rate",
+        games_key="games_played",
+    )
+    overrides = parse_power_rating_overrides(legacy.load_meta_value(POWER_RATING_OVERRIDES_KEY))
+    return {
+        player_id: apply_power_rating_override(
+            rating,
+            overrides,
+            entity_type="player",
+            entity_id=player_id,
+            competition_name=competition_name,
+            season_name=season_name,
+        )
+        for player_id, rating in ratings.items()
+    }
 
 
 def _build_player_legacy_href(
@@ -960,6 +994,11 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
             row.get("display_name") or "",
         )
     )
+    power_ratings = _build_player_power_rating_map(
+        displayed_rows,
+        selected_competition,
+        selected_season,
+    )
     scope_label = " / ".join(
         item
         for item in [
@@ -984,6 +1023,7 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "points_total": f"{float(row.get('points_earned_total') or 0.0):.2f}",
             "average_points": f"{float(row.get('average_points') or 0.0):.2f}",
             "win_rate": format_pct(float(row.get("win_rate") or 0.0)),
+            "power_rating": power_ratings.get(row["player_id"]),
             "href": build_scoped_path(
                 "/players/" + row["player_id"],
                 selected_competition,
@@ -1194,6 +1234,11 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
         }
 
     row = row_lookup.get(player_id, {})
+    power_rating = _build_player_power_rating_map(
+        player_rows,
+        selected_competition,
+        selected_season,
+    ).get(player_id)
     owner_user = get_user_by_player_id(users, player_id)
     team_id = str(row.get("team_id") or player.get("team_id") or "").strip()
     team_href = build_scoped_path(f"/teams/{team_id}", selected_competition, selected_season) if team_id else "/teams"
@@ -1266,7 +1311,9 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
             "notes": detail["notes"],
             "owner": owner_user.get("display_name") or owner_user.get("username") if owner_user else "未绑定账号",
             "mvp_count": mvp_count,
+            "power_rating": power_rating,
         },
+        "power_rating": power_rating,
         "actions": {
             "players_href": build_scoped_path("/players", selected_competition, selected_season),
             "team_href": team_href,

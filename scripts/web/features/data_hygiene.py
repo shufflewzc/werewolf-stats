@@ -18,6 +18,91 @@ redirect = legacy.redirect
 save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
 
+SeasonScope = tuple[str, str]
+
+
+def _team_season_scope(team: dict[str, Any] | None) -> SeasonScope | None:
+    if not team:
+        return None
+    competition_name = str(team.get("competition_name") or "").strip()
+    season_name = str(team.get("season_name") or "").strip()
+    if not competition_name or not season_name:
+        return None
+    return competition_name, season_name
+
+
+def _player_season_scope_map(data: dict[str, Any]) -> dict[str, set[SeasonScope]]:
+    scopes = {
+        str(player.get("player_id") or "").strip(): set()
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip()
+    }
+    team_by_id = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+        if str(team.get("team_id") or "").strip()
+    }
+    for player in data.get("players", []):
+        player_id = str(player.get("player_id") or "").strip()
+        scope = _team_season_scope(team_by_id.get(str(player.get("team_id") or "").strip()))
+        if player_id and scope:
+            scopes.setdefault(player_id, set()).add(scope)
+    for team in data.get("teams", []):
+        scope = _team_season_scope(team)
+        if not scope:
+            continue
+        related_ids = list(team.get("members", []))
+        related_ids.append(team.get("captain_player_id"))
+        for value in related_ids:
+            player_id = str(value or "").strip()
+            if player_id in scopes:
+                scopes[player_id].add(scope)
+    for match in data.get("matches", []):
+        competition_name = str(match.get("competition_name") or "").strip()
+        season_name = str(match.get("season") or "").strip()
+        if not competition_name or not season_name:
+            continue
+        scope = (competition_name, season_name)
+        for entry in match.get("players", []):
+            player_id = str(entry.get("player_id") or "").strip()
+            if player_id in scopes:
+                scopes[player_id].add(scope)
+    for row in data.get("season_player_dimension_stats", []):
+        player_id = str(row.get("player_id") or "").strip()
+        competition_name = str(row.get("competition_name") or "").strip()
+        season_name = str(row.get("season_name") or "").strip()
+        if player_id in scopes and competition_name and season_name:
+            scopes[player_id].add((competition_name, season_name))
+    return scopes
+
+
+def _case_insensitive_duplicate_groups(
+    players: list[dict[str, Any]],
+    player_scopes: dict[str, set[SeasonScope]],
+) -> list[tuple[SeasonScope, list[dict[str, Any]]]]:
+    grouped: dict[tuple[SeasonScope, str], list[dict[str, Any]]] = {}
+    for player in players:
+        player_id = str(player.get("player_id") or "").strip()
+        display_name = str(player.get("display_name") or "").strip()
+        scopes = player_scopes.get(player_id, set())
+        if not display_name or len(scopes) != 1:
+            continue
+        scope = next(iter(scopes))
+        grouped.setdefault((scope, display_name.casefold()), []).append(player)
+    duplicates = [
+        (scope, rows)
+        for (scope, _normalized_name), rows in grouped.items()
+        if len(rows) > 1
+    ]
+    return sorted(
+        duplicates,
+        key=lambda item: (
+            item[0][0],
+            item[0][1],
+            str(item[1][0].get("display_name") or "").casefold(),
+        ),
+    )
+
 
 def _appearance_count(data: dict[str, Any], player_id: str) -> int:
     return sum(
@@ -46,11 +131,22 @@ def _replace_user_player_id(user: dict[str, Any], source_id: str, target_id: str
                 item["player_id"] = target_id
 
 
-def _merge_player(data: dict[str, Any], users: list[dict[str, Any]], source_id: str, target_id: str) -> int:
+def _merge_player(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    source_id: str,
+    target_id: str,
+    competition_name: str,
+    season_name: str,
+) -> int:
     source = next((item for item in data["players"] if item.get("player_id") == source_id), None)
     target = next((item for item in data["players"] if item.get("player_id") == target_id), None)
     if not source or not target:
         raise ValueError("源档案或目标档案不存在。")
+    expected_scope = {(competition_name.strip(), season_name.strip())}
+    player_scopes = _player_season_scope_map(data)
+    if not all(expected_scope == player_scopes.get(player_id, set()) for player_id in (source_id, target_id)):
+        raise ValueError("只能合并唯一归属于同一赛事赛季的选手档案。")
     moved_appearances = 0
     for match in data.get("matches", []):
         for entry in match.get("players", []):
@@ -81,6 +177,12 @@ def get_data_hygiene_page(ctx: RequestContext, alert: str = "") -> str:
     users = load_users()
     players = list(data.get("players", []))
     player_by_id = {str(item.get("player_id") or ""): item for item in players}
+    player_scopes = _player_season_scope_map(data)
+    team_by_id = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+        if str(team.get("team_id") or "").strip()
+    }
     rows = []
     for player in players:
         player_id = str(player.get("player_id") or "").strip()
@@ -95,24 +197,63 @@ def get_data_hygiene_page(ctx: RequestContext, alert: str = "") -> str:
             f"<td>{escape(team.get('name') or '未归属战队')}</td><td><span class=\"chip\">无出场</span></td>"
             f"<td><form method=\"post\" action=\"/data-hygiene\" class=\"d-flex gap-2\"><input type=\"hidden\" name=\"action\" value=\"delete_empty\"><input type=\"hidden\" name=\"player_id\" value=\"{escape(player_id)}\"><input class=\"form-control form-control-sm\" name=\"confirmation\" placeholder=\"输入 {escape(player_id)} 确认\"><button class=\"btn btn-sm btn-outline-danger\" type=\"submit\">删除</button></form></td></tr>"
         )
-    options = "".join(
-        f'<option value="{escape(player_id)}">{escape(player.get("display_name") or player_id)} · {escape(player_id)} · 出场 {_appearance_count(data, player_id)} 局</option>'
-        for player_id, player in sorted(player_by_id.items(), key=lambda item: (str(item[1].get("display_name") or ""), item[0]))
-        if player_id
-    )
+    players_by_scope: dict[SeasonScope, list[dict[str, Any]]] = {}
+    for player_id, player in player_by_id.items():
+        scopes = player_scopes.get(player_id, set())
+        if len(scopes) == 1:
+            players_by_scope.setdefault(next(iter(scopes)), []).append(player)
+    merge_scope_cards = []
+    for (competition_name, season_name), scoped_players in sorted(players_by_scope.items()):
+        if len(scoped_players) < 2:
+            continue
+        options = "".join(
+            f'<option value="{escape(player_id)}">{escape(player.get("display_name") or player_id)} · {escape(team_by_id.get(str(player.get("team_id") or "").strip(), {}).get("name") or "未归属战队")} · {escape(player_id)} · 出场 {_appearance_count(data, player_id)} 局</option>'
+            for player in sorted(
+                scoped_players,
+                key=lambda item: (str(item.get("display_name") or "").casefold(), str(item.get("player_id") or "")),
+            )
+            if (player_id := str(player.get("player_id") or "").strip())
+        )
+        merge_scope_cards.append(
+            f"""
+            <div class="border rounded p-3 p-lg-4 mb-3">
+              <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-3">
+                <h3 class="h5 mb-0">{escape(competition_name)} · {escape(season_name)}</h3>
+                <span class="chip">{len(scoped_players)} 个档案</span>
+              </div>
+              <form method="post" action="/data-hygiene" class="row g-3 align-items-end">
+                <input type="hidden" name="action" value="merge_players">
+                <input type="hidden" name="competition_name" value="{escape(competition_name)}">
+                <input type="hidden" name="season_name" value="{escape(season_name)}">
+                <div class="col-12 col-lg-4"><label class="form-label">源档案（会删除）</label><select class="form-select" name="source_player_id" required><option value="">请选择源档案</option>{options}</select></div>
+                <div class="col-12 col-lg-4"><label class="form-label">目标档案（保留）</label><select class="form-select" name="target_player_id" required><option value="">请选择目标档案</option>{options}</select></div>
+                <div class="col-12 col-lg-4"><label class="form-label">确认</label><input class="form-control" name="confirmation" placeholder="输入 合并 确认" required><button class="btn btn-dark mt-2" type="submit">执行合并</button></div>
+              </form>
+            </div>
+            """
+        )
+    duplicate_rows = []
+    for (competition_name, season_name), duplicate_players in _case_insensitive_duplicate_groups(players, player_scopes):
+        profile_labels = "".join(
+            f'<span class="chip me-2 mb-2">{escape(str(player.get("display_name") or player.get("player_id") or ""))} · {escape(str(player.get("player_id") or ""))}</span>'
+            for player in duplicate_players
+        )
+        duplicate_rows.append(
+            f"<tr><td>{escape(competition_name)} · {escape(season_name)}</td><td>{profile_labels}</td></tr>"
+        )
     body = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <h1 class="section-title mb-2">档案清理与合并</h1>
-      <p class="section-copy mb-0">合并会把源档案的比赛记录、奖项、阵容、维度数据和账号绑定迁移到目标档案；完成后源档案会被删除。请先确认两者是同一位选手。</p>
+      <p class="section-copy mb-0">合并会把源档案的比赛记录、奖项、阵容、维度数据和账号绑定迁移到目标档案；完成后源档案会被删除。源档案和目标档案必须唯一归属于同一个赛事赛季。</p>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <h2 class="section-title mb-3">合并重复选手档案</h2>
-      <form method="post" action="/data-hygiene" class="row g-3 align-items-end">
-        <input type="hidden" name="action" value="merge_players">
-        <div class="col-12 col-lg-4"><label class="form-label">源档案（会删除）</label><select class="form-select" name="source_player_id">{options}</select></div>
-        <div class="col-12 col-lg-4"><label class="form-label">目标档案（保留）</label><select class="form-select" name="target_player_id">{options}</select></div>
-        <div class="col-12 col-lg-4"><label class="form-label">确认</label><input class="form-control" name="confirmation" placeholder="输入 合并 确认"><button class="btn btn-dark mt-2" type="submit">执行合并</button></div>
-      </form>
+      <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3"><div><h2 class="section-title mb-2">疑似重复档案</h2><p class="section-copy mb-0">名称完全相同或仅英文字母大小写不同的档案会归为一组，例如 YAO、Yao 和 yao。</p></div><span class="chip">{len(duplicate_rows)} 组</span></div>
+      <div class="table-responsive"><table class="table align-middle"><thead><tr><th>赛事赛季</th><th>疑似重复档案</th></tr></thead><tbody>{''.join(duplicate_rows) or '<tr><td colspan="2" class="text-secondary">暂无名称相同的疑似重复档案。</td></tr>'}</tbody></table></div>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <h2 class="section-title mb-2">按赛季合并选手档案</h2>
+      <p class="section-copy mb-3">每个表单只列出同一赛事赛季内的档案；跨赛季档案不会出现在同一个合并表单中。</p>
+      {''.join(merge_scope_cards) or '<div class="alert alert-secondary mb-0">当前没有可合并的同赛季选手档案。</div>'}
     </section>
     <section class="panel shadow-sm p-3 p-lg-4">
       <div class="d-flex justify-content-between align-items-end gap-3 mb-3"><div><h2 class="section-title mb-2">可安全删除的自动档案</h2><p class="section-copy mb-0">仅显示自动创建、没有出场记录、且没有账号绑定的选手。</p></div><span class="chip">{len(rows)} 个</span></div>
@@ -152,12 +293,21 @@ def handle_data_hygiene(ctx: RequestContext, start_response):
     if action == "merge_players":
         source_id = form_value(ctx.form, "source_player_id").strip()
         target_id = form_value(ctx.form, "target_player_id").strip()
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season_name").strip()
         if form_value(ctx.form, "confirmation").strip() != "合并" or not source_id or source_id == target_id:
             return redirect(start_response, append_alert_query("/data-hygiene", "请选定不同档案，并输入“合并”确认。"))
         try:
             next_data = deepcopy(data)
             next_users = deepcopy(users)
-            moved = _merge_player(next_data, next_users, source_id, target_id)
+            moved = _merge_player(
+                next_data,
+                next_users,
+                source_id,
+                target_id,
+                competition_name,
+                season_name,
+            )
             errors = save_repository_state(next_data, next_users)
             if errors:
                 raise ValueError("；".join(errors[:2]))
@@ -169,7 +319,12 @@ def handle_data_hygiene(ctx: RequestContext, start_response):
             target_type="player",
             target_id=target_id,
             summary=f"合并选手档案 {source_id} 到 {target_id}",
-            metadata={"source_player_id": source_id, "moved_appearances": moved},
+            metadata={
+                "source_player_id": source_id,
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "moved_appearances": moved,
+            },
         )
         return redirect(start_response, append_alert_query("/data-hygiene", f"合并完成，已迁移 {moved} 条出场记录。"))
     return redirect(start_response, append_alert_query("/data-hygiene", "未知操作。"))

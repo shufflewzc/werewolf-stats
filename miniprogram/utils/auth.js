@@ -65,8 +65,25 @@ function searchPlayers(keyword) {
   });
 }
 
+function getCurrentPlayerForScope(scope) {
+  return request("/api/miniprogram/current-player", {
+    session_token: getSessionToken(),
+    competition: scope && scope.competition,
+    season: scope && scope.season
+  });
+}
+
 async function bindPlayer(playerId) {
   const payload = await post("/api/miniprogram/bind-player", {
+    session_token: getSessionToken(),
+    player_id: playerId
+  });
+  wx.setStorageSync(USER_KEY, payload.user || null);
+  return payload;
+}
+
+async function unbindPlayer(playerId) {
+  const payload = await post("/api/miniprogram/unbind-player", {
     session_token: getSessionToken(),
     player_id: playerId
   });
@@ -98,8 +115,10 @@ module.exports = {
   clearAuth,
   confirmWebLogin,
   getCurrentUser,
+  getCurrentPlayerForScope,
   getSessionToken,
   loginWithWechat,
   saveProfile,
-  searchPlayers
+  searchPlayers,
+  unbindPlayer
 };

@@ -147,6 +147,9 @@
     const guild = payload.guild || {};
     const pending = payload.pending_requests || [];
     const availableTeams = payload.available_teams || [];
+    const csrfInput = bootstrap.csrfToken
+      ? `<input type="hidden" name="_csrf_token" value="${escapeHtml(bootstrap.csrfToken)}">`
+      : "";
     return `
       <section class="guilds-panel guilds-section guild-detail-section guild-detail-manage-section">
         <div class="guilds-section-head">
@@ -158,6 +161,7 @@
         </div>
         ${payload.can_manage_membership ? `
           <form method="post" action="${escapeHtml(payload.manage_post_path || "")}" class="guild-detail-form">
+            ${csrfInput}
             <input type="hidden" name="action" value="add_guild_team">
             <label>直接添加进行中赛季战队</label>
             ${availableTeams.length ? `
@@ -176,6 +180,7 @@
         ` : ""}
         ${payload.can_manage_honors ? `
           <form method="post" action="${escapeHtml(payload.manage_post_path || "")}" class="guild-detail-form">
+            ${csrfInput}
             <input type="hidden" name="action" value="update_guild_honors">
             <label>历届荣誉维护</label>
             <textarea name="honors_text" rows="7" placeholder="全国总冠军 | 狼王战队 | 2025 全国总决赛">${escapeHtml(guild.honors_text || "")}</textarea>
@@ -196,11 +201,13 @@
                     <td>
                       <div class="guild-detail-action-row">
                         <form method="post" action="${escapeHtml(payload.manage_post_path || "")}">
+                          ${csrfInput}
                           <input type="hidden" name="action" value="approve_guild_join">
                           <input type="hidden" name="request_id" value="${escapeHtml(item.request_id)}">
                           <button type="submit" class="guilds-button guilds-button-primary">通过</button>
                         </form>
                         <form method="post" action="${escapeHtml(payload.manage_post_path || "")}">
+                          ${csrfInput}
                           <input type="hidden" name="action" value="reject_guild_join">
                           <input type="hidden" name="request_id" value="${escapeHtml(item.request_id)}">
                           <button type="submit" class="guilds-button guilds-button-secondary">拒绝</button>

@@ -9,7 +9,6 @@ can_manage_matches = legacy.can_manage_matches
 form_value = legacy.form_value
 get_team_captain_id = legacy.get_team_captain_id
 get_team_scope = legacy.get_team_scope
-get_user_bound_player_ids = legacy.get_user_bound_player_ids
 get_user_by_player_id = legacy.get_user_by_player_id
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
@@ -17,7 +16,6 @@ load_membership_requests = legacy.load_membership_requests
 redirect = legacy.redirect
 remove_user_player_binding = legacy.remove_user_player_binding
 save_repository_state = legacy.save_repository_state
-set_user_primary_player_id = legacy.set_user_primary_player_id
 start_response_html = legacy.start_response_html
 user_has_match_history = legacy.user_has_match_history
 user_has_permission = legacy.user_has_permission
@@ -122,38 +120,6 @@ def get_team_center_page(
     from web.features.team_center_v2 import get_team_center_page_impl
 
     return get_team_center_page_impl(ctx, alert, join_values)
-
-
-def handle_switch_primary_identity_action(
-    ctx: RequestContext,
-    start_response,
-    data: dict[str, Any],
-    users: list[dict[str, Any]],
-    current_user: dict[str, Any],
-):
-    username = current_user["username"]
-    selected_player_id = form_value(ctx.form, "player_id").strip()
-    if not selected_player_id:
-        return start_response_html(
-            start_response,
-            "200 OK",
-            get_team_center_page(ctx, alert="没有找到要切换的赛季身份。"),
-        )
-    if selected_player_id not in get_user_bound_player_ids(current_user):
-        return start_response_html(
-            start_response,
-            "403 Forbidden",
-            layout("没有权限", '<div class="alert alert-danger">你只能切换到自己已绑定的赛季身份。</div>', ctx),
-        )
-    users = set_user_primary_player_id(users, username, selected_player_id)
-    errors = save_repository_state(data, users)
-    if errors:
-        return start_response_html(
-            start_response,
-            "200 OK",
-            get_team_center_page(ctx, alert="切换当前主身份失败：" + "；".join(errors[:3])),
-        )
-    return issue_fresh_team_center_session(start_response, username)
 
 
 def handle_team_center(ctx: RequestContext, start_response):

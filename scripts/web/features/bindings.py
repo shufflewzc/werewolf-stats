@@ -126,9 +126,8 @@ def get_player_bindings_page(
               <input type="hidden" name="action" value="unbind_player_id">
               {target_username_input}
               <input type="hidden" name="player_id" value="{escape(player_id)}">
-              <button type="submit" class="btn btn-sm btn-outline-danger">{'解绑主身份' if target_user.get("player_id") == player_id else '解绑'}</button>
+              <button type="submit" class="btn btn-sm btn-outline-danger">解绑</button>
             </form>
-            {('<div class="small text-secondary mt-1">当前主身份，解绑后会自动切换到剩余已绑定 ID。</div>' if target_user.get("player_id") == player_id else '')}
             """
         )
         bound_rows.append(

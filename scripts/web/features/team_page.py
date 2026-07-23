@@ -41,7 +41,6 @@ get_team_scope = legacy.get_team_scope
 get_team_season_status = legacy.get_team_season_status
 get_team_season_status_label = legacy.get_team_season_status_label
 get_team_stage_group_map = legacy.get_team_stage_group_map
-get_user_player = legacy.get_user_player
 get_user_team_for_scope = legacy.get_user_team_for_scope
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
@@ -109,8 +108,7 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
             "legacy_href": f"/teams/{team_id}/legacy",
         }
 
-    current_player = get_user_player(data, ctx.current_user)
-    can_manage_team_profile = can_manage_team(ctx, team, current_player)
+    can_manage_team_profile = can_manage_team(ctx, team, None)
     can_delete_team = bool(ctx.current_user and is_admin_user(ctx.current_user))
     team_competition_name, team_season_name = get_team_scope(team)
     team_status = get_team_season_status(data, team)
@@ -1180,8 +1178,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     competition_href = "/competitions"
     if selected_competition:
         competition_href = f"/competitions?{urlencode({'competition': selected_competition})}"
-    current_player = get_user_player(data, ctx.current_user)
-    can_manage_team_profile = can_manage_team(ctx, team, current_player)
+    can_manage_team_profile = can_manage_team(ctx, team, None)
     manage_href = f"/teams/{quote(team_id)}/legacy?view=manage" if can_manage_team_profile else ""
 
     return {

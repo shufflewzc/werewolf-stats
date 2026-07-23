@@ -75,6 +75,7 @@ Page({
     loading: true,
     error: "",
     playerId: "",
+    strictPlayerId: false,
     selectedScope: null,
     needsCompetition: false,
     player: {},
@@ -91,7 +92,10 @@ Page({
 
   onLoad(options) {
     applyScopeFromOptions(options);
-    this.setData({ playerId: decodeURIComponent(options.player_id || "") });
+    this.setData({
+      playerId: decodeURIComponent(options.player_id || ""),
+      strictPlayerId: options.strict_player_id === "1"
+    });
     this.loadData();
   },
 
@@ -105,7 +109,10 @@ Page({
     const playerId = this.data.playerId;
     return {
       title: `${player.name || player.display_name || "选手"} · ${scope && scope.competition ? scope.competition : "狼人杀赛事"}战绩`,
-      path: appendScopeToPath(`/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}`, scope)
+      path: appendScopeToPath(
+        `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}&strict_player_id=1`,
+        scope
+      )
     };
   },
 
@@ -133,7 +140,10 @@ Page({
         }));
         return;
       }
-      const payload = await request(`/api/players/${encodeURIComponent(playerId)}`, scopeParams(selectedScope), options);
+      const payload = await request(`/api/players/${encodeURIComponent(playerId)}`, {
+        ...scopeParams(selectedScope),
+        strict_player_id: this.data.strictPlayerId ? "1" : ""
+      }, options);
       const player = payload.player || {};
       const dimension = payload.dimension || {};
       const normalizedDimension = {

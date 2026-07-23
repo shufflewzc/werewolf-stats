@@ -1,14 +1,11 @@
-const { bindPlayer, getCurrentUser, searchPlayers } = require("../../utils/auth");
+const { bindPlayer, getCurrentUser, searchPlayers, unbindPlayer } = require("../../utils/auth");
 
 function boundPlayersFromUser(user) {
   const explicitPlayers = Array.isArray(user && user.bound_players) ? user.bound_players : [];
   if (explicitPlayers.length) {
     return explicitPlayers;
   }
-  const ids = []
-    .concat(user && user.player_id ? [user.player_id] : [])
-    .concat(Array.isArray(user && user.linked_player_ids) ? user.linked_player_ids : [])
-    .filter((item, index, list) => item && list.indexOf(item) === index);
+  const ids = Array.isArray(user && user.bound_player_ids) ? user.bound_player_ids : [];
   return ids.map((playerId) => ({
     player_id: playerId,
     display_name: playerId
@@ -22,7 +19,6 @@ Page({
     keyword: "",
     players: [],
     user: null,
-    boundPlayerId: "",
     boundPlayers: []
   },
 
@@ -30,7 +26,6 @@ Page({
     const user = getCurrentUser();
     this.setData({
       user,
-      boundPlayerId: user && user.player_id ? user.player_id : "",
       boundPlayers: boundPlayersFromUser(user)
     });
   },
@@ -71,7 +66,6 @@ Page({
       this.setData({
         loading: false,
         user,
-        boundPlayerId: user && user.player_id ? user.player_id : playerId,
         boundPlayers: boundPlayersFromUser(user),
         players
       });
@@ -79,5 +73,42 @@ Page({
     } catch (error) {
       this.setData({ loading: false, error: error.message || "绑定失败" });
     }
+  },
+
+  unbind(event) {
+    const playerId = event.currentTarget.dataset.playerId;
+    const player = this.data.boundPlayers.find((item) => item.player_id === playerId);
+    if (!playerId || !player) {
+      return;
+    }
+    wx.showModal({
+      title: "解除选手绑定",
+      content: `确定解除“${player.display_name || playerId}”吗？如果该选手是战队负责人，负责人身份也会一并解除。`,
+      confirmText: "解除绑定",
+      confirmColor: "#b91c1c",
+      success: async (result) => {
+        if (!result.confirm) {
+          return;
+        }
+        this.setData({ loading: true, error: "" });
+        try {
+          const payload = await unbindPlayer(playerId);
+          const user = payload.user || getCurrentUser();
+          this.setData({
+            loading: false,
+            user,
+            boundPlayers: boundPlayersFromUser(user),
+            players: this.data.players.map((item) => (
+              item.player_id === playerId
+                ? { ...item, bound: false, bound_to_self: false }
+                : item
+            ))
+          });
+          wx.showToast({ title: "已解除绑定", icon: "success" });
+        } catch (error) {
+          this.setData({ loading: false, error: error.message || "解绑失败" });
+        }
+      }
+    });
   }
 });

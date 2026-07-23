@@ -31,7 +31,6 @@ get_team_scope = legacy.get_team_scope
 get_team_season_status = legacy.get_team_season_status
 get_team_season_status_label = legacy.get_team_season_status_label
 get_team_season_status_rank = legacy.get_team_season_status_rank
-get_user_player = legacy.get_user_player
 layout = legacy.layout
 list_ongoing_team_scopes = legacy.list_ongoing_team_scopes
 load_membership_requests = legacy.load_membership_requests
@@ -439,6 +438,7 @@ def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
         {
             "apiEndpoint": f"/api/guilds/{guild_id}",
             "alert": form_value(ctx.query, "alert").strip(),
+            "csrfToken": legacy.csrf_token_for_context(ctx),
             "legacyHref": _build_guild_legacy_href(guild_id, manage_mode),
         },
         ensure_ascii=False,
@@ -484,7 +484,7 @@ def build_guild_frontend_page(ctx: RequestContext, guild_id: str) -> str:
       </section>
     </main>
     <script>window.__WEREWOLF_GUILD_BOOTSTRAP__ = {bootstrap};</script>
-    <script src="/assets/guild-app.js" defer></script>
+    <script src="/assets/guild-app.js?v=20260722-csrf" defer></script>
   </body>
 </html>
 """
@@ -1106,8 +1106,7 @@ def handle_guilds(ctx: RequestContext, start_response):
                 "200 OK",
                 get_team_page(ctx, team_id, alert="当前战队所属赛季已结束，不能再申请加入门派。"),
             )
-        current_player = get_user_player(data, ctx.current_user)
-        if not can_manage_team(ctx, team, current_player):
+        if not can_manage_team(ctx, team, None):
             return start_response_html(
                 start_response,
                 "403 Forbidden",

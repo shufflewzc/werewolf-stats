@@ -21,7 +21,6 @@ get_team_by_id = legacy.get_team_by_id
 get_team_captain_id = legacy.get_team_captain_id
 get_team_scope = legacy.get_team_scope
 get_team_season_status = legacy.get_team_season_status
-get_user_player = legacy.get_user_player
 get_user_team_for_scope = legacy.get_user_team_for_scope
 get_user_team_identities = legacy.get_user_team_identities
 is_admin_user = legacy.is_admin_user
@@ -36,7 +35,6 @@ start_response_html = legacy.start_response_html
 team_scope_label = legacy.team_scope_label
 
 collect_team_stage_groups_from_form = base.collect_team_stage_groups_from_form
-handle_switch_primary_identity_action = base.handle_switch_primary_identity_action
 issue_fresh_team_center_session = base.issue_fresh_team_center_session
 can_review_team_claim_request = base.can_review_team_claim_request
 is_unclaimed_team = base.is_unclaimed_team
@@ -80,7 +78,6 @@ def get_team_center_page_impl(
     data = load_validated_data()
     requests = load_membership_requests()
     current_user = ctx.current_user
-    current_player = get_user_player(data, current_user)
     current_request = next(
         (
             item
@@ -104,17 +101,6 @@ def get_team_center_page_impl(
         team_status = get_team_season_status(data, team)
         guild = get_guild_by_id(data, str(team.get("guild_id") or "").strip())
         scope = get_team_scope(team)
-        switch_action = (
-            '<span class="chip">当前主身份</span>'
-            if current_player and current_player["player_id"] == player["player_id"]
-            else f"""
-            <form method="post" action="/team-center" class="m-0">
-              <input type="hidden" name="action" value="switch_primary_identity">
-              <input type="hidden" name="player_id" value="{escape(player['player_id'])}">
-              <button type="submit" class="btn btn-sm btn-outline-dark">切换为主身份</button>
-            </form>
-            """
-        )
         identity_cards.append(
             f"""
             <div class="col-12 col-xl-6">
@@ -134,7 +120,6 @@ def get_team_center_page_impl(
                 <div class="d-flex flex-wrap gap-2 mt-3">
                   <a class="btn btn-sm btn-dark" href="{escape(build_scoped_path('/teams/' + team['team_id'], *scope))}">查看战队页</a>
                   <a class="btn btn-sm btn-outline-dark" href="{escape(build_scoped_path('/players/' + player['player_id'], *scope))}">查看档案</a>
-                  {switch_action}
                   {(
                     f'''
                     <form method="post" action="/team-center" class="m-0">
@@ -265,7 +250,7 @@ def get_team_center_page_impl(
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
         <div>
           <h2 class="section-title mb-2">我的赛季身份</h2>
-          <p class="section-copy mb-0">账号可以绑定多个赛季参赛档案。这里用于切换主身份，并进入对应战队页维护你已认领的战队展示信息。</p>
+          <p class="section-copy mb-0">账号可以绑定多个赛季参赛档案。系统会根据当前赛事和赛季自动使用对应身份，你也可以从这里进入各赛季战队页。</p>
         </div>
       </div>
       <div class="row g-3">{''.join(identity_cards) or '<div class="col-12"><div class="alert alert-secondary mb-0">当前账号还没有已绑定的赛季身份。</div></div>'}</div>
@@ -321,16 +306,6 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
     data = load_validated_data()
     users = load_users()
     requests = load_membership_requests()
-    current_player = get_user_player(data, current_user)
-
-    if action == "switch_primary_identity":
-        return handle_switch_primary_identity_action(
-            ctx,
-            start_response,
-            data,
-            users,
-            current_user,
-        )
 
     if action == "request_team_claim":
         next_path = form_value(ctx.form, "next").strip()
@@ -525,7 +500,7 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         team = get_team_by_id(data, team_id)
         if not team:
             return _respond_with_alert(start_response, ctx, "没有找到要编辑的战队。", next_path)
-        if not can_manage_team(ctx, team, current_player):
+        if not can_manage_team(ctx, team, None):
             return start_response_html(
                 start_response,
                 "403 Forbidden",
@@ -555,7 +530,7 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         team = get_team_by_id(data, team_id)
         if not team:
             return _respond_with_alert(start_response, ctx, "没有找到要解除认领的战队。", next_path)
-        if not can_manage_team(ctx, team, current_player):
+        if not can_manage_team(ctx, team, None):
             return start_response_html(
                 start_response,
                 "403 Forbidden",
@@ -591,7 +566,7 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
         team = get_team_by_id(data, team_id)
         if not team:
             return start_response_html(start_response, "200 OK", get_team_center_page_impl(ctx, alert="没有找到要更新分组信息的战队。"))
-        if not can_manage_team(ctx, team, current_player):
+        if not can_manage_team(ctx, team, None):
             return start_response_html(
                 start_response,
                 "403 Forbidden",

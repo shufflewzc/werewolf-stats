@@ -106,7 +106,7 @@
         <text class="section-note">{{honors.length}} 条</text>
       </view>
       <view class="stack">
-        <view class="honor-card" wx:for="{{honors}}" wx:key="title">
+        <view class="honor-card" wx:for="{{honors}}" wx:key="key">
           <text class="honor-title">{{item.title}}</text>
           <text class="honor-meta">{{item.team_name}} · {{item.scope}}</text>
         </view>

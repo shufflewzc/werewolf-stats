@@ -33,34 +33,36 @@
         <text class="account-meta">先选择赛事后，才能查看我的选手页和比赛日。</text>
       </view>
 
-      <view class="my-player-row" wx:if="{{boundPlayers.length}}">
+      <view class="my-player-row" wx:if="{{currentPlayer}}">
         <view class="list-main">
-          <text class="account-label">已绑定选手</text>
-          <text class="account-name">{{boundPlayerLabel}}</text>
+          <text class="account-label">本赛季选手</text>
+          <text class="account-name">{{currentPlayer.display_name}}</text>
+          <text class="account-meta">{{currentPlayer.team_name || "未绑定战队"}} · {{currentPlayer.season}}</text>
           <text class="account-meta">账号名：{{user.display_name || user.username}}</text>
           <text class="account-meta">{{latestDay ? latestDay.played_on : "暂无比赛日"}} · {{centerCopy}}</text>
         </view>
-        <button class="scope-button" hover-class="tap-button-hover" bindtap="openMyPlayerPage">主选手</button>
+        <button class="scope-button" hover-class="tap-button-hover" bindtap="openMyPlayerPage">查看</button>
+      </view>
+
+      <view class="empty-inline" wx:if="{{!currentPlayer}}">
+        <text>{{centerCopy}}</text>
       </view>
 
       <view class="bound-player-list" wx:if="{{boundPlayers.length}}">
+        <text class="account-label">已绑定档案</text>
         <view class="bound-player-item tap-card" hover-class="tap-card-hover" wx:for="{{boundPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openBoundPlayerPage">
           <view class="list-main">
             <text class="bound-player-name">{{item.display_name || item.player_id}}</text>
-            <text class="bound-player-id">{{item.player_id}}</text>
+            <text class="bound-player-id">{{item.competition || "未分配赛事"}} · {{item.season || "未分配赛季"}}</text>
           </view>
           <text class="bound-player-action">详情</text>
           <text class="tap-cue">›</text>
         </view>
       </view>
 
-      <view class="empty-inline" wx:else>
-        <text>{{centerCopy}}</text>
-      </view>
-
       <view class="quick-actions">
-        <button class="primary-button" hover-class="tap-button-hover" wx:if="{{boundPlayers.length}}" bindtap="openMyPlayerPage">主选手页</button>
-        <button class="primary-button" hover-class="tap-button-hover" wx:else bindtap="goBindPlayer">绑定选手</button>
+        <button class="primary-button" hover-class="tap-button-hover" wx:if="{{currentPlayer}}" bindtap="openMyPlayerPage">我的选手页</button>
+        <button class="primary-button" hover-class="tap-button-hover" wx:else bindtap="goBindPlayer">{{currentPlayerStatus === "conflict" ? "管理绑定" : "绑定选手"}}</button>
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="openLatestDay">比赛日</button>
         <button class="ghost-button" hover-class="tap-button-hover" bindtap="openPrediction">当日预测</button>
       </view>

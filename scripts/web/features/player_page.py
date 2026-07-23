@@ -55,6 +55,7 @@ start_response_json = legacy.start_response_json
 summarize_dimension_rows = legacy.summarize_dimension_rows
 urlencode = legacy.urlencode
 paginate_api_items = legacy.paginate_api_items
+user_has_bound_player_id = legacy.user_has_bound_player_id
 
 
 def _build_player_power_rating_map(
@@ -217,15 +218,25 @@ def _resolve_same_name_player_id_for_scope(
     )
 
 
-def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
-    data = load_validated_data()
-    users = load_users()
-    player_id = _resolve_same_name_player_id_for_scope(
+def _resolve_requested_player_id(
+    ctx: RequestContext,
+    data: dict[str, Any],
+    player_id: str,
+) -> str:
+    if form_value(ctx.query, "strict_player_id").strip() == "1":
+        return player_id
+    return _resolve_same_name_player_id_for_scope(
         data,
         player_id,
         form_value(ctx.query, "competition").strip() or None,
         form_value(ctx.query, "season").strip() or None,
     )
+
+
+def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
+    data = load_validated_data()
+    users = load_users()
+    player_id = _resolve_requested_player_id(ctx, data, player_id)
     player_matches = [
         match
         for match in sorted(
@@ -309,7 +320,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
     aliases = "、".join(detail["aliases"]) if detail["aliases"] else "无"
     photo_html = build_player_photo_html(detail["photo"], detail["display_name"])
     manage_buttons: list[str] = []
-    if ctx.current_user and ctx.current_user.get("player_id") == player_id:
+    if user_has_bound_player_id(ctx.current_user, player_id):
         manage_buttons.append('<a class="btn btn-light text-dark shadow-sm" href="/profile">编辑我的资料</a>')
     elif can_manage_player(ctx, player_id):
         manage_buttons.append(
@@ -1170,12 +1181,7 @@ def _pct_width(value: str) -> float:
 def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dict[str, Any]:
     data = load_validated_data()
     users = load_users()
-    player_id = _resolve_same_name_player_id_for_scope(
-        data,
-        player_id,
-        form_value(ctx.query, "competition").strip() or None,
-        form_value(ctx.query, "season").strip() or None,
-    )
+    player_id = _resolve_requested_player_id(ctx, data, player_id)
     player_matches = [
         match
         for match in sorted(
@@ -1243,7 +1249,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
     team_id = str(row.get("team_id") or player.get("team_id") or "").strip()
     team_href = build_scoped_path(f"/teams/{team_id}", selected_competition, selected_season) if team_id else "/teams"
     manage_href = ""
-    if ctx.current_user and ctx.current_user.get("player_id") == player_id:
+    if user_has_bound_player_id(ctx.current_user, player_id):
         manage_href = "/profile"
     elif can_manage_player(ctx, player_id):
         manage_href = f"/players/{quote(player_id)}/edit?{urlencode({'next': build_scoped_path('/players/' + player_id, selected_competition, selected_season)})}"

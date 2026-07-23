@@ -11,7 +11,6 @@ DEFAULT_TEAM_LOGO = legacy.DEFAULT_TEAM_LOGO
 GENDER_OPTIONS = legacy.GENDER_OPTIONS
 audit_action = legacy.audit_action
 build_bound_player_summary = legacy.build_bound_player_summary
-build_player_edit_form = legacy.build_player_edit_form
 build_player_photo_html = legacy.build_player_photo_html
 build_profile_binding_summary = legacy.build_profile_binding_summary
 build_region_picker = legacy.build_region_picker
@@ -25,7 +24,9 @@ china_today_label = legacy.china_today_label
 file_value = legacy.file_value
 form_value = legacy.form_value
 get_team_season_status = legacy.get_team_season_status
-get_user_player = legacy.get_user_player
+get_team_by_id = legacy.get_team_by_id
+get_team_scope = legacy.get_team_scope
+get_user_bound_player_ids = legacy.get_user_bound_player_ids
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
@@ -34,7 +35,6 @@ load_validated_data = legacy.load_validated_data
 normalize_user_gender = legacy.normalize_user_gender
 normalize_user_location = legacy.normalize_user_location
 option_tags = legacy.option_tags
-parse_aliases_text = legacy.parse_aliases_text
 parse_username_list_text = legacy.parse_username_list_text
 redirect = legacy.redirect
 save_repository_state = legacy.save_repository_state
@@ -61,7 +61,6 @@ def get_profile_page(
         return layout("未登录", '<div class="alert alert-danger">请先登录后再访问个人中心。</div>', ctx)
 
     data = load_validated_data()
-    current_player = get_user_player(data, current_user)
     current_account_name = account_values.get("account_display_name") if account_values else (
         current_user.get("display_name") or current_user["username"]
     )
@@ -96,50 +95,50 @@ def get_profile_page(
     }
     bound_summary = build_bound_player_summary(data, current_user)
     binding_button = '<a class="btn btn-outline-dark" href="/bindings">管理赛季参赛ID</a>'
-
-    if current_player:
-        player_form = {
-            **current_player,
-            **(player_values or {}),
-        }
-        editor_html = build_player_edit_form(
-            player_form,
-            "/profile",
-            "保存我的资料",
-            account_display_name=current_account_name,
-            username=current_user["username"],
-            password_note="如不需要修改密码，可以留空。",
-            show_account_fields=True,
-            account_province_name=current_province_name,
-            account_region_name=current_region_name,
-            account_gender=current_gender,
-            account_bio=current_bio,
-            player_section_copy="可以修改当前绑定主档案的名称、别名、备注。头像属于账号资料，不会写回赛季档案。",
-            photo_field_label="上传账号头像",
-            photo_help_text="账号头像独立于赛季档案保存，支持 PNG、JPG、JPEG、WEBP、GIF，大小不超过 5 MB。",
-            photo_preview_path=current_account_photo,
-            photo_preview_name=current_account_name,
-            photo_preview_path_label="当前账号头像路径",
+    player_lookup = {player["player_id"]: player for player in data["players"]}
+    bound_identity_cards = []
+    for player_id in get_user_bound_player_ids(current_user):
+        player = player_lookup.get(player_id)
+        team = get_team_by_id(data, str((player or {}).get("team_id") or "").strip())
+        competition_name, season_name = get_team_scope(team)
+        bound_identity_cards.append(
+            f"""
+            <div class="col-12 col-lg-6">
+              <div class="team-link-card shadow-sm p-4 h-100">
+                <div class="card-kicker mb-2">{escape(" / ".join(item for item in [competition_name, season_name] if item) or "未分配赛季")}</div>
+                <h3 class="h5 mb-1">{escape(str((player or {}).get("display_name") or player_id))}</h3>
+                <div class="small-muted mb-3">{escape(str((team or {}).get("name") or "未绑定战队"))} · {escape(player_id)}</div>
+                <a class="btn btn-sm btn-outline-dark" href="/players/{escape(player_id)}/edit">编辑此档案</a>
+              </div>
+            </div>
+            """
         )
-        body = f"""
-        <section class="hero p-4 p-md-5 shadow-lg mb-4">
-          <div class="eyebrow mb-3">个人中心</div>
-          <h1 class="display-6 fw-semibold mb-3">编辑我的账号与队员资料</h1>
-          <p class="mb-0 opacity-75">这里可以修改你的账号显示名称、密码、队员信息，并上传新的照片。</p>
-          <div class="d-flex flex-wrap gap-2 mt-3">{binding_button}</div>
+    bound_identities_html = (
+        f"""
+        <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+          <div class="d-flex justify-content-between align-items-end gap-3 mb-3">
+            <div>
+              <h2 class="section-title mb-2">已绑定赛季档案</h2>
+              <p class="section-copy mb-0">每份档案独立编辑；进入赛事时系统会自动匹配对应赛季的选手。</p>
+            </div>
+            {binding_button}
+          </div>
+          <div class="row g-3">{''.join(bound_identity_cards)}</div>
         </section>
-        {build_profile_binding_summary(bound_summary) if bound_summary else ''}
-        {editor_html}
         """
-    else:
-        body = f"""
+        if bound_identity_cards
+        else ""
+    )
+
+    body = f"""
         <section class="hero p-4 p-md-5 shadow-lg mb-4">
           <div class="eyebrow mb-3">个人中心</div>
           <h1 class="display-6 fw-semibold mb-3">账号资料</h1>
-          <p class="mb-0 opacity-75">当前账号还没有绑定队员档案。你可以先上传个人头像，后续再去绑定历史参赛档案，或者认领自己负责的赛季战队。</p>
+          <p class="mb-0 opacity-75">{'账号资料与赛季选手档案分别维护；进入赛事时会自动匹配对应档案。' if bound_identity_cards else '当前账号还没有绑定队员档案。你可以先上传个人头像，后续再绑定历史参赛档案。'}</p>
           <div class="d-flex flex-wrap gap-2 mt-3">{binding_button}</div>
         </section>
         {build_profile_binding_summary(bound_summary) if bound_summary else ''}
+        {bound_identities_html}
         <section class="panel shadow-sm p-3 p-lg-4">
           <div class="form-panel p-3 p-lg-4">
             <form method="post" action="/profile" enctype="multipart/form-data">
@@ -170,7 +169,7 @@ def get_profile_page(
                   <div class="mb-3">
                     <label class="form-label">上传头像</label>
                     <input class="form-control" name="photo_file" type="file" accept=".png,.jpg,.jpeg,.webp,.gif,image/*">
-                    <div class="small text-secondary mt-2">即使还没有绑定队员，也可以先上传个人头像；后续首次绑定主队员时会自动沿用这张头像。</div>
+                    <div class="small text-secondary mt-2">账号头像独立保存，不会改变各赛季选手档案的头像。</div>
                   </div>
                   <div class="mb-3">
                     <label class="form-label">新密码</label>
@@ -186,7 +185,7 @@ def get_profile_page(
                     <h2 class="section-title mb-3">当前头像预览</h2>
                     <div class="mb-3">{build_player_photo_html(current_account_photo, current_account_name)}</div>
                     <div class="mb-2"><strong>当前头像路径：</strong>{escape(current_account_photo)}</div>
-                    <div class="mb-0"><strong>状态：</strong>尚未绑定队员档案</div>
+                    <div class="mb-0"><strong>已绑定档案：</strong>{len(bound_identity_cards)} 份</div>
                   </div>
                 </div>
               </div>
@@ -335,7 +334,6 @@ def handle_profile(ctx: RequestContext, start_response):
 
     data = load_validated_data()
     users = load_users()
-    current_player = get_user_player(data, current_user)
     action = form_value(ctx.form, "action").strip() or "save_profile"
     if action == "create_guild":
         if not user_has_permission(current_user, "guild_manage"):
@@ -432,9 +430,6 @@ def handle_profile(ctx: RequestContext, start_response):
     bio = form_value(ctx.form, "bio").strip()
     password = form_value(ctx.form, "password")
     password_confirm = form_value(ctx.form, "password_confirm")
-    player_display_name = form_value(ctx.form, "player_display_name").strip()
-    aliases_raw = form_value(ctx.form, "aliases")
-    notes = form_value(ctx.form, "notes").strip()
     upload = file_value(ctx.files, "photo_file")
 
     error = validate_profile_update(
@@ -445,19 +440,11 @@ def handle_profile(ctx: RequestContext, start_response):
         bio,
         password,
         password_confirm,
-        player_display_name if current_player else "",
+        "",
     )
     if not error:
         error = validate_uploaded_photo(upload)
     if error:
-        player_values = None
-        if current_player:
-            player_values = {
-                **current_player,
-                "display_name": player_display_name or current_player["display_name"],
-                "aliases": parse_aliases_text(aliases_raw),
-                "notes": notes,
-            }
         return start_response_html(
             start_response,
             "200 OK",
@@ -471,7 +458,6 @@ def handle_profile(ctx: RequestContext, start_response):
                     "gender": gender or "prefer_not_to_say",
                     "bio": bio,
                 },
-                player_values=player_values,
             ),
         )
 
@@ -487,15 +473,6 @@ def handle_profile(ctx: RequestContext, start_response):
         password,
         new_account_photo,
     )
-    if current_player:
-        for player in data["players"]:
-            if player["player_id"] != current_player["player_id"]:
-                continue
-            player["display_name"] = player_display_name
-            player["aliases"] = parse_aliases_text(aliases_raw)
-            player["notes"] = notes
-            break
-
     errors = save_repository_state(data, users)
     if errors:
         return start_response_html(
@@ -512,8 +489,7 @@ def handle_profile(ctx: RequestContext, start_response):
         metadata={
             "password_changed": bool(password),
             "photo_updated": bool(new_account_photo),
-            "player_id": current_player.get("player_id") if current_player else "",
-            "player_profile_updated": bool(current_player),
+            "player_profile_updated": False,
         },
     )
 
@@ -527,5 +503,8 @@ def handle_profile(ctx: RequestContext, start_response):
         current_user=refreshed_user,
         now_label=china_now_label(),
     )
-    message = "账号资料已更新。" if not current_player else "账号资料和队员资料已更新。"
-    return start_response_html(start_response, "200 OK", get_profile_page(refreshed_ctx, alert=message))
+    return start_response_html(
+        start_response,
+        "200 OK",
+        get_profile_page(refreshed_ctx, alert="账号资料已更新。"),
+    )

@@ -134,11 +134,6 @@ def get_accounts_page(
         permission_button = (
             f'<a class="btn btn-sm btn-outline-dark" href="/permissions?{urlencode({"username": username})}">权限控制</a>'
         )
-        if user.get("player_id"):
-            edit_button += (
-                f'<a class="btn btn-sm btn-outline-dark" href="/players/{escape(user["player_id"])}'
-                f'/edit">编辑队员资料</a>'
-            )
         binding_button = (
             f'<a class="btn btn-sm btn-outline-dark" href="/bindings?{urlencode({"username": username})}">绑定参赛ID</a>'
             if is_admin_user(ctx.current_user)

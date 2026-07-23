@@ -1821,7 +1821,9 @@ SENSITIVE_RATE_LIMIT_PATHS = {
     "/api/miniprogram/login",
     "/api/miniprogram/profile",
     "/api/miniprogram/player-search",
+    "/api/miniprogram/current-player",
     "/api/miniprogram/bind-player",
+    "/api/miniprogram/unbind-player",
     "/api/miniprogram/web-login-confirm",
     "/api/web-login/status",
     "/login",
@@ -1891,6 +1893,7 @@ def rate_limit_response(ctx: RequestContext, start_response, retry_after: int):
 IDEMPOTENCY_PROTECTED_POST_PATHS = {
     "/api/miniprogram/profile",
     "/api/miniprogram/bind-player",
+    "/api/miniprogram/unbind-player",
     "/api/miniprogram/web-login-confirm",
     "/matches/new",
     "/dimension-stats",
@@ -6412,15 +6415,6 @@ def rollback_import_batch(batch_id: str, ctx: RequestContext) -> tuple[bool, str
     return True, f"已回滚导入批次 {batch_id}。"
 
 
-def get_user_player(data: dict[str, Any], user: dict[str, Any] | None) -> dict[str, Any] | None:
-    if not user or not user.get("player_id"):
-        return None
-    for player in data["players"]:
-        if player["player_id"] == user["player_id"]:
-            return player
-    return None
-
-
 def get_user_bound_player_ids(user: dict[str, Any] | None) -> list[str]:
     if not user:
         return []
@@ -6430,6 +6424,66 @@ def get_user_bound_player_ids(user: dict[str, Any] | None) -> list[str]:
         if normalized and normalized not in ordered_ids:
             ordered_ids.append(normalized)
     return ordered_ids
+
+
+def user_has_bound_player_id(user: dict[str, Any] | None, player_id: str) -> bool:
+    normalized_player_id = str(player_id or "").strip()
+    return bool(
+        normalized_player_id
+        and normalized_player_id in get_user_bound_player_ids(user)
+    )
+
+
+def resolve_user_player_for_scope(
+    data: dict[str, Any],
+    user: dict[str, Any] | None,
+    competition_name: str,
+    season_name: str,
+) -> dict[str, Any]:
+    normalized_competition = str(competition_name or "").strip()
+    normalized_season = str(season_name or "").strip()
+    bound_player_ids = get_user_bound_player_ids(user)
+    if not bound_player_ids:
+        return {"status": "unbound", "player": None, "candidates": []}
+    if not normalized_competition or not normalized_season:
+        return {"status": "not_in_scope", "player": None, "candidates": []}
+
+    player_lookup = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+    }
+    team_lookup = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+    }
+    candidates: list[dict[str, Any]] = []
+    for player_id in bound_player_ids:
+        player = player_lookup.get(player_id)
+        team = team_lookup.get(str((player or {}).get("team_id") or "").strip())
+        if not player or not team:
+            continue
+        team_competition, team_season = get_team_scope(team)
+        if (
+            team_competition != normalized_competition
+            or team_season != normalized_season
+        ):
+            continue
+        candidates.append(
+            {
+                "player_id": player_id,
+                "display_name": str(player.get("display_name") or player_id),
+                "photo": str(player.get("photo") or DEFAULT_PLAYER_PHOTO),
+                "team_id": str(team.get("team_id") or ""),
+                "team_name": str(team.get("name") or team.get("short_name") or ""),
+                "competition": team_competition,
+                "season": team_season,
+            }
+        )
+    if not candidates:
+        return {"status": "not_in_scope", "player": None, "candidates": []}
+    if len(candidates) > 1:
+        return {"status": "conflict", "player": None, "candidates": candidates}
+    return {"status": "matched", "player": candidates[0], "candidates": candidates}
 
 
 def get_user_by_player_id(users: list[dict[str, Any]], player_id: str) -> dict[str, Any] | None:
@@ -6508,7 +6562,7 @@ def can_manage_player(ctx: RequestContext, player_id: str) -> bool:
         return False
     if is_admin_user(ctx.current_user):
         return True
-    return ctx.current_user.get("player_id") == player_id
+    return user_has_bound_player_id(ctx.current_user, player_id)
 
 
 def can_manage_team(ctx: RequestContext, team: dict[str, Any] | None, player: dict[str, Any] | None) -> bool:
@@ -7181,6 +7235,25 @@ def get_player_binding_scopes(
     data: dict[str, Any],
     player_id: str,
 ) -> list[dict[str, str]]:
+    player = next(
+        (
+            item
+            for item in data.get("players", [])
+            if str(item.get("player_id") or "").strip() == player_id
+        ),
+        None,
+    )
+    team = get_team_by_id(data, str((player or {}).get("team_id") or "").strip())
+    competition_name, season_name = get_team_scope(team)
+    if competition_name and season_name:
+        return [
+            {
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "scope_label": f"{competition_name} / {season_name}",
+            }
+        ]
+
     scopes: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for match in data["matches"]:
@@ -12372,8 +12445,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     team = team_lookup.get(team_id)
     if not team:
         return layout("未找到战队", '<div class="alert alert-danger">没有找到对应的战队。</div>', ctx)
-    current_player = get_user_player(data, ctx.current_user)
-    can_manage_team_profile = can_manage_team(ctx, team, current_player)
+    can_manage_team_profile = can_manage_team(ctx, team, None)
     can_delete_team = bool(ctx.current_user and is_admin_user(ctx.current_user))
     team_competition_name, team_season_name = get_team_scope(team)
     team_status = get_team_season_status(data, team)
@@ -13889,8 +13961,7 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
         data = load_validated_data()
         team_lookup = {item["team_id"]: item for item in data["teams"]}
         team = team_lookup.get(team_id)
-        current_player = get_user_player(data, ctx.current_user)
-        if not can_manage_team(ctx, team, current_player):
+        if not can_manage_team(ctx, team, None):
             return start_response_html(
                 start_response,
                 "403 Forbidden",
@@ -14157,7 +14228,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
     aliases = "、".join(detail["aliases"]) if detail["aliases"] else "无"
     photo_html = build_player_photo_html(detail["photo"], detail["display_name"])
     manage_buttons: list[str] = []
-    if ctx.current_user and ctx.current_user.get("player_id") == player_id:
+    if user_has_bound_player_id(ctx.current_user, player_id):
         manage_buttons.append('<a class="btn btn-light text-dark shadow-sm" href="/profile">编辑我的资料</a>')
     elif can_manage_player(ctx, player_id):
         manage_buttons.append(
@@ -15587,13 +15658,23 @@ def append_user_player_binding(
         if user["username"] == username:
             normalized_player_id = str(player_id or "").strip()
             existing_bound_ids = get_user_bound_player_ids(user)
+            storage_player_id = str(user.get("player_id") or "").strip()
+            next_player_id = storage_player_id or normalized_player_id or None
             linked_player_ids = [
-                item for item in existing_bound_ids if item != normalized_player_id
+                item
+                for item in existing_bound_ids
+                if item and item != next_player_id
             ]
+            if (
+                normalized_player_id
+                and normalized_player_id != next_player_id
+                and normalized_player_id not in linked_player_ids
+            ):
+                linked_player_ids.append(normalized_player_id)
             updated_users.append(
                 {
                     **user,
-                    "player_id": normalized_player_id or None,
+                    "player_id": next_player_id,
                     "linked_player_ids": linked_player_ids,
                 }
             )
@@ -15624,35 +15705,6 @@ def remove_user_player_binding(
                 **user,
                 "player_id": next_primary,
                 "linked_player_ids": remaining_ids[1:] if remaining_ids else [],
-            }
-        )
-    return updated_users
-
-
-def set_user_primary_player_id(
-    users: list[dict[str, Any]],
-    username: str,
-    player_id: str,
-) -> list[dict[str, Any]]:
-    normalized_player_id = player_id.strip()
-    updated_users = []
-    for user in users:
-        if user["username"] != username:
-            updated_users.append(user)
-            continue
-        if normalized_player_id not in get_user_bound_player_ids(user):
-            updated_users.append(user)
-            continue
-        linked_player_ids = [
-            item
-            for item in get_user_bound_player_ids(user)
-            if item != normalized_player_id
-        ]
-        updated_users.append(
-            {
-                **user,
-                "player_id": normalized_player_id,
-                "linked_player_ids": linked_player_ids,
             }
         )
     return updated_users
@@ -16409,14 +16461,24 @@ def build_miniprogram_bound_players(user: dict[str, Any]) -> list[dict[str, str]
         str(player.get("player_id") or ""): player
         for player in data.get("players", [])
     }
+    team_lookup = {
+        str(team.get("team_id") or ""): team
+        for team in data.get("teams", [])
+    }
     rows: list[dict[str, str]] = []
     for player_id in bound_ids:
         player = player_lookup.get(player_id) or {}
+        team = team_lookup.get(str(player.get("team_id") or "")) or {}
+        competition_name, season_name = get_team_scope(team)
         rows.append(
             {
                 "player_id": player_id,
                 "display_name": str(player.get("display_name") or player_id),
                 "photo": str(player.get("photo") or DEFAULT_PLAYER_PHOTO),
+                "team_id": str(team.get("team_id") or ""),
+                "team_name": str(team.get("name") or team.get("short_name") or ""),
+                "competition": competition_name,
+                "season": season_name,
             }
         )
     return rows
@@ -16428,8 +16490,6 @@ def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
         "username": user["username"],
         "display_name": user.get("display_name") or user["username"],
         "role": user.get("role") or "member",
-        "player_id": user.get("player_id") or "",
-        "linked_player_ids": user.get("linked_player_ids") or [],
         "bound_player_ids": bound_player_ids,
         "bound_players": build_miniprogram_bound_players(user),
         "province_name": user.get("province_name") or "",
@@ -16790,6 +16850,32 @@ def handle_miniprogram_player_search(ctx: RequestContext, start_response):
     return start_response_json(start_response, "200 OK", {"players": rows[:20]})
 
 
+def handle_miniprogram_current_player(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram current player only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    session_token = form_value(ctx.query, "session_token").strip()
+    username = load_session_username(session_token)
+    if not username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+    user = next((item for item in load_users() if item["username"] == username), None)
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+    competition_name = form_value(ctx.query, "competition").strip()
+    season_name = form_value(ctx.query, "season").strip()
+    result = resolve_user_player_for_scope(
+        load_validated_data(),
+        user,
+        competition_name,
+        season_name,
+    )
+    return start_response_json(start_response, "200 OK", result)
+
+
 def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
     if ctx.method != "POST":
         return start_response_json(
@@ -16813,10 +16899,80 @@ def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
     owner = get_user_by_player_id(users, player_id)
     if owner and owner["username"] != username:
         return start_response_json(start_response, "409 Conflict", {"error": "这个选手已绑定其他账号。"})
+    season_conflict = find_season_binding_conflict(data, user, player_id)
+    if season_conflict:
+        conflict_player_id, conflict_scopes = season_conflict
+        return start_response_json(
+            start_response,
+            "409 Conflict",
+            {
+                "code": "PLAYER_SCOPE_ALREADY_BOUND",
+                "error": (
+                    f"当前账号已绑定此赛季的选手 {conflict_player_id}，"
+                    "同一赛事同一赛季只能绑定一个选手。"
+                ),
+                "conflict_player_id": conflict_player_id,
+                "conflict_scopes": conflict_scopes,
+            },
+        )
     updated_users = append_user_player_binding(users, username, player_id)
     updated_user = next((item for item in updated_users if item["username"] == username), user)
     save_users(updated_users)
     return start_response_json(start_response, "200 OK", {"user": serialize_miniprogram_user(updated_user)})
+
+
+def handle_miniprogram_unbind_player(ctx: RequestContext, start_response):
+    if ctx.method != "POST":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "miniprogram unbind player only supports POST"},
+            headers=[("Allow", "POST")],
+        )
+    session_token = form_value(ctx.form, "session_token").strip()
+    username = load_session_username(session_token)
+    if not username:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+    player_id = form_value(ctx.form, "player_id").strip()
+    users = load_users()
+    user = next((item for item in users if item["username"] == username), None)
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+    if not user_has_bound_player_id(user, player_id):
+        return start_response_json(start_response, "404 Not Found", {"error": "这个选手未绑定到当前账号。"})
+
+    from web.features.bindings import release_captaincy_for_player
+
+    data = load_validated_data()
+    released_team_names = release_captaincy_for_player(data, player_id)
+    updated_users = remove_user_player_binding(users, username, player_id)
+    errors = save_repository_state(data, updated_users)
+    if errors:
+        return start_response_json(
+            start_response,
+            "500 Internal Server Error",
+            {"error": "解绑失败：" + "；".join(errors[:3])},
+        )
+    updated_user = next(
+        (item for item in updated_users if item["username"] == username),
+        user,
+    )
+    audit_action(
+        ctx,
+        "binding.miniprogram_unbind",
+        target_type="player",
+        target_id=player_id,
+        summary=f"小程序解除账号 {username} 与参赛ID {player_id} 的绑定",
+        metadata={"username": username, "released_team_names": released_team_names},
+    )
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "user": serialize_miniprogram_user(updated_user),
+            "released_team_names": released_team_names,
+        },
+    )
 
 
 def handle_miniprogram_web_login_confirm(ctx: RequestContext, start_response):
@@ -17079,14 +17235,13 @@ def handle_team_logo_update(ctx: RequestContext, start_response, team_id: str):
             layout("未找到战队", '<div class="alert alert-danger">没有找到对应的战队。</div>', ctx),
         )
 
-    current_player = get_user_player(data, ctx.current_user)
     if get_team_season_status(data, team) == "completed":
         return start_response_html(
             start_response,
             "200 OK",
             get_team_page(ctx, team_id, alert="当前战队所属赛季已结束，队标与战队资料不再允许修改。"),
         )
-    if not can_manage_team(ctx, team, current_player):
+    if not can_manage_team(ctx, team, None):
         return start_response_html(
             start_response,
             "403 Forbidden",
@@ -17816,8 +17971,12 @@ def app(environ, start_response):
             return handle_miniprogram_profile(ctx, start_response)
         if path == "/api/miniprogram/player-search":
             return handle_miniprogram_player_search(ctx, start_response)
+        if path == "/api/miniprogram/current-player":
+            return handle_miniprogram_current_player(ctx, start_response)
         if path == "/api/miniprogram/bind-player":
             return handle_miniprogram_bind_player(ctx, start_response)
+        if path == "/api/miniprogram/unbind-player":
+            return handle_miniprogram_unbind_player(ctx, start_response)
         if path == "/api/miniprogram/web-login-confirm":
             return handle_miniprogram_web_login_confirm(ctx, start_response)
         if path == "/api/web-login/status":

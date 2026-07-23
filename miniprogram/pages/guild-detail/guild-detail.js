@@ -21,6 +21,13 @@ function buildGuildOverview(payload) {
   };
 }
 
+function normalizeHonors(items) {
+  return (Array.isArray(items) ? items : []).map((item, index) => ({
+    ...item,
+    key: [item.title, item.team_name, item.scope, index].join("|")
+  }));
+}
+
 Page({
   data: {
     loading: true,
@@ -40,7 +47,10 @@ Page({
   onLoad(options) {
     applyScopeFromOptions(options);
     this.setData({ guildId: decodeURIComponent(options.guild_id || "") });
-    this.loadData();
+  },
+
+  onShow() {
+    this.loadData({ forceRefresh: true });
   },
 
   onPullDownRefresh() {
@@ -84,7 +94,7 @@ Page({
         topHistoryTeams: overview.topTeams,
         ongoingTeams: payload.ongoing_teams || [],
         historySections: payload.history_sections || [],
-        honors: payload.honors || []
+        honors: normalizeHonors(payload.honors)
       });
     } catch (error) {
       this.setData({

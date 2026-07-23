@@ -1,5 +1,5 @@
 const { request, assetUrl } = require("../../utils/api");
-const { getCurrentUser } = require("../../utils/auth");
+const { getCurrentPlayerForScope, getCurrentUser } = require("../../utils/auth");
 const { getFollowedPlayers } = require("../../utils/follows");
 const { take } = require("../../utils/format");
 const {
@@ -224,20 +224,43 @@ Page({
       let myEmptyText = "微信登录后，可以绑定选手并查看自己的赛事数据。";
       let myPrimaryActionText = "去登录";
       let myStatusLabel = "未登录";
-      if (currentUser && currentUser.player_id) {
-        myStatusLabel = "已绑定选手";
-        myPrimaryActionText = "我的选手页";
-        myPlayer = topPlayers.find((player) => player.player_id === currentUser.player_id) || {
-          player_id: currentUser.player_id,
-          display_name: currentUser.display_name || currentUser.player_id,
-          team_name: "进入详情查看",
-          points_total: "--",
-          games_played: "--",
-          photoUrl: ""
-        };
+      const boundPlayerIds = Array.isArray(currentUser && currentUser.bound_player_ids)
+        ? currentUser.bound_player_ids
+        : [];
+      if (currentUser && boundPlayerIds.length) {
+        try {
+          const identity = await getCurrentPlayerForScope(selectedScope);
+          if (requestId !== this._loadRequestId) {
+            return;
+          }
+          if (identity.status === "matched" && identity.player) {
+            const scopedPlayer = identity.player;
+            myStatusLabel = "本赛季已绑定";
+            myPrimaryActionText = "我的选手页";
+            myPlayer = topPlayers.find((player) => player.player_id === scopedPlayer.player_id) || {
+              ...scopedPlayer,
+              team_name: scopedPlayer.team_name || "进入详情查看",
+              points_total: "--",
+              games_played: "--",
+              photoUrl: assetUrl(scopedPlayer.photo)
+            };
+          } else if (identity.status === "conflict") {
+            myStatusLabel = "绑定需要处理";
+            myEmptyText = "同一赛季绑定了多个选手，请先到绑定管理中保留一个。";
+            myPrimaryActionText = "管理绑定";
+          } else {
+            myStatusLabel = "本赛季未绑定";
+            myEmptyText = "本赛季暂无已绑定选手，可以前往绑定对应的赛季档案。";
+            myPrimaryActionText = "绑定选手";
+          }
+        } catch (error) {
+          myStatusLabel = "身份加载失败";
+          myEmptyText = error.message || "本赛季选手加载失败，请稍后重试。";
+          myPrimaryActionText = "重试";
+        }
       } else if (currentUser) {
         myStatusLabel = "未绑定选手";
-        myEmptyText = "绑定选手后，这里会显示你的赛事入口和个人选手页。";
+        myEmptyText = "绑定选手后，这里会显示当前赛季的个人选手页。";
         myPrimaryActionText = "绑定选手";
       }
       this.setData({
@@ -444,7 +467,9 @@ Page({
       this.goBindPlayer();
       return;
     }
-    wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(myPlayer.player_id)}` });
+    wx.navigateTo({
+      url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(myPlayer.player_id)}&strict_player_id=1`
+    });
   },
 
   openFollowedPlayer(event) {

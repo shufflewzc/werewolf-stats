@@ -55,7 +55,6 @@ get_season_entry = legacy.get_season_entry
 get_season_status = legacy.get_season_status
 get_series_entry_by_competition = legacy.get_series_entry_by_competition
 get_user_captained_team_for_scope = legacy.get_user_captained_team_for_scope
-get_user_player = legacy.get_user_player
 is_admin_user = legacy.is_admin_user
 layout = legacy.layout
 list_seasons = legacy.list_seasons

@@ -56,7 +56,7 @@
 
     <block wx:if="{{!choosing}}">
       <view class="section selected-bar">
-        <view>
+        <view class="selected-content">
           <text class="selected-label">当前赛事</text>
           <text class="selected-title">{{selectedScope.competition}}</text>
           <text class="selected-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
@@ -188,7 +188,7 @@
           <text class="leaderboard-tab-text">{{item.label}}</text>
         </view>
       </view>
-      <view class="stack" wx:if="{{leaderboardRows.length}}">
+      <view class="stack leaderboard-list" wx:if="{{leaderboardRows.length}}">
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">

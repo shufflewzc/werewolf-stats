@@ -361,3 +361,441 @@
   font-size: 34rpx;
   font-weight: 800;
 }
+
+/* Homepage visual polish: restrained, professional data presentation. */
+.page {
+  color: #0b1730;
+  padding: 24rpx 24rpx 48rpx;
+  background: #f4f6fa;
+}
+
+.hero {
+  padding: 32rpx 30rpx;
+  overflow: hidden;
+  border: 1rpx solid rgba(116, 149, 194, 0.2);
+  border-radius: 18rpx;
+  background: #0b1730;
+  box-shadow: 0 12rpx 28rpx rgba(11, 23, 48, 0.14);
+}
+
+.hero .eyebrow {
+  font-size: 21rpx;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.hero .title {
+  margin-top: 14rpx;
+  font-size: 38rpx;
+  font-weight: 800;
+  line-height: 1.24;
+  letter-spacing: -0.5rpx;
+}
+
+.hero .copy {
+  margin-top: 10rpx;
+  font-size: 24rpx;
+  line-height: 1.5;
+  color: rgba(255, 255, 255, 0.72);
+}
+
+.hero .button-row {
+  gap: 12rpx;
+  margin-top: 24rpx;
+}
+
+.hero .primary-button,
+.hero .ghost-button {
+  height: 70rpx;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  line-height: 70rpx;
+  box-shadow: none;
+}
+
+.hero .primary-button {
+  border: 1rpx solid rgba(104, 151, 217, 0.72);
+  color: #ffffff;
+  background: transparent;
+}
+
+.hero .ghost-button {
+  border: 1rpx solid #ffffff;
+  color: #0b1730;
+  background: #ffffff;
+}
+
+.section {
+  margin-top: 24rpx;
+}
+
+.section-head {
+  margin-bottom: 14rpx;
+}
+
+.section-title {
+  font-size: 29rpx;
+  color: #0b1730;
+}
+
+.section-note,
+.selected-label,
+.selected-meta,
+.workbench-kicker,
+.metric-label,
+.metric-copy,
+.list-meta,
+.score-label {
+  color: #68758a;
+}
+
+.competition-choice,
+.selected-bar,
+.season-search-card,
+.workbench-card,
+.day-focus-card,
+.metric-card,
+.list-card,
+.empty-card,
+.error-card {
+  border-color: #d8e0eb;
+  border-radius: 16rpx;
+  box-shadow: 0 6rpx 18rpx rgba(15, 23, 42, 0.045);
+}
+
+.competition-choice,
+.selected-bar {
+  padding: 24rpx 26rpx;
+}
+
+.selected-content {
+  flex: 1;
+  min-width: 0;
+}
+
+.selected-title {
+  margin-top: 8rpx;
+  overflow: hidden;
+  font-size: 29rpx;
+  line-height: 1.32;
+  color: #0b1730;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selected-meta {
+  margin-top: 8rpx;
+  overflow: hidden;
+  line-height: 1.4;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-button,
+.scope-button {
+  min-width: 124rpx;
+  height: 68rpx;
+  margin: 0;
+  padding: 0 20rpx;
+  border: 1rpx solid #9eacc0;
+  border-radius: 10rpx;
+  box-sizing: border-box;
+  font-size: 23rpx;
+  font-weight: 700;
+  line-height: 68rpx;
+  color: #0b1730;
+  background: #ffffff;
+  box-shadow: none;
+}
+
+.change-button {
+  flex-basis: 124rpx;
+  width: 124rpx;
+}
+
+.scope-bar .scope-button,
+.scope-switch-button {
+  min-width: 140rpx;
+}
+
+.choice-enter {
+  height: 64rpx;
+  border-radius: 10rpx;
+  line-height: 64rpx;
+  background: #0b1730;
+  box-shadow: none;
+}
+
+.season-picker {
+  border-color: #d8e0eb;
+  border-radius: 10rpx;
+  background: #f7f9fc;
+}
+
+.season-action {
+  color: #1f5fd1;
+}
+
+.day-focus-card {
+  min-height: 118rpx;
+  padding: 24rpx 26rpx;
+}
+
+.day-focus-title {
+  margin-top: 8rpx;
+  font-size: 36rpx;
+  line-height: 1.15;
+  color: #0b1730;
+  letter-spacing: 0.5rpx;
+}
+
+.day-focus-card .list-meta {
+  margin-top: 10rpx;
+}
+
+.match-day-actions {
+  gap: 10rpx;
+}
+
+.day-action {
+  width: 84rpx;
+  height: 56rpx;
+  border-color: #9bbcf5;
+  border-radius: 10rpx;
+  font-size: 21rpx;
+  line-height: 56rpx;
+  color: #1f5fd1;
+  background: #f4f8ff;
+}
+
+.day-pill {
+  padding: 10rpx 14rpx;
+  border: 1rpx solid #f3d18f;
+  border-radius: 10rpx;
+  color: #9a5b00;
+  background: #fff8e8;
+}
+
+.tap-cue {
+  width: 22rpx;
+  height: auto;
+  border-radius: 0;
+  font-size: 32rpx;
+  line-height: 1;
+  color: #2563d9;
+  background: transparent;
+}
+
+.workbench-card {
+  padding: 26rpx;
+}
+
+.workbench-title {
+  margin-top: 8rpx;
+  font-size: 32rpx;
+  line-height: 1.25;
+  color: #0b1730;
+}
+
+.my-player-card,
+.empty-inline {
+  border: 1rpx solid #e4e9f1;
+  border-radius: 12rpx;
+  background: #f7f9fc;
+}
+
+.my-player-card {
+  padding: 20rpx 22rpx;
+}
+
+.empty-inline {
+  color: #68758a;
+}
+
+.quick-actions {
+  gap: 12rpx;
+  margin-top: 18rpx;
+}
+
+.primary-button,
+.ghost-button {
+  height: 72rpx;
+  border-radius: 10rpx;
+  font-size: 24rpx;
+  line-height: 72rpx;
+  box-shadow: none;
+}
+
+.primary-button {
+  background: #0b1730;
+}
+
+.ghost-button {
+  border-color: #9eacc0;
+  color: #0b1730;
+}
+
+.season-search-card {
+  padding: 20rpx;
+}
+
+.season-search-row {
+  gap: 10rpx;
+}
+
+.season-search-input,
+.season-search-button,
+.season-clear-button {
+  height: 72rpx;
+  border-radius: 10rpx;
+  line-height: 72rpx;
+}
+
+.season-search-input {
+  border-color: #cbd5e1;
+  color: #0b1730;
+  background: #f8fafc;
+}
+
+.season-search-button {
+  background: #0b1730;
+}
+
+.season-search-button,
+.season-clear-button {
+  flex-basis: 100rpx;
+  width: 100rpx;
+}
+
+.season-clear-button {
+  color: #46556b;
+  background: #e9eef5;
+}
+
+.search-result {
+  border-top-color: #e4e9f1;
+}
+
+.search-type {
+  border-radius: 8rpx;
+  color: #1f5fd1;
+  background: #eaf2ff;
+}
+
+.metrics {
+  gap: 14rpx;
+}
+
+.metric-card {
+  padding: 22rpx 24rpx;
+}
+
+.metric-value {
+  margin-top: 10rpx;
+  font-size: 36rpx;
+  color: #0b1730;
+}
+
+.leaderboard-stage-scroll {
+  margin-bottom: 14rpx;
+}
+
+.leaderboard-stages {
+  gap: 10rpx;
+}
+
+.leaderboard-stage {
+  height: 54rpx;
+  padding: 0 22rpx;
+  border-color: #cbd5e1;
+  border-radius: 10rpx;
+  line-height: 54rpx;
+  color: #526176;
+}
+
+.leaderboard-stage.is-active {
+  border-color: #2563d9;
+  background: #2563d9;
+}
+
+.leaderboard-tabs {
+  gap: 6rpx;
+  margin-bottom: 14rpx;
+  padding: 6rpx;
+  border: 1rpx solid #d8e0eb;
+  border-radius: 12rpx;
+  background: #edf1f6;
+}
+
+.leaderboard-tab {
+  height: 60rpx;
+  border-radius: 8rpx;
+}
+
+.leaderboard-tab.is-active {
+  color: #1f5fd1;
+  background: #ffffff;
+  box-shadow: 0 3rpx 10rpx rgba(15, 23, 42, 0.08);
+}
+
+.leaderboard-list {
+  gap: 0;
+  overflow: hidden;
+  border: 1rpx solid #d8e0eb;
+  border-radius: 16rpx;
+  background: #ffffff;
+  box-shadow: 0 6rpx 18rpx rgba(15, 23, 42, 0.04);
+}
+
+.leaderboard-list .list-card {
+  min-height: 104rpx;
+  padding: 20rpx 22rpx;
+  border: 0;
+  border-bottom: 1rpx solid #e4e9f1;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+.leaderboard-list .list-card:last-child {
+  border-bottom: 0;
+}
+
+.leaderboard-list .rank {
+  flex-basis: 42rpx;
+  width: 42rpx;
+  height: auto;
+  border-radius: 0;
+  font-size: 25rpx;
+  line-height: 1;
+  color: #68758a;
+  background: transparent;
+}
+
+.leaderboard-list .list-title {
+  font-size: 27rpx;
+  color: #0b1730;
+}
+
+.leaderboard-list .score-value {
+  color: #1f5fd1;
+}
+
+.leaderboard-list .tap-cue {
+  margin-left: 4rpx;
+}
+
+.day-card {
+  padding: 20rpx 22rpx;
+}
+
+.tap-card {
+  border-color: #d8e0eb;
+  box-shadow: 0 6rpx 18rpx rgba(15, 23, 42, 0.045);
+}
+
+.tap-button-hover,
+.tap-card-hover,
+.tap-chip-hover {
+  opacity: 0.86;
+  transform: scale(0.99);
+}

@@ -8,7 +8,7 @@
       <text class="team-copy">{{team.competition || "当前赛事"}} · {{team.season || "当前赛季"}}</text>
       <view wx:if="{{team.power_rating}}" class="power-rating-badge {{team.power_rating.class_name}}">
         <text>战力 {{team.power_rating.grade}}</text>
-        <text class="power-rating-source">{{team.power_rating.source_label}}</text>
+        <text class="power-rating-source">评级</text>
       </view>
     </view>
   </view>

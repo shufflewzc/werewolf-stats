@@ -8,7 +8,7 @@
       <text class="detail-copy">排名 #{{player.rank || "-"}} · {{player.owner || "未绑定账号"}}</text>
       <view wx:if="{{player.power_rating}}" class="power-rating-badge {{player.power_rating.class_name}}">
         <text>战力 {{player.power_rating.grade}}</text>
-        <text class="power-rating-source">{{player.power_rating.source_label}}</text>
+        <text class="power-rating-source">评级</text>
       </view>
       <button class="follow-button" hover-class="tap-button-hover" wx:if="{{selectedScope && selectedScope.competition}}" bindtap="toggleFollow">{{followed ? "已关注" : "关注选手"}}</button>
     </view>

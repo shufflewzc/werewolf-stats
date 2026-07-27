@@ -851,9 +851,10 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
                 WHEN created_source = '' OR created_source = 'manual' THEN 'match_entry'
                 ELSE created_source
             END
-        WHERE notes LIKE '%自动创建%'
+        WHERE notes LIKE ?
           AND profile_status = 'verified'
-        """
+        """,
+        ("%自动创建%",),
     )
 
     request_columns = {
@@ -2645,7 +2646,8 @@ def cleanup_expired_runtime_state(
                 deleted[table_name] = max(0, cursor.rowcount)
             if purge_legacy_web_login:
                 cursor = connection.execute(
-                    "DELETE FROM app_meta WHERE meta_key LIKE 'web_login:%'"
+                    "DELETE FROM app_meta WHERE meta_key LIKE ?",
+                    ("web_login:%",),
                 )
                 deleted["legacy_web_login"] = max(0, cursor.rowcount)
     return deleted
@@ -2894,9 +2896,10 @@ def cleanup_import_history(
                 """
                 SELECT meta_key
                 FROM app_meta
-                WHERE meta_key LIKE 'import_batch_snapshot:%'
+                WHERE meta_key LIKE ?
                 ORDER BY meta_key DESC
-                """
+                """,
+                ("import_batch_snapshot:%",),
             ).fetchall()
             legacy_delete_keys = [
                 str(row["meta_key"])
@@ -2935,9 +2938,10 @@ def migrate_legacy_import_history() -> dict[str, int]:
                 """
                 SELECT meta_key, meta_value
                 FROM app_meta
-                WHERE meta_key LIKE 'import_batch_snapshot:%'
+                WHERE meta_key LIKE ?
                 ORDER BY meta_key
-                """
+                """,
+                ("import_batch_snapshot:%",),
             ).fetchall()
             for row in snapshot_rows:
                 job_id = str(row["meta_key"]).split(":", 1)[-1]
@@ -2991,7 +2995,8 @@ def migrate_legacy_import_history() -> dict[str, int]:
                 migrated_snapshots += max(0, cursor.rowcount)
             if snapshot_rows:
                 connection.execute(
-                    "DELETE FROM app_meta WHERE meta_key LIKE 'import_batch_snapshot:%'"
+                    "DELETE FROM app_meta WHERE meta_key LIKE ?",
+                    ("import_batch_snapshot:%",),
                 )
             if batches_row:
                 connection.execute(

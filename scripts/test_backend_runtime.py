@@ -6,7 +6,11 @@ import unittest
 from pathlib import Path
 
 import sqlite_store
-from web_app import get_client_ip
+from web_app import (
+    get_client_ip,
+    resolve_match_award_player_ids,
+    validate_match_awards,
+)
 
 
 class BackendRuntimeTests(unittest.TestCase):
@@ -175,6 +179,70 @@ class BackendRuntimeTests(unittest.TestCase):
             sqlite_store.load_session_username("session-token"),
             "admin",
         )
+
+    def test_match_award_refs_are_persisted_as_player_ids(self):
+        match = {
+            "players": [
+                {
+                    "player_id": "player-winner",
+                    "player_name": "赢家",
+                    "camp": "werewolves",
+                },
+                {
+                    "player_id": "player-loser",
+                    "player_name": "输家",
+                    "camp": "villagers",
+                },
+            ],
+            "winning_camp": "werewolves",
+            "mvp_player_id": "",
+            "svp_player_id": "",
+            "scapegoat_player_id": "",
+            "mvp_player_ref": "0",
+            "svp_player_ref": "1",
+            "scapegoat_player_ref": "1",
+            "mvp_player_name": "",
+            "svp_player_name": "",
+            "scapegoat_player_name": "",
+        }
+
+        self.assertEqual(validate_match_awards(match), "")
+        resolve_match_award_player_ids(match)
+
+        self.assertEqual(match["mvp_player_id"], "player-winner")
+        self.assertEqual(match["svp_player_id"], "player-loser")
+        self.assertEqual(match["scapegoat_player_id"], "player-loser")
+
+    def test_match_award_resolution_keeps_explicit_ids_and_legacy_names(self):
+        match = {
+            "players": [
+                {
+                    "player_id": "player-winner",
+                    "player_name": "赢家",
+                    "camp": "werewolves",
+                },
+                {
+                    "player_id": "player-loser",
+                    "player_name": "输家",
+                    "camp": "villagers",
+                },
+            ],
+            "mvp_player_id": "player-winner",
+            "svp_player_id": "",
+            "scapegoat_player_id": "",
+            "mvp_player_ref": "",
+            "svp_player_ref": "",
+            "scapegoat_player_ref": "",
+            "mvp_player_name": "",
+            "svp_player_name": "输家",
+            "scapegoat_player_name": "输家",
+        }
+
+        resolve_match_award_player_ids(match)
+
+        self.assertEqual(match["mvp_player_id"], "player-winner")
+        self.assertEqual(match["svp_player_id"], "player-loser")
+        self.assertEqual(match["scapegoat_player_id"], "player-loser")
 
 
 if __name__ == "__main__":

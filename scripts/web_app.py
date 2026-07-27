@@ -6908,14 +6908,50 @@ def reconcile_flight_cup_player_team(
 
 
 def resolve_match_award_player_ids(match: dict[str, Any]) -> None:
+    participants = [
+        participant
+        for participant in match.get("players", [])
+        if str(participant.get("player_id") or "").strip()
+    ]
     participant_name_map = {
         str(participant.get("player_name") or "").strip(): str(participant.get("player_id") or "").strip()
-        for participant in match.get("players", [])
+        for participant in participants
         if str(participant.get("player_name") or "").strip() and str(participant.get("player_id") or "").strip()
     }
-    match["mvp_player_id"] = participant_name_map.get(str(match.get("mvp_player_name") or "").strip(), "")
-    match["svp_player_id"] = participant_name_map.get(str(match.get("svp_player_name") or "").strip(), "")
-    match["scapegoat_player_id"] = participant_name_map.get(str(match.get("scapegoat_player_name") or "").strip(), "")
+
+    def resolve_award_player_id(
+        player_id_key: str,
+        player_ref_key: str,
+        player_name_key: str,
+    ) -> str:
+        explicit_player_id = str(match.get(player_id_key) or "").strip()
+        if explicit_player_id:
+            return explicit_player_id
+        raw_ref = str(match.get(player_ref_key) or "").strip()
+        if raw_ref.isdigit():
+            ref_index = int(raw_ref)
+            if 0 <= ref_index < len(participants):
+                return str(participants[ref_index].get("player_id") or "").strip()
+        return participant_name_map.get(
+            str(match.get(player_name_key) or "").strip(),
+            "",
+        )
+
+    match["mvp_player_id"] = resolve_award_player_id(
+        "mvp_player_id",
+        "mvp_player_ref",
+        "mvp_player_name",
+    )
+    match["svp_player_id"] = resolve_award_player_id(
+        "svp_player_id",
+        "svp_player_ref",
+        "svp_player_name",
+    )
+    match["scapegoat_player_id"] = resolve_award_player_id(
+        "scapegoat_player_id",
+        "scapegoat_player_ref",
+        "scapegoat_player_name",
+    )
 
 
 def resolve_match_entities(

@@ -5,6 +5,7 @@ APP_DIR="${APP_DIR:-/opt/werewolf-stats}"
 ENV_FILE="${ENV_FILE:-$APP_DIR/.env.production}"
 ENV_FILE_SET=0
 SERVICE_NAME="${SERVICE_NAME:-werewolf-stats}"
+IMPORT_WORKER_SERVICE="${IMPORT_WORKER_SERVICE:-werewolf-stats-import-worker}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 RUN_GIT_PULL="${RUN_GIT_PULL:-1}"
 RUN_REQUIREMENTS="${RUN_REQUIREMENTS:-1}"
@@ -17,6 +18,22 @@ WARM_CACHE_ROUNDS="${WARM_CACHE_ROUNDS:-2}"
 SERVICE_READY_ATTEMPTS="${SERVICE_READY_ATTEMPTS:-30}"
 SERVICE_READY_DELAY="${SERVICE_READY_DELAY:-1}"
 SHOW_STATUS="${SHOW_STATUS:-1}"
+PREVIOUS_COMMIT=""
+DEPLOY_UPDATED=0
+
+rollback_on_error() {
+  exit_code=$?
+  trap - EXIT INT TERM HUP
+  if [ "$DEPLOY_UPDATED" = "1" ] && [ -n "$PREVIOUS_COMMIT" ]; then
+    echo "[deploy] deployment failed; rolling back to $PREVIOUS_COMMIT" >&2
+    sudo systemctl stop "$IMPORT_WORKER_SERVICE" >/dev/null 2>&1 || true
+    git reset --hard "$PREVIOUS_COMMIT" || true
+    sudo systemctl restart "$SERVICE_NAME" || true
+  fi
+  exit "$exit_code"
+}
+
+trap rollback_on_error EXIT INT TERM HUP
 
 usage() {
   cat <<'EOF'
@@ -138,6 +155,14 @@ fi
 
 cd "$APP_DIR"
 
+if [ -n "$(git status --porcelain)" ]; then
+  echo "[deploy] working tree is not clean; commit or stash server-side changes before deployment" >&2
+  git status --short >&2
+  exit 1
+fi
+
+PREVIOUS_COMMIT="$(git rev-parse HEAD)"
+
 if [ ! -f "$ENV_FILE" ]; then
   echo "[deploy] env file not found: $ENV_FILE" >&2
   exit 1
@@ -158,6 +183,9 @@ echo "[deploy] service=$SERVICE_NAME"
 
 if [ "$RUN_GIT_PULL" = "1" ]; then
   run git pull --ff-only
+  if [ "$(git rev-parse HEAD)" != "$PREVIOUS_COMMIT" ]; then
+    DEPLOY_UPDATED=1
+  fi
 fi
 
 if [ "$RUN_REQUIREMENTS" = "1" ]; then
@@ -166,6 +194,7 @@ fi
 
 if [ "$RUN_APPLY_SCHEMA" = "1" ]; then
   run "$PYTHON_BIN" scripts/apply_postgres_schema.py
+  run "$PYTHON_BIN" scripts/cleanup_runtime_state.py --purge-legacy-web-login
 fi
 
 if [ "$RUN_PRE_DEPLOY_CHECK" = "1" ]; then
@@ -178,11 +207,27 @@ if [ "$RUN_NGINX_CHECK" = "1" ]; then
 fi
 
 if [ "$RESTART_SERVICE" = "1" ]; then
+  if [ -f "deploy/systemd/werewolf-stats-import-worker.service" ]; then
+    run sudo cp deploy/systemd/werewolf-stats-import-worker.service \
+      "/etc/systemd/system/$IMPORT_WORKER_SERVICE.service"
+    if [ -f "deploy/systemd/werewolf-stats-maintenance.service" ]; then
+      run sudo cp deploy/systemd/werewolf-stats-maintenance.service \
+        /etc/systemd/system/werewolf-stats-maintenance.service
+      run sudo cp deploy/systemd/werewolf-stats-maintenance.timer \
+        /etc/systemd/system/werewolf-stats-maintenance.timer
+    fi
+    run sudo systemctl daemon-reload
+    run sudo systemctl enable "$IMPORT_WORKER_SERVICE"
+    if [ -f "/etc/systemd/system/werewolf-stats-maintenance.timer" ]; then
+      run sudo systemctl enable --now werewolf-stats-maintenance.timer
+    fi
+    run sudo systemctl restart "$IMPORT_WORKER_SERVICE"
+  fi
   run sudo systemctl restart "$SERVICE_NAME"
+  wait_for_service
 fi
 
 if [ "$RUN_WARM_PUBLIC_CACHE" = "1" ]; then
-  wait_for_service
   run "$PYTHON_BIN" scripts/warm_public_api_cache.py \
     --base-url "http://127.0.0.1:8000" \
     --rounds "$WARM_CACHE_ROUNDS"
@@ -196,3 +241,4 @@ fi
 
 echo
 echo "[deploy] done"
+trap - EXIT INT TERM HUP

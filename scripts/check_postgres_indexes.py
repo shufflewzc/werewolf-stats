@@ -30,6 +30,22 @@ REQUIRED_POSTGRES_INDEXES = {
     "idx_access_logs_status_created_at": ("access_logs", ("status_code", "created_at")),
     "idx_access_logs_duration_ms": ("access_logs", ("duration_ms",)),
     "idx_access_logs_request_id": ("access_logs", ("request_id",)),
+    "idx_web_login_challenges_expires": (
+        "web_login_challenges",
+        ("expires_at_epoch",),
+    ),
+    "idx_request_rate_limits_expires": (
+        "request_rate_limits",
+        ("expires_at_epoch",),
+    ),
+    "idx_idempotency_keys_expires": (
+        "idempotency_keys",
+        ("expires_at_epoch",),
+    ),
+    "idx_import_jobs_status_created": (
+        "import_jobs",
+        ("status", "created_at"),
+    ),
     "idx_audit_logs_created_at": ("audit_logs", ("created_at",)),
     "idx_audit_logs_target": ("audit_logs", ("target_type", "target_id", "created_at")),
     "idx_audit_logs_username": ("audit_logs", ("username", "created_at")),

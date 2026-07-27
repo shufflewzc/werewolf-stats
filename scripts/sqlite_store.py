@@ -22,6 +22,11 @@ SQLITE_BUSY_TIMEOUT_MS = int(os.getenv("SQLITE_BUSY_TIMEOUT_MS", "5000"))
 SQLITE_JOURNAL_MODE = os.getenv("SQLITE_JOURNAL_MODE", "WAL").strip().upper()
 SQLITE_SYNCHRONOUS = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").strip().upper()
 LOG_CLEANUP_META_KEY = "log_cleanup:last_run"
+DATA_REVISION_KEY = "repository"
+
+
+class RepositoryConflictError(RuntimeError):
+    pass
 
 
 def normalize_stance_result(entry: dict[str, Any]) -> str:
@@ -107,6 +112,25 @@ def insert_match_rows(connection: Any, match: dict[str, Any]) -> None:
             duration_minutes, winning_camp, mvp_player_id, svp_player_id, scapegoat_player_id, notes
         )
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(match_id) DO UPDATE SET
+            competition_name = excluded.competition_name,
+            season = excluded.season,
+            stage = excluded.stage,
+            round = excluded.round,
+            game_no = excluded.game_no,
+            score_model = excluded.score_model,
+            scoring_rule_json = excluded.scoring_rule_json,
+            exclude_from_team_scores = excluded.exclude_from_team_scores,
+            played_on = excluded.played_on,
+            group_label = excluded.group_label,
+            table_label = excluded.table_label,
+            format = excluded.format,
+            duration_minutes = excluded.duration_minutes,
+            winning_camp = excluded.winning_camp,
+            mvp_player_id = excluded.mvp_player_id,
+            svp_player_id = excluded.svp_player_id,
+            scapegoat_player_id = excluded.scapegoat_player_id,
+            notes = excluded.notes
         """,
         (
             match["match_id"],
@@ -266,6 +290,68 @@ def create_schema(connection: sqlite3.Connection) -> None:
             meta_value TEXT NOT NULL
         );
 
+        CREATE TABLE IF NOT EXISTS schema_migrations (
+            version INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            applied_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS data_revisions (
+            revision_key TEXT PRIMARY KEY,
+            revision INTEGER NOT NULL DEFAULT 0,
+            updated_at_epoch INTEGER NOT NULL DEFAULT 0
+        );
+
+        CREATE TABLE IF NOT EXISTS web_login_challenges (
+            token TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            username TEXT NOT NULL DEFAULT '',
+            next_path TEXT NOT NULL DEFAULT '/dashboard',
+            created_at_epoch INTEGER NOT NULL,
+            confirmed_at_epoch INTEGER NOT NULL DEFAULT 0,
+            used_at_epoch INTEGER NOT NULL DEFAULT 0,
+            expires_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS request_rate_limits (
+            bucket_key TEXT PRIMARY KEY,
+            window_started_epoch INTEGER NOT NULL,
+            request_count INTEGER NOT NULL,
+            expires_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS idempotency_keys (
+            fingerprint TEXT PRIMARY KEY,
+            created_at_epoch INTEGER NOT NULL,
+            expires_at_epoch INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS import_jobs (
+            job_id TEXT PRIMARY KEY,
+            action TEXT NOT NULL,
+            label TEXT NOT NULL,
+            filename TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            created_by TEXT NOT NULL,
+            completed_at TEXT NOT NULL DEFAULT '',
+            rolled_back_at TEXT NOT NULL DEFAULT '',
+            rolled_back_by TEXT NOT NULL DEFAULT '',
+            summary TEXT NOT NULL DEFAULT '',
+            metadata_json TEXT NOT NULL DEFAULT '{}',
+            payload_path TEXT NOT NULL DEFAULT '',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            locked_at_epoch INTEGER NOT NULL DEFAULT 0,
+            locked_by TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS import_snapshots (
+            job_id TEXT PRIMARY KEY,
+            snapshot_json TEXT NOT NULL,
+            created_at_epoch INTEGER NOT NULL,
+            FOREIGN KEY (job_id) REFERENCES import_jobs(job_id) ON DELETE CASCADE
+        );
+
         CREATE TABLE IF NOT EXISTS ai_jobs (
             job_id TEXT PRIMARY KEY,
             job_type TEXT NOT NULL,
@@ -387,6 +473,8 @@ def create_schema(connection: sqlite3.Connection) -> None:
             aliases_json TEXT NOT NULL,
             active INTEGER NOT NULL CHECK (active IN (0, 1)),
             is_star_player INTEGER NOT NULL DEFAULT 0 CHECK (is_star_player IN (0, 1)),
+            profile_status TEXT NOT NULL DEFAULT 'verified',
+            created_source TEXT NOT NULL DEFAULT 'manual',
             joined_on TEXT NOT NULL,
             notes TEXT NOT NULL
         );
@@ -453,6 +541,27 @@ def create_schema(connection: sqlite3.Connection) -> None:
 
         CREATE INDEX IF NOT EXISTS idx_access_logs_created_at
         ON access_logs(created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_web_login_challenges_expires
+        ON web_login_challenges(expires_at_epoch);
+
+        CREATE INDEX IF NOT EXISTS idx_request_rate_limits_expires
+        ON request_rate_limits(expires_at_epoch);
+
+        CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
+        ON idempotency_keys(expires_at_epoch);
+
+        CREATE INDEX IF NOT EXISTS idx_import_jobs_status_created
+        ON import_jobs(status, created_at);
+
+        CREATE INDEX IF NOT EXISTS idx_matches_scope_played
+        ON matches(competition_name, season, played_on);
+
+        CREATE INDEX IF NOT EXISTS idx_match_players_player
+        ON match_players(player_id, match_id);
+
+        CREATE INDEX IF NOT EXISTS idx_match_players_team
+        ON match_players(team_id, match_id);
 
         CREATE INDEX IF NOT EXISTS idx_access_logs_path_created_at
         ON access_logs(path, created_at);
@@ -726,6 +835,26 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE players ADD COLUMN is_star_player INTEGER NOT NULL DEFAULT 0"
         )
+    if "profile_status" not in player_columns:
+        connection.execute(
+            "ALTER TABLE players ADD COLUMN profile_status TEXT NOT NULL DEFAULT 'verified'"
+        )
+    if "created_source" not in player_columns:
+        connection.execute(
+            "ALTER TABLE players ADD COLUMN created_source TEXT NOT NULL DEFAULT 'manual'"
+        )
+    connection.execute(
+        """
+        UPDATE players
+        SET profile_status = 'auto_created',
+            created_source = CASE
+                WHEN created_source = '' OR created_source = 'manual' THEN 'match_entry'
+                ELSE created_source
+            END
+        WHERE notes LIKE '%自动创建%'
+          AND profile_status = 'verified'
+        """
+    )
 
     request_columns = {
         row["name"]
@@ -752,6 +881,14 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
     backfill_team_scopes(connection)
     backfill_match_awards(connection)
     backfill_team_claim_captains(connection)
+    connection.execute(
+        """
+        INSERT INTO data_revisions (revision_key, revision, updated_at_epoch)
+        VALUES (?, 1, ?)
+        ON CONFLICT(revision_key) DO NOTHING
+        """,
+        (DATA_REVISION_KEY, int(datetime.now(timezone.utc).timestamp())),
+    )
     connection.execute(
         """
         INSERT INTO app_meta (meta_key, meta_value)
@@ -1090,6 +1227,52 @@ def china_date_days_ago(days: int) -> str:
     ).isoformat()
 
 
+def delete_rows_not_in(
+    connection: Any,
+    table_name: str,
+    id_column: str,
+    ids_to_keep: list[str],
+) -> None:
+    normalized_ids = [
+        str(item or "").strip()
+        for item in ids_to_keep
+        if str(item or "").strip()
+    ]
+    if not normalized_ids:
+        connection.execute(f'DELETE FROM "{table_name}"')
+        return
+    placeholders = ",".join("?" for _ in normalized_ids)
+    connection.execute(
+        f'DELETE FROM "{table_name}" WHERE "{id_column}" NOT IN ({placeholders})',
+        normalized_ids,
+    )
+
+
+def advance_data_revision_if_current(
+    connection: Any,
+    expected_revision: int,
+) -> int:
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    row = connection.execute(
+        """
+        UPDATE data_revisions
+        SET revision = revision + 1,
+            updated_at_epoch = ?
+        WHERE revision_key = ?
+          AND revision = ?
+        RETURNING revision
+        """,
+        (now_epoch, DATA_REVISION_KEY, int(expected_revision)),
+    ).fetchone()
+    if row:
+        return int(row["revision"])
+    current_revision = get_data_revision(connection)
+    raise RepositoryConflictError(
+        f"数据已被其他管理员更新（当前版本 {current_revision}，"
+        f"页面版本 {expected_revision}），请刷新后重试。"
+    )
+
+
 def replace_repository_data(
     connection: Any,
     teams: list[dict[str, Any]],
@@ -1099,6 +1282,7 @@ def replace_repository_data(
     guilds: list[dict[str, Any]] | None = None,
     season_player_dimension_stats: list[dict[str, Any]] | None = None,
     season_team_dimension_stats: list[dict[str, Any]] | None = None,
+    expected_revision: int | None = None,
 ) -> None:
     guild_rows = guilds or []
     player_dimension_rows = (
@@ -1112,24 +1296,11 @@ def replace_repository_data(
         else load_season_team_dimension_stats(connection)
     )
     backend = connection_backend(connection)
-    existing_sessions = connection.execute(
-        """
-        SELECT session_token, username, created_at
-        FROM user_sessions
-        """
-    ).fetchall()
     if backend == "sqlite":
         connection.execute("PRAGMA foreign_keys = OFF")
     with transaction_context(connection):
-        connection.execute("DELETE FROM match_players")
-        connection.execute("DELETE FROM matches")
-        connection.execute("DELETE FROM team_members")
-        connection.execute("DELETE FROM players")
-        connection.execute("DELETE FROM teams")
-        connection.execute("DELETE FROM guilds")
-        connection.execute("DELETE FROM user_sessions")
-        connection.execute("DELETE FROM users")
-
+        if expected_revision is not None:
+            advance_data_revision_if_current(connection, int(expected_revision))
         for user in users:
             connection.execute(
                 """
@@ -1140,6 +1311,24 @@ def replace_repository_data(
                     wechat_openid, wechat_web_openid, wechat_unionid
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(username) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    password_salt = excluded.password_salt,
+                    password_hash = excluded.password_hash,
+                    active = excluded.active,
+                    player_id = excluded.player_id,
+                    linked_player_ids_json = excluded.linked_player_ids_json,
+                    manager_scope_keys_json = excluded.manager_scope_keys_json,
+                    permissions_json = excluded.permissions_json,
+                    role = excluded.role,
+                    province_name = excluded.province_name,
+                    region_name = excluded.region_name,
+                    gender = excluded.gender,
+                    bio = excluded.bio,
+                    photo = excluded.photo,
+                    wechat_openid = excluded.wechat_openid,
+                    wechat_web_openid = excluded.wechat_web_openid,
+                    wechat_unionid = excluded.wechat_unionid
                 """,
                 (
                     user["username"],
@@ -1163,32 +1352,6 @@ def replace_repository_data(
                 ),
             )
 
-        valid_usernames = {
-            str(user.get("username") or "").strip()
-            for user in users
-            if str(user.get("username") or "").strip()
-        }
-        for row in existing_sessions:
-            username = str(row["username"] or "").strip()
-            session_token = str(row["session_token"] or "").strip()
-            created_at = str(row["created_at"] or "").strip()
-            if not username or not session_token or username not in valid_usernames:
-                continue
-            connection.execute(
-                """
-                INSERT INTO user_sessions (session_token, username, created_at)
-                VALUES (?, ?, ?)
-                ON CONFLICT(session_token) DO UPDATE SET
-                    username = excluded.username,
-                    created_at = excluded.created_at
-                """,
-                (
-                    session_token,
-                    username,
-                    created_at,
-                ),
-            )
-
         for guild in guild_rows:
             connection.execute(
                 """
@@ -1197,6 +1360,16 @@ def replace_repository_data(
                     leader_username, manager_usernames_json, honors_json, notes
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id) DO UPDATE SET
+                    name = excluded.name,
+                    short_name = excluded.short_name,
+                    logo = excluded.logo,
+                    active = excluded.active,
+                    founded_on = excluded.founded_on,
+                    leader_username = excluded.leader_username,
+                    manager_usernames_json = excluded.manager_usernames_json,
+                    honors_json = excluded.honors_json,
+                    notes = excluded.notes
                 """,
                 (
                     guild["guild_id"],
@@ -1220,6 +1393,18 @@ def replace_repository_data(
                     competition_name, season_name, guild_id, captain_player_id, stage_groups_json, notes
                 )
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(team_id) DO UPDATE SET
+                    name = excluded.name,
+                    short_name = excluded.short_name,
+                    logo = excluded.logo,
+                    active = excluded.active,
+                    founded_on = excluded.founded_on,
+                    competition_name = excluded.competition_name,
+                    season_name = excluded.season_name,
+                    guild_id = excluded.guild_id,
+                    captain_player_id = excluded.captain_player_id,
+                    stage_groups_json = excluded.stage_groups_json,
+                    notes = excluded.notes
                 """,
                 (
                     team["team_id"],
@@ -1241,9 +1426,21 @@ def replace_repository_data(
             connection.execute(
                 """
                 INSERT INTO players (
-                    player_id, display_name, team_id, photo, aliases_json, active, is_star_player, joined_on, notes
+                    player_id, display_name, team_id, photo, aliases_json, active,
+                    is_star_player, profile_status, created_source, joined_on, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(player_id) DO UPDATE SET
+                    display_name = excluded.display_name,
+                    team_id = excluded.team_id,
+                    photo = excluded.photo,
+                    aliases_json = excluded.aliases_json,
+                    active = excluded.active,
+                    is_star_player = excluded.is_star_player,
+                    profile_status = excluded.profile_status,
+                    created_source = excluded.created_source,
+                    joined_on = excluded.joined_on,
+                    notes = excluded.notes
                 """,
                 (
                     player["player_id"],
@@ -1253,12 +1450,18 @@ def replace_repository_data(
                     json.dumps(player["aliases"], ensure_ascii=False),
                     1 if player.get("active") else 0,
                     1 if player.get("is_star_player") else 0,
+                    str(player.get("profile_status") or "verified"),
+                    str(player.get("created_source") or "manual"),
                     player["joined_on"],
                     player["notes"],
                 ),
             )
 
         for team in teams:
+            connection.execute(
+                "DELETE FROM team_members WHERE team_id = ?",
+                (team["team_id"],),
+            )
             for sort_order, player_id in enumerate(team["members"]):
                 connection.execute(
                     """
@@ -1269,8 +1472,44 @@ def replace_repository_data(
                 )
 
         for match in matches:
+            connection.execute(
+                "DELETE FROM match_players WHERE match_id = ?",
+                (match["match_id"],),
+            )
             insert_match_rows(connection, match)
 
+        delete_rows_not_in(
+            connection,
+            "matches",
+            "match_id",
+            [str(match.get("match_id") or "") for match in matches],
+        )
+        delete_rows_not_in(
+            connection,
+            "players",
+            "player_id",
+            [str(player.get("player_id") or "") for player in players],
+        )
+        delete_rows_not_in(
+            connection,
+            "teams",
+            "team_id",
+            [str(team.get("team_id") or "") for team in teams],
+        )
+        delete_rows_not_in(
+            connection,
+            "guilds",
+            "guild_id",
+            [str(guild.get("guild_id") or "") for guild in guild_rows],
+        )
+        delete_rows_not_in(
+            connection,
+            "users",
+            "username",
+            [str(user.get("username") or "") for user in users],
+        )
+        connection.execute("DELETE FROM season_player_dimension_stats")
+        connection.execute("DELETE FROM season_team_dimension_stats")
         upsert_season_dimension_stats(
             connection,
             player_dimension_rows,
@@ -1292,6 +1531,8 @@ def replace_repository_data(
             """,
             (SCHEMA_VERSION_META_KEY, str(REQUIRED_SCHEMA_VERSION)),
         )
+        if expected_revision is None:
+            bump_data_revision(connection)
     if backend == "sqlite":
         connection.execute("PRAGMA foreign_keys = ON")
 
@@ -1301,6 +1542,7 @@ def replace_matches_by_id(
     matches_to_upsert: list[dict[str, Any]],
     players_to_upsert: list[dict[str, Any]] | None = None,
     teams_to_replace_members: list[dict[str, Any]] | None = None,
+    expected_revision: int | None = None,
 ) -> None:
     normalized_delete_ids = [
         str(match_id or "").strip()
@@ -1333,6 +1575,8 @@ def replace_matches_by_id(
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
+            if expected_revision is not None:
+                advance_data_revision_if_current(connection, int(expected_revision))
             for team in member_teams:
                 connection.execute(
                     """
@@ -1373,15 +1617,19 @@ def replace_matches_by_id(
                 connection.execute(
                     """
                     INSERT INTO players (
-                        player_id, display_name, team_id, photo, aliases_json, active, is_star_player, joined_on, notes
+                        player_id, display_name, team_id, photo, aliases_json, active,
+                        is_star_player, profile_status, created_source, joined_on, notes
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(player_id) DO UPDATE SET
                         display_name = excluded.display_name,
                         team_id = excluded.team_id,
                         photo = excluded.photo,
                         aliases_json = excluded.aliases_json,
                         active = excluded.active,
+                        is_star_player = excluded.is_star_player,
+                        profile_status = excluded.profile_status,
+                        created_source = excluded.created_source,
                         joined_on = excluded.joined_on,
                         notes = excluded.notes
                     """,
@@ -1393,6 +1641,8 @@ def replace_matches_by_id(
                         json.dumps(player["aliases"], ensure_ascii=False),
                         1 if player.get("active") else 0,
                         1 if player.get("is_star_player") else 0,
+                        str(player.get("profile_status") or "verified"),
+                        str(player.get("created_source") or "manual"),
                         player["joined_on"],
                         player["notes"],
                     ),
@@ -1420,6 +1670,8 @@ def replace_matches_by_id(
                 )
             for match in upsert_matches:
                 insert_match_rows(connection, match)
+            if expected_revision is None:
+                bump_data_revision(connection)
 
 
 def ensure_database() -> None:
@@ -1590,6 +1842,7 @@ def save_users(users: list[dict[str, Any]]) -> None:
             require_initialized_database(connection)
             with connection.transaction():
                 upsert_users_only(connection, users)
+                bump_data_revision(connection)
         return
 
     ensure_database()
@@ -1699,7 +1952,8 @@ def load_players(connection: Any | None = None) -> list[dict[str, Any]]:
         require_initialized_database(connection)
         rows = connection.execute(
             """
-            SELECT player_id, display_name, team_id, photo, aliases_json, active, is_star_player, joined_on, notes
+            SELECT player_id, display_name, team_id, photo, aliases_json, active,
+                   is_star_player, profile_status, created_source, joined_on, notes
             FROM players
             ORDER BY player_id
             """
@@ -1713,6 +1967,8 @@ def load_players(connection: Any | None = None) -> list[dict[str, Any]]:
                 "aliases": json.loads(row["aliases_json"]),
                 "active": bool(row["active"]),
                 "is_star_player": bool(row["is_star_player"]),
+                "profile_status": row["profile_status"] or "verified",
+                "created_source": row["created_source"] or "manual",
                 "joined_on": row["joined_on"],
                 "notes": row["notes"],
             }
@@ -1817,6 +2073,7 @@ def load_repository_data() -> dict[str, Any]:
     with connect_read_db() as connection:
         require_initialized_database(connection)
         return {
+            "_data_revision": get_data_revision(connection),
             "guilds": load_guilds(connection),
             "teams": load_teams(connection),
             "players": load_players(connection),
@@ -1855,6 +2112,11 @@ def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | Non
             users=users if users is not None else load_users(connection),
             season_player_dimension_stats=data.get("season_player_dimension_stats"),
             season_team_dimension_stats=data.get("season_team_dimension_stats"),
+            expected_revision=(
+                int(data["_data_revision"])
+                if data.get("_data_revision") is not None
+                else None
+            ),
         )
 
 
@@ -2145,17 +2407,600 @@ def load_meta_value(
             connection.close()
 
 
-def save_meta_value(meta_key: str, meta_value: str) -> None:
+def get_data_revision(connection: Any | None = None) -> int:
+    should_close = connection is None
+    if connection is None:
+        connection = connect_read_db()
+    try:
+        require_initialized_database(connection)
+        row = connection.execute(
+            "SELECT revision FROM data_revisions WHERE revision_key = ?",
+            (DATA_REVISION_KEY,),
+        ).fetchone()
+        return int(row["revision"] or 0) if row else 0
+    finally:
+        if should_close:
+            connection.close()
+
+
+def bump_data_revision(connection: Any | None = None) -> int:
+    should_close = connection is None
+    if connection is None:
+        connection = connect_write_db()
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    try:
+        require_initialized_database(connection)
+        connection.execute(
+            """
+            INSERT INTO data_revisions (revision_key, revision, updated_at_epoch)
+            VALUES (?, 1, ?)
+            ON CONFLICT(revision_key) DO UPDATE SET
+                revision = data_revisions.revision + 1,
+                updated_at_epoch = excluded.updated_at_epoch
+            """,
+            (DATA_REVISION_KEY, now_epoch),
+        )
+        row = connection.execute(
+            "SELECT revision FROM data_revisions WHERE revision_key = ?",
+            (DATA_REVISION_KEY,),
+        ).fetchone()
+        if should_close:
+            connection.commit()
+        return int(row["revision"] or 0) if row else 0
+    finally:
+        if should_close:
+            connection.close()
+
+
+def save_meta_value(
+    meta_key: str,
+    meta_value: str,
+    *,
+    bump_revision: bool = True,
+) -> None:
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            connection.execute(
+                """
+                INSERT INTO app_meta (meta_key, meta_value)
+                VALUES (?, ?)
+                ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+                """,
+                (meta_key, meta_value),
+            )
+            if bump_revision:
+                bump_data_revision(connection)
+
+
+def load_web_login_challenge_record(token: str) -> dict[str, Any] | None:
+    normalized_token = str(token or "").strip()
+    if not normalized_token:
+        return None
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    with connect_read_db() as connection:
+        require_initialized_database(connection)
+        row = connection.execute(
+            """
+            SELECT token, status, username, next_path, created_at_epoch,
+                   confirmed_at_epoch, used_at_epoch, expires_at_epoch
+            FROM web_login_challenges
+            WHERE token = ?
+            """,
+            (normalized_token,),
+        ).fetchone()
+    if not row:
+        return None
+    return {
+        "token": row["token"],
+        "status": row["status"],
+        "username": row["username"],
+        "next": row["next_path"],
+        "created_at": int(row["created_at_epoch"] or 0),
+        "confirmed_at": int(row["confirmed_at_epoch"] or 0),
+        "used_at": int(row["used_at_epoch"] or 0),
+        "expires_at": int(row["expires_at_epoch"] or 0),
+        "expired": int(row["expires_at_epoch"] or 0) <= now_epoch,
+    }
+
+
+def save_web_login_challenge_record(
+    token: str,
+    payload: dict[str, Any],
+    *,
+    ttl_seconds: int,
+) -> None:
+    created_at = int(payload.get("created_at") or datetime.now(timezone.utc).timestamp())
+    expires_at = int(payload.get("expires_at") or created_at + max(1, ttl_seconds))
     with connect_write_db() as connection:
         require_initialized_database(connection)
         connection.execute(
             """
-            INSERT INTO app_meta (meta_key, meta_value)
-            VALUES (?, ?)
-            ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+            INSERT INTO web_login_challenges (
+                token, status, username, next_path, created_at_epoch,
+                confirmed_at_epoch, used_at_epoch, expires_at_epoch
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(token) DO UPDATE SET
+                status = excluded.status,
+                username = excluded.username,
+                next_path = excluded.next_path,
+                created_at_epoch = excluded.created_at_epoch,
+                confirmed_at_epoch = excluded.confirmed_at_epoch,
+                used_at_epoch = excluded.used_at_epoch,
+                expires_at_epoch = excluded.expires_at_epoch
             """,
-            (meta_key, meta_value),
+            (
+                str(token or "").strip(),
+                str(payload.get("status") or "pending"),
+                str(payload.get("username") or ""),
+                str(payload.get("next") or "/dashboard"),
+                created_at,
+                int(payload.get("confirmed_at") or 0),
+                int(payload.get("used_at") or 0),
+                expires_at,
+            ),
         )
+
+
+def delete_web_login_challenge_record(token: str) -> None:
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        connection.execute(
+            "DELETE FROM web_login_challenges WHERE token = ?",
+            (str(token or "").strip(),),
+        )
+
+
+def consume_rate_limit_bucket(
+    bucket_key: str,
+    *,
+    window_seconds: int,
+) -> tuple[int, int]:
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    expires_at = now_epoch + max(1, int(window_seconds))
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            row = connection.execute(
+                """
+                INSERT INTO request_rate_limits (
+                    bucket_key, window_started_epoch, request_count, expires_at_epoch
+                )
+                VALUES (?, ?, 1, ?)
+                ON CONFLICT(bucket_key) DO UPDATE SET
+                    window_started_epoch = CASE
+                        WHEN request_rate_limits.expires_at_epoch <= ?
+                        THEN excluded.window_started_epoch
+                        ELSE request_rate_limits.window_started_epoch
+                    END,
+                    request_count = CASE
+                        WHEN request_rate_limits.expires_at_epoch <= ?
+                        THEN 1
+                        ELSE request_rate_limits.request_count + 1
+                    END,
+                    expires_at_epoch = CASE
+                        WHEN request_rate_limits.expires_at_epoch <= ?
+                        THEN excluded.expires_at_epoch
+                        ELSE request_rate_limits.expires_at_epoch
+                    END
+                RETURNING request_count, expires_at_epoch
+                """,
+                (
+                    str(bucket_key or "unknown"),
+                    now_epoch,
+                    expires_at,
+                    now_epoch,
+                    now_epoch,
+                    now_epoch,
+                ),
+            ).fetchone()
+    count = int(row["request_count"] or 0) if row else 0
+    retry_after = max(1, int((row["expires_at_epoch"] if row else expires_at) - now_epoch))
+    return count, retry_after
+
+
+def acquire_idempotency_key(fingerprint: str, *, ttl_seconds: int) -> bool:
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    expires_at = now_epoch + max(1, int(ttl_seconds))
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            connection.execute(
+                "DELETE FROM idempotency_keys WHERE fingerprint = ? AND expires_at_epoch <= ?",
+                (fingerprint, now_epoch),
+            )
+            cursor = connection.execute(
+                """
+                INSERT INTO idempotency_keys (
+                    fingerprint, created_at_epoch, expires_at_epoch
+                )
+                VALUES (?, ?, ?)
+                ON CONFLICT(fingerprint) DO NOTHING
+                """,
+                (fingerprint, now_epoch, expires_at),
+            )
+            return cursor.rowcount == 1
+
+
+def cleanup_expired_runtime_state(
+    *,
+    now_epoch: int | None = None,
+    purge_legacy_web_login: bool = False,
+) -> dict[str, int]:
+    effective_now = int(now_epoch or datetime.now(timezone.utc).timestamp())
+    deleted: dict[str, int] = {}
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            for table_name, expiry_column in (
+                ("web_login_challenges", "expires_at_epoch"),
+                ("request_rate_limits", "expires_at_epoch"),
+                ("idempotency_keys", "expires_at_epoch"),
+            ):
+                cursor = connection.execute(
+                    f"DELETE FROM {table_name} WHERE {expiry_column} <= ?",
+                    (effective_now,),
+                )
+                deleted[table_name] = max(0, cursor.rowcount)
+            if purge_legacy_web_login:
+                cursor = connection.execute(
+                    "DELETE FROM app_meta WHERE meta_key LIKE 'web_login:%'"
+                )
+                deleted["legacy_web_login"] = max(0, cursor.rowcount)
+    return deleted
+
+
+def create_import_job_record(
+    job: dict[str, Any],
+    *,
+    snapshot_json: str,
+) -> None:
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            connection.execute(
+                """
+                INSERT INTO import_jobs (
+                    job_id, action, label, filename, status, created_at, created_by,
+                    completed_at, rolled_back_at, rolled_back_by, summary,
+                    metadata_json, payload_path, attempts, locked_at_epoch, locked_by
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, 0, '')
+                """,
+                (
+                    job["batch_id"],
+                    job["action"],
+                    job["label"],
+                    job.get("filename", ""),
+                    job.get("status", "running"),
+                    job["created_at"],
+                    job["created_by"],
+                    job.get("completed_at", ""),
+                    job.get("rolled_back_at", ""),
+                    job.get("rolled_back_by", ""),
+                    job.get("summary", ""),
+                    json.dumps(job.get("metadata", {}), ensure_ascii=False),
+                    job.get("payload_path", ""),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO import_snapshots (job_id, snapshot_json, created_at_epoch)
+                VALUES (?, ?, ?)
+                """,
+                (job["batch_id"], snapshot_json, now_epoch),
+            )
+
+
+def load_import_job_records(limit: int = 50) -> list[dict[str, Any]]:
+    row_limit = max(1, min(int(limit or 50), 200))
+    with connect_read_db() as connection:
+        require_initialized_database(connection)
+        rows = connection.execute(
+            """
+            SELECT job_id, action, label, filename, status, created_at, created_by,
+                   completed_at, rolled_back_at, rolled_back_by, summary,
+                   metadata_json, payload_path, attempts, locked_at_epoch, locked_by
+            FROM import_jobs
+            ORDER BY created_at DESC, job_id DESC
+            LIMIT ?
+            """,
+            (row_limit,),
+        ).fetchall()
+    result = []
+    for row in rows:
+        try:
+            metadata = json.loads(row["metadata_json"] or "{}")
+        except json.JSONDecodeError:
+            metadata = {}
+        result.append(
+            {
+                "batch_id": row["job_id"],
+                "action": row["action"],
+                "label": row["label"],
+                "filename": row["filename"],
+                "status": row["status"],
+                "created_at": row["created_at"],
+                "created_by": row["created_by"],
+                "completed_at": row["completed_at"],
+                "rolled_back_at": row["rolled_back_at"],
+                "rolled_back_by": row["rolled_back_by"],
+                "summary": row["summary"],
+                "metadata": metadata if isinstance(metadata, dict) else {},
+                "payload_path": row["payload_path"],
+                "attempts": int(row["attempts"] or 0),
+                "locked_at_epoch": int(row["locked_at_epoch"] or 0),
+                "locked_by": row["locked_by"],
+            }
+        )
+    return result
+
+
+def update_import_job_record(
+    job_id: str,
+    *,
+    status: str,
+    summary: str = "",
+    metadata: dict[str, Any] | None = None,
+    completed_at: str = "",
+    rolled_back_at: str = "",
+    rolled_back_by: str = "",
+    payload_path: str | None = None,
+) -> None:
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            row = connection.execute(
+                "SELECT metadata_json FROM import_jobs WHERE job_id = ?",
+                (job_id,),
+            ).fetchone()
+            if not row:
+                return
+            try:
+                next_metadata = json.loads(row["metadata_json"] or "{}")
+            except json.JSONDecodeError:
+                next_metadata = {}
+            if not isinstance(next_metadata, dict):
+                next_metadata = {}
+            next_metadata.update(metadata or {})
+            connection.execute(
+                """
+                UPDATE import_jobs
+                SET status = ?,
+                    summary = CASE WHEN ? != '' THEN ? ELSE summary END,
+                    metadata_json = ?,
+                    completed_at = CASE WHEN ? != '' THEN ? ELSE completed_at END,
+                    rolled_back_at = CASE WHEN ? != '' THEN ? ELSE rolled_back_at END,
+                    rolled_back_by = CASE WHEN ? != '' THEN ? ELSE rolled_back_by END,
+                    payload_path = CASE WHEN ? IS NOT NULL THEN ? ELSE payload_path END,
+                    locked_at_epoch = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN 0 ELSE locked_at_epoch END,
+                    locked_by = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN '' ELSE locked_by END
+                WHERE job_id = ?
+                """,
+                (
+                    status,
+                    summary,
+                    summary,
+                    json.dumps(next_metadata, ensure_ascii=False),
+                    completed_at,
+                    completed_at,
+                    rolled_back_at,
+                    rolled_back_at,
+                    rolled_back_by,
+                    rolled_back_by,
+                    payload_path,
+                    payload_path,
+                    status,
+                    status,
+                    job_id,
+                ),
+            )
+
+
+def load_import_snapshot_record(job_id: str) -> str:
+    with connect_read_db() as connection:
+        require_initialized_database(connection)
+        row = connection.execute(
+            "SELECT snapshot_json FROM import_snapshots WHERE job_id = ?",
+            (job_id,),
+        ).fetchone()
+        return str(row["snapshot_json"] or "") if row else ""
+
+
+def claim_import_job(worker_id: str, *, stale_after_seconds: int = 600) -> dict[str, Any] | None:
+    now_epoch = int(datetime.now(timezone.utc).timestamp())
+    stale_before = now_epoch - max(60, int(stale_after_seconds))
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        backend = connection_backend(connection)
+        with transaction_context(connection):
+            suffix = " FOR UPDATE SKIP LOCKED" if backend == "postgres" else ""
+            row = connection.execute(
+                f"""
+                SELECT job_id
+                FROM import_jobs
+                WHERE status = 'queued'
+                   OR (status = 'running' AND locked_at_epoch > 0 AND locked_at_epoch <= ?)
+                ORDER BY created_at, job_id
+                LIMIT 1{suffix}
+                """,
+                (stale_before,),
+            ).fetchone()
+            if not row:
+                return None
+            job_id = str(row["job_id"])
+            connection.execute(
+                """
+                UPDATE import_jobs
+                SET status = 'running',
+                    attempts = attempts + 1,
+                    locked_at_epoch = ?,
+                    locked_by = ?,
+                    summary = '导入处理中'
+                WHERE job_id = ?
+                """,
+                (now_epoch, worker_id, job_id),
+            )
+    return next(
+        (item for item in load_import_job_records(200) if item["batch_id"] == job_id),
+        None,
+    )
+
+
+def cleanup_import_history(
+    *,
+    retention_days: int = 30,
+    keep_latest: int = 20,
+    now_epoch: int | None = None,
+) -> dict[str, int]:
+    effective_now = int(now_epoch or datetime.now(timezone.utc).timestamp())
+    cutoff_epoch = effective_now - max(1, int(retention_days)) * 86400
+    keep_count = max(1, int(keep_latest))
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            keep_rows = connection.execute(
+                """
+                SELECT job_id
+                FROM import_jobs
+                WHERE status IN ('succeeded', 'rolled_back')
+                ORDER BY created_at DESC, job_id DESC
+                LIMIT ?
+                """,
+                (keep_count,),
+            ).fetchall()
+            keep_ids = [str(row["job_id"]) for row in keep_rows]
+            params: list[Any] = [cutoff_epoch]
+            keep_clause = ""
+            if keep_ids:
+                keep_clause = " AND job_id NOT IN (" + ",".join("?" for _ in keep_ids) + ")"
+                params.extend(keep_ids)
+            cursor = connection.execute(
+                """
+                DELETE FROM import_jobs
+                WHERE job_id IN (
+                    SELECT job_id
+                    FROM import_snapshots
+                    WHERE created_at_epoch < ?
+                )
+                """
+                + keep_clause,
+                params,
+            )
+            deleted_jobs = max(0, cursor.rowcount)
+            legacy_rows = connection.execute(
+                """
+                SELECT meta_key
+                FROM app_meta
+                WHERE meta_key LIKE 'import_batch_snapshot:%'
+                ORDER BY meta_key DESC
+                """
+            ).fetchall()
+            legacy_delete_keys = [
+                str(row["meta_key"])
+                for row in legacy_rows[keep_count:]
+            ]
+            for meta_key in legacy_delete_keys:
+                connection.execute(
+                    "DELETE FROM app_meta WHERE meta_key = ?",
+                    (meta_key,),
+                )
+    return {
+        "deleted_import_jobs": deleted_jobs,
+        "deleted_legacy_snapshots": len(legacy_delete_keys),
+    }
+
+
+def migrate_legacy_import_history() -> dict[str, int]:
+    migrated_jobs = 0
+    migrated_snapshots = 0
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            batches_row = connection.execute(
+                "SELECT meta_value FROM app_meta WHERE meta_key = 'import_batches'"
+            ).fetchone()
+            try:
+                batches = json.loads(batches_row["meta_value"] or "[]") if batches_row else []
+            except json.JSONDecodeError:
+                batches = []
+            batch_by_id = {
+                str(item.get("batch_id") or ""): item
+                for item in batches
+                if isinstance(item, dict) and str(item.get("batch_id") or "")
+            }
+            snapshot_rows = connection.execute(
+                """
+                SELECT meta_key, meta_value
+                FROM app_meta
+                WHERE meta_key LIKE 'import_batch_snapshot:%'
+                ORDER BY meta_key
+                """
+            ).fetchall()
+            for row in snapshot_rows:
+                job_id = str(row["meta_key"]).split(":", 1)[-1]
+                batch = batch_by_id.get(job_id, {})
+                created_at = str(batch.get("created_at") or "")
+                try:
+                    parsed = datetime.strptime(
+                        job_id.removeprefix("imp_")[:15],
+                        "%Y%m%d_%H%M%S",
+                    ).replace(tzinfo=timezone(timedelta(hours=8)))
+                    created_epoch = int(parsed.timestamp())
+                except ValueError:
+                    created_epoch = int(datetime.now(timezone.utc).timestamp())
+                cursor = connection.execute(
+                    """
+                    INSERT INTO import_jobs (
+                        job_id, action, label, filename, status, created_at, created_by,
+                        completed_at, rolled_back_at, rolled_back_by, summary,
+                        metadata_json, payload_path, attempts, locked_at_epoch, locked_by
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', 0, 0, '')
+                    ON CONFLICT(job_id) DO NOTHING
+                    """,
+                    (
+                        job_id,
+                        str(batch.get("action") or "legacy.import"),
+                        str(batch.get("label") or "历史导入批次"),
+                        str(batch.get("filename") or ""),
+                        str(batch.get("status") or "succeeded"),
+                        created_at or datetime.fromtimestamp(
+                            created_epoch,
+                            timezone(timedelta(hours=8)),
+                        ).strftime("%Y-%m-%d %H:%M:%S 中国时间"),
+                        str(batch.get("created_by") or "unknown"),
+                        str(batch.get("completed_at") or ""),
+                        str(batch.get("rolled_back_at") or ""),
+                        str(batch.get("rolled_back_by") or ""),
+                        str(batch.get("summary") or "历史导入批次"),
+                        json.dumps(batch.get("metadata") or {}, ensure_ascii=False),
+                    ),
+                )
+                migrated_jobs += max(0, cursor.rowcount)
+                cursor = connection.execute(
+                    """
+                    INSERT INTO import_snapshots (job_id, snapshot_json, created_at_epoch)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(job_id) DO NOTHING
+                    """,
+                    (job_id, str(row["meta_value"] or "{}"), created_epoch),
+                )
+                migrated_snapshots += max(0, cursor.rowcount)
+            if snapshot_rows:
+                connection.execute(
+                    "DELETE FROM app_meta WHERE meta_key LIKE 'import_batch_snapshot:%'"
+                )
+            if batches_row:
+                connection.execute(
+                    "DELETE FROM app_meta WHERE meta_key = 'import_batches'"
+                )
+    return {
+        "migrated_import_jobs": migrated_jobs,
+        "migrated_import_snapshots": migrated_snapshots,
+    }
 
 
 def create_ai_job(
@@ -2547,11 +3392,11 @@ def load_request_trace(request_id: str) -> dict[str, Any]:
 
 def cleanup_expired_logs(
     *,
-    access_retention_days: int = 30,
+    access_retention_days: int = 90,
     audit_retention_days: int = 365,
     dry_run: bool = False,
 ) -> dict[str, Any]:
-    access_days = max(1, int(access_retention_days or 30))
+    access_days = max(1, int(access_retention_days or 90))
     audit_days = max(1, int(audit_retention_days or 365))
     access_cutoff_date = china_date_days_ago(access_days)
     audit_cutoff_date = china_date_days_ago(audit_days)

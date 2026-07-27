@@ -16,6 +16,8 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/backups/
+assets/players/uploads/
+assets/teams/uploads/
 tmp/
 tmp_web_app_stdout.log
 tmp_web_app_stderr.log

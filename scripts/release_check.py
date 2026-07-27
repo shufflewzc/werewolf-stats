@@ -11,6 +11,7 @@ import py_compile
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -133,6 +134,8 @@ def compile_python_files() -> None:
         "scripts/check_prediction_cache.py",
         "scripts/production_config_check.py",
         "scripts/pre_deploy_check.py",
+        "scripts/import_worker.py",
+        "scripts/cleanup_runtime_state.py",
         "scripts/start_production.sh",
     ]
     for relative_path in files:
@@ -222,16 +225,14 @@ def check_readyz_payload() -> None:
     checks = payload.get("checks") if isinstance(payload, dict) else {}
     if not payload.get("ok"):
         raise ReleaseCheckError("/readyz 未就绪：" + body[:200])
-    required_keys = ["schema_version", "required_schema_version", "missing_tables", "table_counts", "write_check"]
+    required_keys = ["schema_version", "required_schema_version", "missing_tables", "write_check"]
     missing_keys = [key for key in required_keys if key not in checks]
     if missing_keys:
         raise ReleaseCheckError("/readyz 缺少检查项：" + ", ".join(missing_keys))
     if checks.get("missing_tables"):
         raise ReleaseCheckError("/readyz 报告缺表：" + ", ".join(checks["missing_tables"]))
-    table_counts = checks.get("table_counts") if isinstance(checks.get("table_counts"), dict) else {}
-    missing_count_tables = [table_name for table_name in READYZ_TABLES if table_name not in table_counts]
-    if missing_count_tables:
-        raise ReleaseCheckError("/readyz 缺少表行数：" + ", ".join(missing_count_tables))
+    if checks.get("table_counts"):
+        raise ReleaseCheckError("/readyz 不应扫描业务表行数")
     if checks.get("write_check") != "skipped":
         raise ReleaseCheckError("/readyz 默认不应执行写入探针")
 
@@ -499,6 +500,13 @@ def check_request_rate_limit() -> None:
         original_limits = {key: list(value) for key, value in web_app.REQUEST_RATE_LIMITS.items()}
         web_app.REQUEST_RATE_LIMITS.clear()
     try:
+        bucket_key = "127.0.0.1:GET:/api/web-login/status"
+        with connect_runtime_db() as connection:
+            connection.execute(
+                "DELETE FROM request_rate_limits WHERE bucket_key = ?",
+                (bucket_key,),
+            )
+            connection.commit()
         web_app.REQUEST_RATE_LIMIT_ENABLED = True
         web_app.REQUEST_RATE_LIMIT_SENSITIVE_MAX = 2
         web_app.REQUEST_RATE_LIMIT_WINDOW_SECONDS = 60
@@ -509,6 +517,12 @@ def check_request_rate_limit() -> None:
         if not statuses[0].startswith("404") or not statuses[1].startswith("404") or not statuses[2].startswith("429"):
             raise ReleaseCheckError("敏感接口限流未按预期触发：" + ", ".join(statuses))
     finally:
+        with connect_runtime_db() as connection:
+            connection.execute(
+                "DELETE FROM request_rate_limits WHERE bucket_key = ?",
+                ("127.0.0.1:GET:/api/web-login/status",),
+            )
+            connection.commit()
         web_app.REQUEST_RATE_LIMIT_ENABLED = original_enabled
         web_app.REQUEST_RATE_LIMIT_SENSITIVE_MAX = original_sensitive
         web_app.REQUEST_RATE_LIMIT_WINDOW_SECONDS = original_window
@@ -526,7 +540,8 @@ def check_duplicate_write_protection() -> None:
     try:
         web_app.IDEMPOTENCY_PROTECTION_ENABLED = True
         web_app.IDEMPOTENCY_PROTECTION_TTL_SECONDS = 30
-        body = "session_token=missing&display_name=测试&province_name=广东省&region_name=广州市&gender=male&bio=重复提交检查"
+        unique_marker = f"{os.getpid()}-{time.time_ns()}"
+        body = "session_token=missing&display_name=测试&province_name=广东省&region_name=广州市&gender=male&bio=重复提交检查" + unique_marker
         first_status, _headers, _body = call_wsgi("/api/miniprogram/profile", method="POST", body=body)
         second_status, _headers, second_body = call_wsgi("/api/miniprogram/profile", method="POST", body=body)
         if not first_status.startswith("401") or not second_status.startswith("409"):

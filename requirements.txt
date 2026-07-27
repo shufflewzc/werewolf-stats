@@ -1,2 +1,2 @@
-gunicorn>=23,<24
-psycopg[binary]>=3,<4
+gunicorn==23.0.0
+psycopg[binary]==3.3.4

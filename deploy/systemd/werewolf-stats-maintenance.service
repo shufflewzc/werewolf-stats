@@ -1,0 +1,12 @@
+[Unit]
+Description=Werewolf Stats runtime data maintenance
+After=network.target postgresql.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/werewolf-stats
+EnvironmentFile=/opt/werewolf-stats/.env.production
+Environment=PYTHONPATH=/opt/werewolf-stats/scripts
+Environment=ENABLE_POSTGRES_WRITES=1
+ExecStart=/usr/bin/python3 /opt/werewolf-stats/scripts/cleanup_runtime_state.py
+User=root

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
 from datetime import datetime, timedelta
 from html import escape
@@ -90,11 +89,6 @@ MAX_EXCEL_UPLOAD_BYTES = int(os.getenv("MAX_EXCEL_UPLOAD_BYTES", str(10 * 1024 *
 MAX_EXCEL_SHEET_ROWS = int(os.getenv("MAX_EXCEL_SHEET_ROWS", "2000"))
 MAX_ZIP_UPLOAD_BYTES = int(os.getenv("MAX_ZIP_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 MAX_ZIP_IMAGE_COUNT = int(os.getenv("MAX_ZIP_IMAGE_COUNT", "300"))
-IMPORT_BACKGROUND_WORKERS = max(1, int(os.getenv("IMPORT_BACKGROUND_WORKERS", "1")))
-IMPORT_EXECUTOR = ThreadPoolExecutor(
-    max_workers=IMPORT_BACKGROUND_WORKERS,
-    thread_name_prefix="match-import",
-)
 PLAYER_PHOTO_PENDING_DIR = legacy.PLAYER_UPLOAD_DIR.parent / "import-pending"
 start_response_html = legacy.start_response_html
 update_import_batch = legacy.update_import_batch
@@ -1067,6 +1061,7 @@ def build_player_photo_import_panel(
 
 def _import_batch_status_label(status: str) -> str:
     labels = {
+        "queued": "排队中",
         "running": "处理中",
         "succeeded": "成功",
         "failed": "失败",
@@ -1079,7 +1074,7 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
     batches = load_import_batches()
     can_rollback = is_admin_user(ctx.current_user)
     has_running_batch = any(
-        str(item.get("status") or "").strip() == "running"
+        str(item.get("status") or "").strip() in {"queued", "running"}
         for item in batches
     )
     rows = []
@@ -4506,6 +4501,11 @@ def run_match_excel_import_job(
         normalized_matches, _ = canonicalize_match_ids(sanitized_next_matches)
         data["matches"] = normalized_matches
         created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
+        created_player_id_set = set(created_player_ids)
+        for player in data.get("players", []):
+            if str(player.get("player_id") or "") in created_player_id_set:
+                player["profile_status"] = "auto_created"
+                player["created_source"] = "excel_import"
         users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
         errors = legacy.save_imported_matches_state(
             data,
@@ -4968,7 +4968,7 @@ def handle_match_create(ctx: RequestContext, start_response):
         running_batches = [
             item
             for item in load_import_batches()
-            if str(item.get("status") or "").strip() == "running"
+            if str(item.get("status") or "").strip() in {"queued", "running"}
         ]
         if running_batches:
             return start_response_html(
@@ -4989,31 +4989,8 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "group_label": group_label,
                 "background": True,
             },
+            payload_data=upload.data,
         )
-        try:
-            IMPORT_EXECUTOR.submit(
-                run_match_excel_import_job,
-                ctx,
-                upload,
-                group_label,
-                import_batch_id,
-            )
-        except Exception as exc:
-            update_import_batch(
-                import_batch_id,
-                status="failed",
-                summary=f"Excel 后台任务启动失败：{exc}",
-                ctx=ctx,
-            )
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(
-                    ctx,
-                    alert=f"Excel 后台任务启动失败：{exc}",
-                    excel_form_values=excel_form_values,
-                ),
-            )
         next_path = form_value(ctx.query, "next").strip() or build_match_management_path(ctx)
         return redirect(
             start_response,

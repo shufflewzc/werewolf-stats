@@ -203,7 +203,7 @@ def check_gunicorn_and_logging(report: ConfigReport) -> None:
     workers = parse_int_env("GUNICORN_WORKERS", 2, report)
     threads = parse_int_env("GUNICORN_THREADS", 4, report)
     timeout = parse_int_env("GUNICORN_TIMEOUT", 120, report)
-    access_days = parse_int_env("ACCESS_LOG_RETENTION_DAYS", 30, report)
+    access_days = parse_int_env("ACCESS_LOG_RETENTION_DAYS", 90, report)
     audit_days = parse_int_env("AUDIT_LOG_RETENTION_DAYS", 365, report)
     if workers <= 0 or threads <= 0:
         report.fail("GUNICORN_WORKERS 和 GUNICORN_THREADS 必须大于 0。")

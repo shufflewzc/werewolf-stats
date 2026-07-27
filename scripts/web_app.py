@@ -6,6 +6,7 @@ import base64
 from copy import deepcopy
 import hashlib
 import hmac
+import ipaddress
 import json
 import math
 import mimetypes
@@ -83,15 +84,23 @@ from competition_meta import (
 )
 from sqlite_store import (
     DB_PATH,
+    RepositoryConflictError,
     add_ai_job_step,
     connect_read_db,
     connect_write_db,
     connection_backend,
     cleanup_expired_logs,
+    cleanup_expired_runtime_state,
+    cleanup_import_history,
+    consume_rate_limit_bucket,
+    create_import_job_record,
     create_ai_job,
     database_is_initialized,
     delete_session,
     delete_sessions_for_username,
+    delete_web_login_challenge_record,
+    acquire_idempotency_key,
+    get_data_revision,
     load_access_overview,
     load_operational_overview,
     load_audit_logs,
@@ -99,20 +108,25 @@ from sqlite_store import (
     load_request_trace,
     load_ai_conversations,
     load_ai_jobs,
+    load_import_job_records,
+    load_import_snapshot_record,
     load_session_username,
     load_membership_requests,
     load_meta_value,
+    load_web_login_challenge_record,
     load_users,
     save_session,
     save_matches as persist_matches,
     save_membership_requests,
     save_meta_value,
+    save_web_login_challenge_record,
     save_repository_data,
     replace_matches_by_id,
     record_audit_log,
     record_access_log,
     record_access_logs_batch,
     record_ai_conversation,
+    update_import_job_record,
     update_ai_job_status,
     save_users,
 )
@@ -209,6 +223,7 @@ DASHBOARD_ACTIVITY_SETTINGS_KEY = "dashboard_activity_settings"
 PREDICTION_MODEL_SETTINGS_KEY = "prediction_model_settings"
 IMPORT_BATCHES_META_KEY = "import_batches"
 IMPORT_BATCH_SNAPSHOT_KEY_PREFIX = "import_batch_snapshot:"
+IMPORT_JOB_DIR = ROOT / "data" / "import-jobs"
 PLAYER_ACHIEVEMENT_RULES_KEY = "player_achievement_rules"
 PLAYER_MANUAL_ACHIEVEMENTS_KEY_PREFIX = "player_manual_achievements:"
 TEAM_ACHIEVEMENT_RULES_KEY = "team_achievement_rules"
@@ -279,6 +294,9 @@ REQUEST_RATE_LIMIT_ENABLED = os.getenv("REQUEST_RATE_LIMIT_ENABLED", "1").strip(
 REQUEST_RATE_LIMIT_WINDOW_SECONDS = int(os.getenv("REQUEST_RATE_LIMIT_WINDOW_SECONDS", "60"))
 REQUEST_RATE_LIMIT_DEFAULT_MAX = int(os.getenv("REQUEST_RATE_LIMIT_DEFAULT_MAX", "120"))
 REQUEST_RATE_LIMIT_SENSITIVE_MAX = int(os.getenv("REQUEST_RATE_LIMIT_SENSITIVE_MAX", "30"))
+REQUEST_RATE_LIMIT_PUBLIC_API_ENABLED = (
+    os.getenv("REQUEST_RATE_LIMIT_PUBLIC_API_ENABLED", "0").strip() == "1"
+)
 IDEMPOTENCY_PROTECTION_ENABLED = os.getenv("IDEMPOTENCY_PROTECTION_ENABLED", "1").strip() != "0"
 IDEMPOTENCY_PROTECTION_TTL_SECONDS = int(os.getenv("IDEMPOTENCY_PROTECTION_TTL_SECONDS", "8"))
 CAPTCHA_CHALLENGES: dict[str, dict[str, str]] = {}
@@ -1332,11 +1350,14 @@ def render_ai_daily_brief_html(content: str) -> str:
 
 
 def get_database_cache_signature() -> tuple[str, int | str] | None:
-    if database_backend() == "postgres":
-        return ("postgres", database_url())
     try:
-        return ("sqlite", DB_PATH.stat().st_mtime_ns)
-    except FileNotFoundError:
+        return (database_backend(), get_data_revision())
+    except Exception:
+        if database_backend() == "sqlite":
+            try:
+                return ("sqlite", DB_PATH.stat().st_mtime_ns)
+            except FileNotFoundError:
+                return None
         return None
 
 
@@ -1842,7 +1863,7 @@ def request_rate_limit_for_path(ctx: RequestContext) -> int:
         return max(1, REQUEST_RATE_LIMIT_SENSITIVE_MAX)
     if ctx.path.startswith("/api/miniprogram/"):
         return max(1, REQUEST_RATE_LIMIT_SENSITIVE_MAX)
-    if ctx.path.startswith("/api/"):
+    if ctx.path.startswith("/api/") and REQUEST_RATE_LIMIT_PUBLIC_API_ENABLED:
         return max(1, REQUEST_RATE_LIMIT_DEFAULT_MAX)
     return 0
 
@@ -1853,25 +1874,12 @@ def request_rate_limited(ctx: RequestContext) -> tuple[bool, int]:
     max_requests = request_rate_limit_for_path(ctx)
     if max_requests <= 0:
         return False, 0
-    now = time.time()
-    cutoff = now - max(1, REQUEST_RATE_LIMIT_WINDOW_SECONDS)
     key = request_rate_limit_key(ctx)
-    with REQUEST_RATE_LIMIT_LOCK:
-        attempts = [item for item in REQUEST_RATE_LIMITS.get(key, []) if item >= cutoff]
-        limited = len(attempts) >= max_requests
-        if not limited:
-            attempts.append(now)
-        REQUEST_RATE_LIMITS[key] = attempts
-        if len(REQUEST_RATE_LIMITS) > 5000:
-            empty_keys = [
-                item_key
-                for item_key, values in REQUEST_RATE_LIMITS.items()
-                if not any(value >= cutoff for value in values)
-            ]
-            for item_key in empty_keys[:1000]:
-                REQUEST_RATE_LIMITS.pop(item_key, None)
-    retry_after = max(1, int(REQUEST_RATE_LIMIT_WINDOW_SECONDS))
-    return limited, retry_after
+    request_count, retry_after = consume_rate_limit_bucket(
+        key,
+        window_seconds=max(1, REQUEST_RATE_LIMIT_WINDOW_SECONDS),
+    )
+    return request_count > max_requests, retry_after
 
 
 def rate_limit_response(ctx: RequestContext, start_response, retry_after: int):
@@ -1970,21 +1978,8 @@ def duplicate_write_request(ctx: RequestContext) -> bool:
     if not should_check_idempotency(ctx):
         return False
     ttl = max(1, IDEMPOTENCY_PROTECTION_TTL_SECONDS)
-    now = time.time()
-    cutoff = now - ttl
     fingerprint = idempotency_fingerprint(ctx)
-    with IDEMPOTENCY_LOCK:
-        expired_keys = [
-            key
-            for key, seen_at in IDEMPOTENCY_FINGERPRINTS.items()
-            if seen_at < cutoff
-        ]
-        for key in expired_keys[:1000]:
-            IDEMPOTENCY_FINGERPRINTS.pop(key, None)
-        if fingerprint in IDEMPOTENCY_FINGERPRINTS:
-            return True
-        IDEMPOTENCY_FINGERPRINTS[fingerprint] = now
-    return False
+    return not acquire_idempotency_key(fingerprint, ttl_seconds=ttl)
 
 
 def duplicate_write_response(ctx: RequestContext, start_response):
@@ -2455,6 +2450,24 @@ def build_request_id(environ: dict[str, Any]) -> str:
     return "req_" + secrets.token_hex(12)
 
 
+def get_client_ip(environ: dict[str, Any]) -> str:
+    remote_addr = str(environ.get("REMOTE_ADDR") or "").strip()
+    try:
+        remote_ip = ipaddress.ip_address(remote_addr)
+    except ValueError:
+        return remote_addr
+    if not remote_ip.is_loopback:
+        return remote_addr
+    forwarded_for = str(environ.get("HTTP_X_FORWARDED_FOR") or "").strip()
+    if not forwarded_for:
+        return remote_addr
+    candidate = forwarded_for.split(",", 1)[0].strip()
+    try:
+        return str(ipaddress.ip_address(candidate))
+    except ValueError:
+        return remote_addr
+
+
 def _log_text(value: Any, limit: int = 500) -> str:
     text = str(value or "").replace("\n", "\\n").replace("\r", "\\r")
     if len(text) > limit:
@@ -2494,7 +2507,7 @@ def build_request_log_fields(
         "duration_ms": duration_ms,
         "query_string": str(environ.get("QUERY_STRING") or "")[:500],
         "username": str(((ctx.current_user or {}).get("username") if ctx else "") or ""),
-        "ip_address": str(environ.get("REMOTE_ADDR") or ""),
+        "ip_address": get_client_ip(environ),
         "user_agent": str(environ.get("HTTP_USER_AGENT") or "")[:500],
     }
 
@@ -2635,7 +2648,7 @@ def wrap_start_response_with_access_log(start_response, ctx: RequestContext, env
                     duration_ms=duration_ms,
                     query_string=str(environ.get("QUERY_STRING") or ""),
                     username=str((ctx.current_user or {}).get("username") or ""),
-                    ip_address=str(environ.get("REMOTE_ADDR") or ""),
+                    ip_address=get_client_ip(environ),
                     user_agent=str(environ.get("HTTP_USER_AGENT") or ""),
                     created_at=ctx.now_label,
                     request_id=ctx.request_id,
@@ -6167,13 +6180,20 @@ def save_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> 
         save_repository_data(data, users)
         errors, _ = validate_repository()
         if errors:
-            save_repository_data(backup_data, backup_users)
+            restore_data = deepcopy(backup_data)
+            restore_data.pop("_data_revision", None)
+            save_repository_data(restore_data, backup_users)
             invalidate_validated_data_cache()
             return errors
         invalidate_validated_data_cache()
         return []
+    except RepositoryConflictError as exc:
+        invalidate_validated_data_cache()
+        return [str(exc)]
     except Exception:
-        save_repository_data(backup_data, backup_users)
+        restore_data = deepcopy(backup_data)
+        restore_data.pop("_data_revision", None)
+        save_repository_data(restore_data, backup_users)
         invalidate_validated_data_cache()
         raise
 
@@ -6287,7 +6307,15 @@ def save_imported_matches_state(
             upsert_matches,
             players_to_upsert=players_to_upsert,
             teams_to_replace_members=teams_to_replace_members,
+            expected_revision=(
+                int(data["_data_revision"])
+                if data.get("_data_revision") is not None
+                else None
+            ),
         )
+    except RepositoryConflictError as exc:
+        invalidate_validated_data_cache()
+        return [str(exc)]
     except Exception as exc:
         invalidate_validated_data_cache()
         return [f"增量保存比赛失败：{exc}"]
@@ -6296,17 +6324,30 @@ def save_imported_matches_state(
 
 
 def _load_import_batches() -> list[dict[str, Any]]:
+    stored_batches = load_import_job_records(IMPORT_BATCH_LIST_LIMIT)
     raw_value = load_meta_value(IMPORT_BATCHES_META_KEY) or ""
-    if not raw_value.strip():
-        return []
-    try:
-        parsed = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(parsed, list):
-        return []
-    batches = [item for item in parsed if isinstance(item, dict)]
-    return batches[:IMPORT_BATCH_LIST_LIMIT]
+    legacy_batches: list[dict[str, Any]] = []
+    if raw_value.strip():
+        try:
+            parsed = json.loads(raw_value)
+        except json.JSONDecodeError:
+            parsed = []
+        if isinstance(parsed, list):
+            legacy_batches = [item for item in parsed if isinstance(item, dict)]
+    seen_ids = {str(item.get("batch_id") or "") for item in stored_batches}
+    combined = stored_batches + [
+        item
+        for item in legacy_batches
+        if str(item.get("batch_id") or "") not in seen_ids
+    ]
+    return sorted(
+        combined,
+        key=lambda item: (
+            str(item.get("created_at") or ""),
+            str(item.get("batch_id") or ""),
+        ),
+        reverse=True,
+    )[:IMPORT_BATCH_LIST_LIMIT]
 
 
 def _save_import_batches(batches: list[dict[str, Any]]) -> None:
@@ -6323,6 +6364,7 @@ def create_import_batch(
     label: str,
     filename: str = "",
     metadata: dict[str, Any] | None = None,
+    payload_data: bytes | None = None,
 ) -> str:
     data = load_validated_data()
     users = load_users()
@@ -6331,29 +6373,39 @@ def create_import_batch(
         "data": data,
         "users": users,
     }
-    save_meta_value(
-        IMPORT_BATCH_SNAPSHOT_KEY_PREFIX + batch_id,
-        json.dumps(snapshot, ensure_ascii=False),
-    )
-    batches = _load_import_batches()
-    batches.insert(
-        0,
-        {
-            "batch_id": batch_id,
-            "action": action,
-            "label": label,
-            "filename": filename,
-            "status": "running",
-            "created_at": ctx.now_label,
-            "created_by": (ctx.current_user or {}).get("username") or "unknown",
-            "completed_at": "",
-            "rolled_back_at": "",
-            "rolled_back_by": "",
-            "summary": "导入处理中",
-            "metadata": metadata or {},
-        },
-    )
-    _save_import_batches(batches)
+    payload_path = ""
+    if payload_data is not None:
+        IMPORT_JOB_DIR.mkdir(parents=True, exist_ok=True)
+        suffix = Path(filename).suffix.lower()
+        if suffix not in {".xlsx", ".xlsm"}:
+            suffix = ".xlsx"
+        payload_file = IMPORT_JOB_DIR / f"{batch_id}{suffix}"
+        payload_file.write_bytes(payload_data)
+        payload_path = str(payload_file)
+    record = {
+        "batch_id": batch_id,
+        "action": action,
+        "label": label,
+        "filename": filename,
+        "status": "queued" if payload_data is not None else "running",
+        "created_at": ctx.now_label,
+        "created_by": (ctx.current_user or {}).get("username") or "unknown",
+        "completed_at": "",
+        "rolled_back_at": "",
+        "rolled_back_by": "",
+        "summary": "等待后台任务处理" if payload_data is not None else "导入处理中",
+        "metadata": metadata or {},
+        "payload_path": payload_path,
+    }
+    try:
+        create_import_job_record(
+            record,
+            snapshot_json=json.dumps(snapshot, ensure_ascii=False),
+        )
+    except Exception:
+        if payload_path:
+            Path(payload_path).unlink(missing_ok=True)
+        raise
     return batch_id
 
 
@@ -6365,23 +6417,34 @@ def update_import_batch(
     metadata: dict[str, Any] | None = None,
     ctx: RequestContext | None = None,
 ) -> None:
+    stored_ids = {
+        str(item.get("batch_id") or "")
+        for item in load_import_job_records(IMPORT_BATCH_LIST_LIMIT)
+    }
+    if batch_id in stored_ids:
+        now_label = ctx.now_label if ctx else china_now_label()
+        update_import_job_record(
+            batch_id,
+            status=status,
+            summary=summary,
+            metadata=metadata,
+            completed_at=now_label if status in {"succeeded", "failed"} else "",
+            rolled_back_at=now_label if status == "rolled_back" else "",
+            rolled_back_by=(
+                ((ctx.current_user or {}).get("username") if ctx else "")
+                or "unknown"
+                if status == "rolled_back"
+                else ""
+            ),
+        )
+        return
     batches = _load_import_batches()
     for item in batches:
-        if item.get("batch_id") != batch_id:
-            continue
-        item["status"] = status
-        if summary:
-            item["summary"] = summary
-        if metadata:
-            next_metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
-            next_metadata.update(metadata)
-            item["metadata"] = next_metadata
-        if status in {"succeeded", "failed"}:
-            item["completed_at"] = ctx.now_label if ctx else china_now_label()
-        if status == "rolled_back":
-            item["rolled_back_at"] = ctx.now_label if ctx else china_now_label()
-            item["rolled_back_by"] = ((ctx.current_user or {}).get("username") if ctx else "") or "unknown"
-        break
+        if item.get("batch_id") == batch_id:
+            item["status"] = status
+            item["summary"] = summary or item.get("summary", "")
+            item.setdefault("metadata", {}).update(metadata or {})
+            break
     _save_import_batches(batches)
 
 
@@ -6398,7 +6461,9 @@ def rollback_import_batch(batch_id: str, ctx: RequestContext) -> tuple[bool, str
         return False, "这个导入批次已经回滚过。"
     if batch.get("status") != "succeeded":
         return False, "只有成功完成的导入批次可以回滚。"
-    raw_snapshot = load_meta_value(IMPORT_BATCH_SNAPSHOT_KEY_PREFIX + batch_id) or ""
+    raw_snapshot = load_import_snapshot_record(batch_id)
+    if not raw_snapshot:
+        raw_snapshot = load_meta_value(IMPORT_BATCH_SNAPSHOT_KEY_PREFIX + batch_id) or ""
     if not raw_snapshot.strip():
         return False, "没有找到这个批次的回滚快照。"
     try:
@@ -6409,6 +6474,8 @@ def rollback_import_batch(batch_id: str, ctx: RequestContext) -> tuple[bool, str
     users = snapshot.get("users")
     if not isinstance(data, dict) or not isinstance(users, list):
         return False, "这个批次的回滚快照格式无效。"
+    data = deepcopy(data)
+    data.pop("_data_revision", None)
     errors = save_repository_state(data, users)
     if errors:
         return False, "回滚保存失败：" + "；".join(errors[:3])
@@ -6626,6 +6693,8 @@ def build_placeholder_player(
         "photo": DEFAULT_PLAYER_PHOTO,
         "aliases": [],
         "active": True,
+        "profile_status": "auto_created",
+        "created_source": "match_entry",
         "joined_on": china_today_label(),
         "notes": (
             f"比赛录入时自动创建的赛季队员档案：{competition_name} · {season_name}。"
@@ -16147,6 +16216,11 @@ def load_web_login_challenge(token: str) -> dict[str, Any] | None:
     normalized_token = str(token or "").strip()
     if not normalized_token:
         return None
+    record = load_web_login_challenge_record(normalized_token)
+    if record:
+        record.pop("token", None)
+        record.pop("expired", None)
+        return record
     raw_value = load_meta_value(web_login_meta_key(normalized_token))
     if not raw_value:
         return None
@@ -16156,13 +16230,19 @@ def load_web_login_challenge(token: str) -> dict[str, Any] | None:
         return None
     if not isinstance(payload, dict):
         return None
+    save_web_login_challenge_record(
+        normalized_token,
+        payload,
+        ttl_seconds=WEB_LOGIN_TTL_SECONDS,
+    )
     return payload
 
 
 def save_web_login_challenge(token: str, payload: dict[str, Any]) -> None:
-    save_meta_value(
-        web_login_meta_key(token),
-        json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+    save_web_login_challenge_record(
+        token,
+        payload,
+        ttl_seconds=WEB_LOGIN_TTL_SECONDS,
     )
 
 
@@ -16278,7 +16358,7 @@ def build_context(environ: dict[str, Any]) -> RequestContext:
         files=files,
         current_user=get_current_user(environ),
         now_label=china_now_label(),
-        remote_addr=str(environ.get("REMOTE_ADDR") or ""),
+        remote_addr=get_client_ip(environ),
         request_id=build_request_id(environ),
         session_token=session_token,
     )
@@ -16297,8 +16377,7 @@ def handle_web_login_status(ctx: RequestContext, start_response):
     if not payload:
         return start_response_json(start_response, "404 Not Found", {"status": "expired"})
     if web_login_is_expired(payload):
-        payload["status"] = "expired"
-        save_web_login_challenge(token, payload)
+        delete_web_login_challenge_record(token)
         return start_response_json(start_response, "200 OK", {"status": "expired"})
     status = str(payload.get("status") or "pending")
     result: dict[str, Any] = {"status": status}
@@ -16323,7 +16402,7 @@ def handle_web_login_complete(ctx: RequestContext, start_response):
     save_session(session_token, username)
     payload["status"] = "used"
     payload["used_at"] = int(time.time())
-    save_web_login_challenge(token, payload)
+    delete_web_login_challenge_record(token)
     return redirect(
         start_response,
         normalize_next_path(str(payload.get("next") or "/dashboard")),
@@ -17042,8 +17121,7 @@ def handle_miniprogram_web_login_confirm(ctx: RequestContext, start_response):
     if not payload:
         return start_response_json(start_response, "404 Not Found", {"error": "登录二维码无效，请刷新网页后重试。"})
     if web_login_is_expired(payload):
-        payload["status"] = "expired"
-        save_web_login_challenge(token, payload)
+        delete_web_login_challenge_record(token)
         return start_response_json(start_response, "410 Gone", {"error": "登录二维码已过期，请刷新网页后重试。"})
     if payload.get("status") not in ("pending", "confirmed"):
         return start_response_json(start_response, "409 Conflict", {"error": "这个登录二维码已经使用过，请刷新网页后重试。"})
@@ -17830,6 +17908,13 @@ def handle_healthz(ctx: RequestContext, start_response):
 READYZ_TABLES = [
     "users",
     "app_meta",
+    "schema_migrations",
+    "data_revisions",
+    "web_login_challenges",
+    "request_rate_limits",
+    "idempotency_keys",
+    "import_jobs",
+    "import_snapshots",
     "ai_jobs",
     "ai_job_steps",
     "access_logs",
@@ -17958,11 +18043,6 @@ def handle_readyz(ctx: RequestContext, start_response):
             checks["missing_tables"] = missing_tables
             if not missing_tables:
                 checks["schema_version"] = readyz_schema_version(connection)
-                table_counts: dict[str, int] = {}
-                for table_name in READYZ_TABLES:
-                    row = connection.execute(f'SELECT COUNT(*) AS count FROM "{table_name}"').fetchone()
-                    table_counts[table_name] = int(readyz_row_value(row, "count") or 0)
-                checks["table_counts"] = table_counts
     except Exception as exc:
         status = "503 Service Unavailable"
         checks["error"] = str(exc)
@@ -18024,6 +18104,27 @@ def app(environ, start_response):
             return handle_healthz(ctx, start_response)
         if path == "/readyz":
             return handle_readyz(ctx, start_response)
+        if path == "/robots.txt":
+            body = (
+                "User-agent: *\n"
+                "Disallow: /api/\n"
+                "Disallow: /accounts\n"
+                "Disallow: /permissions\n"
+                "Disallow: /ops\n"
+                "Disallow: /audit-logs\n"
+                "Disallow: /request-trace\n"
+                "Disallow: /*/legacy\n"
+                "Crawl-delay: 5\n"
+            ).encode("utf-8")
+            start_response(
+                "200 OK",
+                [
+                    ("Content-Type", "text/plain; charset=utf-8"),
+                    ("Content-Length", str(len(body))),
+                    ("Cache-Control", "public, max-age=86400"),
+                ],
+            )
+            return [body]
         if path.startswith("/assets/"):
             return serve_asset(start_response, path)
         if path == "/api/miniprogram/login":

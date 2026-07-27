@@ -117,6 +117,102 @@ def _bound_count(users: list[dict[str, Any]], player_id: str) -> int:
     return sum(1 for user in users if player_id in get_user_bound_player_ids(user))
 
 
+def _is_auto_created_player(player: dict[str, Any] | None) -> bool:
+    if not player:
+        return False
+    profile_status = str(player.get("profile_status") or "").strip()
+    created_source = str(player.get("created_source") or "").strip()
+    if profile_status == "auto_created" or created_source in {
+        "match_entry",
+        "excel_import",
+    }:
+        return True
+    return "自动创建" in str(player.get("notes") or "")
+
+
+def _delete_player_impact(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    player_id: str,
+) -> dict[str, Any]:
+    captain_team_ids = [
+        str(team.get("team_id") or "").strip()
+        for team in data.get("teams", [])
+        if str(team.get("captain_player_id") or "").strip() == player_id
+    ]
+    roster_team_ids = [
+        str(team.get("team_id") or "").strip()
+        for team in data.get("teams", [])
+        if player_id
+        in {
+            str(member_id or "").strip()
+            for member_id in team.get("members", [])
+        }
+    ]
+    dimension_rows = sum(
+        1
+        for row in data.get("season_player_dimension_stats", [])
+        if str(row.get("player_id") or "").strip() == player_id
+    )
+    award_references = sum(
+        1
+        for match in data.get("matches", [])
+        for field_name in ("mvp_player_id", "svp_player_id", "scapegoat_player_id")
+        if str(match.get(field_name) or "").strip() == player_id
+    )
+    return {
+        "appearances": _appearance_count(data, player_id),
+        "bindings": _bound_count(users, player_id),
+        "captain_team_ids": captain_team_ids,
+        "roster_team_ids": roster_team_ids,
+        "dimension_rows": dimension_rows,
+        "award_references": award_references,
+    }
+
+
+def _delete_empty_player(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    player_id: str,
+) -> dict[str, Any]:
+    player = next(
+        (
+            item
+            for item in data.get("players", [])
+            if str(item.get("player_id") or "").strip() == player_id
+        ),
+        None,
+    )
+    if not player or not _is_auto_created_player(player):
+        raise ValueError("该档案不是系统自动创建的选手档案。")
+    impact = _delete_player_impact(data, users, player_id)
+    blocking_labels = []
+    if impact["appearances"]:
+        blocking_labels.append(f"{impact['appearances']} 条出场记录")
+    if impact["bindings"]:
+        blocking_labels.append(f"{impact['bindings']} 个账号绑定")
+    if impact["captain_team_ids"]:
+        blocking_labels.append("担任战队队长")
+    if impact["dimension_rows"]:
+        blocking_labels.append(f"{impact['dimension_rows']} 条维度数据")
+    if impact["award_references"]:
+        blocking_labels.append(f"{impact['award_references']} 条奖项引用")
+    if blocking_labels:
+        raise ValueError("仍存在业务引用：" + "、".join(blocking_labels) + "。")
+    for team in data.get("teams", []):
+        team["members"] = [
+            member_id
+            for member_id in team.get("members", [])
+            if str(member_id or "").strip() != player_id
+        ]
+    data["players"] = [
+        item
+        for item in data.get("players", [])
+        if str(item.get("player_id") or "").strip() != player_id
+    ]
+    return impact
+
+
 def _replace_user_player_id(user: dict[str, Any], source_id: str, target_id: str) -> None:
     if str(user.get("player_id") or "").strip() == source_id:
         user["player_id"] = target_id
@@ -188,8 +284,16 @@ def get_data_hygiene_page(ctx: RequestContext, alert: str = "") -> str:
         player_id = str(player.get("player_id") or "").strip()
         appearances = _appearance_count(data, player_id)
         bindings = _bound_count(users, player_id)
-        auto_created = "自动创建" in str(player.get("notes") or "")
-        if appearances or bindings or not auto_created:
+        impact = _delete_player_impact(data, users, player_id)
+        auto_created = _is_auto_created_player(player)
+        if (
+            appearances
+            or bindings
+            or impact["captain_team_ids"]
+            or impact["dimension_rows"]
+            or impact["award_references"]
+            or not auto_created
+        ):
             continue
         team = next((item for item in data.get("teams", []) if item.get("team_id") == player.get("team_id")), {})
         rows.append(
@@ -273,21 +377,24 @@ def handle_data_hygiene(ctx: RequestContext, start_response):
         player_id = form_value(ctx.form, "player_id").strip()
         if form_value(ctx.form, "confirmation").strip() != player_id:
             return redirect(start_response, append_alert_query("/data-hygiene", "请完整输入档案 ID 后再删除。"))
-        player = next((item for item in data.get("players", []) if item.get("player_id") == player_id), None)
-        if not player or _appearance_count(data, player_id) or _bound_count(users, player_id) or "自动创建" not in str(player.get("notes") or ""):
-            return redirect(start_response, append_alert_query("/data-hygiene", "该档案不符合安全删除条件。"))
-        for team in data.get("teams", []):
-            team["members"] = [item for item in team.get("members", []) if item != player_id]
-        data["players"] = [item for item in data["players"] if item.get("player_id") != player_id]
-        errors = save_repository_state(data, users)
-        if errors:
-            return redirect(start_response, append_alert_query("/data-hygiene", "删除失败：" + "；".join(errors[:2])))
+        try:
+            next_data = deepcopy(data)
+            impact = _delete_empty_player(next_data, users, player_id)
+            errors = save_repository_state(next_data, users)
+            if errors:
+                raise ValueError("；".join(errors[:2]))
+        except ValueError as exc:
+            return redirect(
+                start_response,
+                append_alert_query("/data-hygiene", f"删除失败：{exc}"),
+            )
         audit_action(
             ctx,
             "data_hygiene.delete_empty_player",
             target_type="player",
             target_id=player_id,
             summary=f"删除无出场自动档案 {player_id}",
+            metadata=impact,
         )
         return redirect(start_response, append_alert_query("/data-hygiene", "已删除无出场自动档案。"))
     if action == "merge_players":

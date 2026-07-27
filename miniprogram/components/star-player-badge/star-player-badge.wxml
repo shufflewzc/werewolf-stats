@@ -1,0 +1,4 @@
+<view class="star-badge {{compact ? 'is-compact' : ''}} {{dark ? 'is-dark' : ''}}" aria-label="明星选手">
+  <view class="star-mark" aria-hidden="true"></view>
+  <text>明星选手</text>
+</view>

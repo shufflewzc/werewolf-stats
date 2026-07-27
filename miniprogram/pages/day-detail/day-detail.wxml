@@ -55,7 +55,10 @@
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{visiblePredictions}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayer">
           <text class="rank">{{index + 1}}</text>
           <view class="list-main">
-            <text class="list-title">{{item.player_name}}</text>
+            <view class="player-name-line">
+              <text class="list-title">{{item.player_name}}</text>
+              <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="list-meta">{{item.team_name || "未绑定战队"}} · {{item.match_count}} 场 · 场均 {{item.average_expected_points}}</text>
           </view>
           <view class="list-score">
@@ -79,7 +82,10 @@
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{visiblePlayerLeaderboard}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openPlayer">
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">
-            <text class="list-title">{{item.display_name}}</text>
+            <view class="player-name-line">
+              <text class="list-title">{{item.display_name}}</text>
+              <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="list-meta">{{item.team_name || "未绑定战队"}} · {{item.games_played}} 局 · 胜率 {{item.win_rate}}</text>
           </view>
           <view class="list-score">
@@ -128,7 +134,10 @@
             <text class="match-title">{{match.stage_label}} · 第{{match.round}}轮第{{match.game_no}}局</text>
             <text class="match-meta">{{match.meta_text || "待补录"}}</text>
             <view class="participant-row" wx:for="{{match.participants}}" wx:for-item="player" wx:key="seat">
-              <text>{{player.seat}}号 {{player.player_name}}</text>
+              <view class="player-name-line">
+                <text>{{player.seat}}号 {{player.player_name}}</text>
+                <star-player-badge wx:if="{{player.is_star_player}}" compact="{{true}}" />
+              </view>
               <text>{{player.points}} 分</text>
             </view>
           </view>

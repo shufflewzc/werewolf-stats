@@ -1025,6 +1025,7 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "rank": index + 1,
             "player_id": row["player_id"],
             "display_name": row["display_name"],
+            "is_star_player": bool(row.get("is_star_player")),
             "team_name": row.get("team_name") or row.get("current_team_name") or "未绑定战队",
             "photo": row.get("photo") or DEFAULT_PLAYER_PHOTO,
             "games_played": int(row.get("games_played") or 0),
@@ -1308,6 +1309,7 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
         "player": {
             "player_id": player_id,
             "name": detail["display_name"],
+            "is_star_player": bool(player.get("is_star_player")),
             "photo": _player_asset_href(detail.get("photo")),
             "team_name": detail["team_name"],
             "team_href": team_href,

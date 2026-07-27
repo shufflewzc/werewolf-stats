@@ -154,6 +154,7 @@ CREATE TABLE IF NOT EXISTS players (
     photo TEXT NOT NULL,
     aliases_json TEXT NOT NULL,
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
+    is_star_player INTEGER NOT NULL DEFAULT 0 CHECK (is_star_player IN (0, 1)),
     joined_on TEXT NOT NULL,
     notes TEXT NOT NULL
 );
@@ -371,8 +372,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_web_openid
 ON users(wechat_web_openid)
 WHERE wechat_web_openid != '';
 
+ALTER TABLE players
+ADD COLUMN IF NOT EXISTS is_star_player INTEGER NOT NULL DEFAULT 0;
+
 INSERT INTO app_meta (meta_key, meta_value)
-VALUES ('schema_version', '4')
+VALUES ('schema_version', '5')
 ON CONFLICT (meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value;
 
 COMMIT;

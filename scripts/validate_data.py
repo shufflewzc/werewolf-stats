@@ -297,6 +297,7 @@ def validate_players(
         "photo",
         "aliases",
         "active",
+        "is_star_player",
         "joined_on",
         "notes",
     }
@@ -340,6 +341,9 @@ def validate_players(
 
         if not isinstance(player.get("active"), bool):
             errors.append(f"{label}.active: expected boolean")
+
+        if "is_star_player" in player and not isinstance(player.get("is_star_player"), bool):
+            errors.append(f"{label}.is_star_player: expected boolean")
 
         errors.extend(validate_iso_date(player.get("joined_on"), f"{label}.joined_on"))
 

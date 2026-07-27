@@ -36,7 +36,10 @@
       <view class="my-player-row" wx:if="{{currentPlayer}}">
         <view class="list-main">
           <text class="account-label">本赛季选手</text>
-          <text class="account-name">{{currentPlayer.display_name}}</text>
+          <view class="player-name-line">
+            <text class="account-name">{{currentPlayer.display_name}}</text>
+            <star-player-badge wx:if="{{currentPlayer.is_star_player}}" compact="{{true}}" />
+          </view>
           <text class="account-meta">{{currentPlayer.team_name || "未绑定战队"}} · {{currentPlayer.season}}</text>
           <text class="account-meta">账号名：{{user.display_name || user.username}}</text>
           <text class="account-meta">{{latestDay ? latestDay.played_on : "暂无比赛日"}} · {{centerCopy}}</text>
@@ -52,7 +55,10 @@
         <text class="account-label">已绑定档案</text>
         <view class="bound-player-item tap-card" hover-class="tap-card-hover" wx:for="{{boundPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openBoundPlayerPage">
           <view class="list-main">
-            <text class="bound-player-name">{{item.display_name || item.player_id}}</text>
+            <view class="player-name-line">
+              <text class="bound-player-name">{{item.display_name || item.player_id}}</text>
+              <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="bound-player-id">{{item.competition || "未分配赛事"}} · {{item.season || "未分配赛季"}}</text>
           </view>
           <text class="bound-player-action">详情</text>
@@ -107,7 +113,10 @@
       <view class="follow-list">
         <view class="follow-item tap-card" hover-class="tap-card-hover" wx:for="{{followedPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openFollowedPlayer">
           <view class="list-main">
-            <text class="bound-player-name">{{item.display_name}}</text>
+            <view class="player-name-line">
+              <text class="bound-player-name">{{item.display_name}}</text>
+              <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="account-meta">{{item.team_name || "未绑定战队"}}</text>
           </view>
           <button class="follow-remove" hover-class="tap-button-hover" data-player-id="{{item.player_id}}" catchtap="removeFollowedPlayer">取消关注</button>

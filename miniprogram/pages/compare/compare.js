@@ -16,6 +16,10 @@ function decorate(item, type) {
   };
 }
 
+function candidateLabel(item, type) {
+  return `${type === "player" && item.is_star_player ? "明星选手 · " : ""}${item.title}`;
+}
+
 function rowsFrom(leftPayload, rightPayload) {
   const leftMetrics = Array.isArray(leftPayload.metrics) ? leftPayload.metrics : [];
   const rightMetrics = Array.isArray(rightPayload.metrics) ? rightPayload.metrics : [];
@@ -56,7 +60,7 @@ Page({
       const listPayload = await request(type === "team" ? "/api/teams" : "/api/players", type === "team" ? scopeParams(selectedScope) : { ...scopeParams(selectedScope), limit: 100, offset: 0 }, options);
       const candidates = (type === "team" ? listPayload.teams : listPayload.players || []).map((item) => decorate(item, type));
       if (candidates.length < 2) {
-        this.setData({ loading: false, selectedScope, needsCompetition: false, type, typeLabel: type === "team" ? "战队" : "选手", candidates, candidateLabels: candidates.map((item) => item.title), left: null, right: null, compareRows: [], error: `当前赛事至少需要两${type === "team" ? "支战队" : "名选手"}才能对比。` });
+        this.setData({ loading: false, selectedScope, needsCompetition: false, type, typeLabel: type === "team" ? "战队" : "选手", candidates, candidateLabels: candidates.map((item) => candidateLabel(item, type)), left: null, right: null, compareRows: [], error: `当前赛事至少需要两${type === "team" ? "支战队" : "名选手"}才能对比。` });
         return;
       }
       const preferredLeft = this.initialLeftId || (this.data.left && this.data.left.id) || candidates[0].id;
@@ -77,7 +81,7 @@ Page({
       request(`${endpoint}${encodeURIComponent(candidates[leftIndex].id)}`, scopeParams(selectedScope), options),
       request(`${endpoint}${encodeURIComponent(candidates[rightIndex].id)}`, scopeParams(selectedScope), options)
     ]);
-    this.setData({ loading: false, selectedScope, needsCompetition: false, type, typeLabel: type === "team" ? "战队" : "选手", candidates, candidateLabels: candidates.map((item) => item.title), leftIndex, rightIndex, left: decorate(type === "team" ? leftPayload.team : leftPayload.player, type), right: decorate(type === "team" ? rightPayload.team : rightPayload.player, type), compareRows: rowsFrom(leftPayload, rightPayload) });
+    this.setData({ loading: false, selectedScope, needsCompetition: false, type, typeLabel: type === "team" ? "战队" : "选手", candidates, candidateLabels: candidates.map((item) => candidateLabel(item, type)), leftIndex, rightIndex, left: decorate(type === "team" ? leftPayload.team : leftPayload.player, type), right: decorate(type === "team" ? rightPayload.team : rightPayload.player, type), compareRows: rowsFrom(leftPayload, rightPayload) });
   },
 
   changeLeft(event) {

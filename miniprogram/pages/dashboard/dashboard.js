@@ -68,6 +68,7 @@ function decorateLeaderboardRows(key, rows) {
         id: row.player_id,
         rank: row.rank,
         title: row.display_name,
+        is_star_player: Boolean(row.is_star_player),
         meta: `${row.team_name || "未绑定战队"} · 出场 ${row.games_played} 局`,
         value: row.points_total,
         valueLabel: "积分"
@@ -79,6 +80,7 @@ function decorateLeaderboardRows(key, rows) {
       id: row.player_id,
       rank: row.rank,
       title: row.display_name,
+      is_star_player: Boolean(row.is_star_player),
       meta: `${row.team_name || "未绑定战队"} · 最近 ${row.latest_awarded_on || "待更新"}`,
       value: row.award_count,
       valueLabel: row.award_label || (key === "mvp" ? "MVP" : "SVP")
@@ -97,6 +99,7 @@ async function hydrateFollowedPlayers(items, scope, options) {
         ...item,
         display_name: player.name || player.display_name || item.display_name,
         team_name: player.team_name || item.team_name,
+        is_star_player: Boolean(player.is_star_player),
         points_total: player.points_total || "--",
         rank: player.rank || "--",
         recent_label: recent.played_on ? `${recent.played_on} · ${recent.result_label || recent.result || "已出战"}` : "暂无比赛记录"
@@ -399,7 +402,8 @@ Page({
         searchLoading: false,
         searchResults: (payload.results || []).map((item) => ({
           ...item,
-          typeLabel: item.type_label
+          typeLabel: item.type_label,
+          is_star_player: Boolean(item.is_star_player)
         }))
       });
     } catch (error) {

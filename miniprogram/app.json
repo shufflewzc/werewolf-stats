@@ -22,6 +22,9 @@
     "backgroundColor": "#f4f7fb",
     "backgroundTextStyle": "dark"
   },
+  "usingComponents": {
+    "star-player-badge": "/components/star-player-badge/star-player-badge"
+  },
   "tabBar": {
     "color": "#64748b",
     "selectedColor": "#111827",

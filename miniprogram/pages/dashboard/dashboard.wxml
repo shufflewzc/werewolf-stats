@@ -91,7 +91,10 @@
 
         <view class="my-player-card tap-card" hover-class="tap-card-hover" wx:if="{{myPlayer}}" bindtap="openMyPlayerDetail">
           <view class="list-main">
-            <text class="list-title">{{myPlayer.display_name}}</text>
+            <view class="player-name-line">
+              <text class="list-title">{{myPlayer.display_name}}</text>
+              <star-player-badge wx:if="{{myPlayer.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="list-meta">{{myPlayer.team_name || "未绑定战队"}} · 当前积分 {{myPlayer.points_total || "--"}} · 出场 {{myPlayer.games_played || "--"}} 局</text>
           </view>
           <button class="scope-button" hover-class="tap-button-hover" catchtap="openMyPlayerDetail">详情</button>
@@ -120,7 +123,10 @@
           <view class="search-result tap-card" hover-class="tap-card-hover" wx:for="{{searchResults}}" wx:key="key" data-index="{{index}}" bindtap="openSearchResult">
             <text class="search-type">{{item.typeLabel}}</text>
             <view class="list-main">
-              <text class="list-title">{{item.title}}</text>
+              <view class="player-name-line">
+                <text class="list-title">{{item.title}}</text>
+                <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+              </view>
               <text class="list-meta">{{item.subtitle}}</text>
             </view>
             <text class="tap-cue">›</text>
@@ -140,7 +146,10 @@
       <view class="stack">
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{followedPlayers}}" wx:key="player_id" data-player-id="{{item.player_id}}" bindtap="openFollowedPlayer">
           <view class="list-main">
-            <text class="list-title">{{item.display_name}}</text>
+            <view class="player-name-line">
+              <text class="list-title">{{item.display_name}}</text>
+              <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="list-meta">{{item.team_name}} · 排名 #{{item.rank || "--"}} · 积分 {{item.points_total || "--"}}</text>
             <text class="list-meta">{{item.recent_label || "正在同步最新战绩"}}</text>
           </view>
@@ -192,7 +201,10 @@
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>
           <view class="list-main">
-            <text class="list-title">{{item.title}}</text>
+            <view class="player-name-line">
+              <text class="list-title">{{item.title}}</text>
+              <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+            </view>
             <text class="list-meta">{{item.meta}}</text>
           </view>
           <view class="list-score">

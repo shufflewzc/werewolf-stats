@@ -7,7 +7,7 @@ const {
   saveProfile: saveProfileRequest
 } = require("../../utils/auth");
 const { request } = require("../../utils/api");
-const { getFollowedPlayers, toggleFollow } = require("../../utils/follows");
+const { getFollowedPlayers, refreshFollowedPlayers, toggleFollow } = require("../../utils/follows");
 const { getSelectedScope, scopeParams, setSelectedScope } = require("../../utils/scope");
 
 const GENDER_VALUES = ["prefer_not_to_say", "male", "female", "other"];
@@ -137,6 +137,9 @@ Page({
       boundPlayers,
       currentPlayer,
       currentPlayerStatus
+    });
+    refreshFollowedPlayers(selectedScope).then((followedPlayers) => {
+      this.setData({ followedPlayers });
     });
   },
 

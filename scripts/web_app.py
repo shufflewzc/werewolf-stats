@@ -1822,6 +1822,7 @@ SENSITIVE_RATE_LIMIT_PATHS = {
     "/api/miniprogram/profile",
     "/api/miniprogram/player-search",
     "/api/miniprogram/current-player",
+    "/api/miniprogram/player-labels",
     "/api/miniprogram/bind-player",
     "/api/miniprogram/unbind-player",
     "/api/miniprogram/web-login-confirm",
@@ -6472,6 +6473,7 @@ def resolve_user_player_for_scope(
             {
                 "player_id": player_id,
                 "display_name": str(player.get("display_name") or player_id),
+                "is_star_player": bool(player.get("is_star_player")),
                 "photo": str(player.get("photo") or DEFAULT_PLAYER_PHOTO),
                 "team_id": str(team.get("team_id") or ""),
                 "team_name": str(team.get("name") or team.get("short_name") or ""),
@@ -8331,6 +8333,7 @@ def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
         "rank": int(row["rank"]),
         "player_id": row["player_id"],
         "display_name": row["display_name"],
+        "is_star_player": bool(row.get("is_star_player")),
         "team_name": row["team_name"],
         "photo": row["photo"],
         "games_played": int(row["games_played"]),
@@ -8373,6 +8376,7 @@ def build_dashboard_award_rows(
             {
                 "player_id": player_id,
                 "display_name": str(player_lookup[player_id].get("display_name") or player_id),
+                "is_star_player": bool(player_lookup[player_id].get("is_star_player")),
                 "team_name": str(team_lookup.get(team_id, {}).get("name") or team_id or "未知战队"),
                 "award_count": 0,
                 "latest_awarded_on": "",
@@ -8398,6 +8402,7 @@ def _serialize_dashboard_award_row(row: dict[str, Any], award_label: str) -> dic
         "rank": int(row["rank"]),
         "player_id": row["player_id"],
         "display_name": row["display_name"],
+        "is_star_player": bool(row.get("is_star_player")),
         "team_name": row["team_name"],
         "award_label": award_label,
         "award_count": int(row["award_count"]),
@@ -11423,6 +11428,7 @@ def build_search_api_payload(ctx: RequestContext, keyword: str) -> dict[str, Any
                 "type_label": "选手",
                 "id": player["player_id"],
                 "title": player.get("display_name") or player["player_id"],
+                "is_star_player": bool(player.get("is_star_player")),
                 "subtitle": f"{player.get('team_name') or '未绑定战队'} · 积分 {player.get('points_total') or '--'} · 胜率 {player.get('win_rate') or '--'}",
             })
     for team in teams_payload.get("teams", []):
@@ -15139,6 +15145,11 @@ def build_player_edit_form(
               <label class="form-label">别名</label>
               <input class="form-control" name="aliases" value="{escape(aliases_value)}" placeholder="多个别名可用 顿号、逗号 或换行分隔">
             </div>
+            <div class="form-check form-switch mb-3">
+              <input class="form-check-input" type="checkbox" role="switch" id="is-star-player" name="is_star_player" value="1" {'checked' if player.get('is_star_player') else ''}>
+              <label class="form-check-label fw-semibold" for="is-star-player">明星选手</label>
+              <div class="small text-secondary mt-1">开启后，小程序内所有选手身份位置都会突出显示金色“明星选手”标识。</div>
+            </div>
             <div class="mb-3">
               <label class="form-label">备注</label>
               <textarea class="form-control" name="notes" rows="4">{escape(player['notes'])}</textarea>
@@ -16449,7 +16460,7 @@ def handle_login(ctx: RequestContext, start_response):
     return start_response_html(start_response, "200 OK", login_page(ctx, alert="用户名或密码不正确。"))
 
 
-def build_miniprogram_bound_players(user: dict[str, Any]) -> list[dict[str, str]]:
+def build_miniprogram_bound_players(user: dict[str, Any]) -> list[dict[str, Any]]:
     bound_ids = get_user_bound_player_ids(user)
     if not bound_ids:
         return []
@@ -16465,7 +16476,7 @@ def build_miniprogram_bound_players(user: dict[str, Any]) -> list[dict[str, str]
         str(team.get("team_id") or ""): team
         for team in data.get("teams", [])
     }
-    rows: list[dict[str, str]] = []
+    rows: list[dict[str, Any]] = []
     for player_id in bound_ids:
         player = player_lookup.get(player_id) or {}
         team = team_lookup.get(str(player.get("team_id") or "")) or {}
@@ -16474,6 +16485,7 @@ def build_miniprogram_bound_players(user: dict[str, Any]) -> list[dict[str, str]
             {
                 "player_id": player_id,
                 "display_name": str(player.get("display_name") or player_id),
+                "is_star_player": bool(player.get("is_star_player")),
                 "photo": str(player.get("photo") or DEFAULT_PLAYER_PHOTO),
                 "team_id": str(team.get("team_id") or ""),
                 "team_name": str(team.get("name") or team.get("short_name") or ""),
@@ -16839,6 +16851,7 @@ def handle_miniprogram_player_search(ctx: RequestContext, start_response):
             {
                 "player_id": player["player_id"],
                 "display_name": display_name,
+                "is_star_player": bool(player.get("is_star_player")),
                 "aliases": aliases,
                 "aliases_text": "、".join(aliases),
                 "team_name": team["name"] if team else "未绑定战队",
@@ -16874,6 +16887,43 @@ def handle_miniprogram_current_player(ctx: RequestContext, start_response):
         season_name,
     )
     return start_response_json(start_response, "200 OK", result)
+
+
+def handle_miniprogram_player_labels(ctx: RequestContext, start_response):
+    """Refresh locally cached player identity labels without loading full profiles."""
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "player labels only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    requested_ids = [
+        value.strip()
+        for value in form_value(ctx.query, "player_ids").split(",")
+        if value.strip()
+    ][:50]
+    requested_set = set(requested_ids)
+    players = {
+        str(player.get("player_id") or ""): player
+        for player in load_validated_data().get("players", [])
+        if str(player.get("player_id") or "") in requested_set
+    }
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "players": [
+                {
+                    "player_id": player_id,
+                    "display_name": str(players[player_id].get("display_name") or player_id),
+                    "is_star_player": bool(players[player_id].get("is_star_player")),
+                }
+                for player_id in requested_ids
+                if player_id in players
+            ]
+        },
+    )
 
 
 def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
@@ -17164,6 +17214,7 @@ def handle_player_edit(ctx: RequestContext, start_response, player_id: str):
     display_name = form_value(ctx.form, "player_display_name").strip()
     aliases_raw = form_value(ctx.form, "aliases")
     notes = form_value(ctx.form, "notes").strip()
+    is_star_player = form_value(ctx.form, "is_star_player").strip() == "1"
     upload = file_value(ctx.files, "photo_file")
     error = validate_profile_update(
         "管理员",
@@ -17190,6 +17241,7 @@ def handle_player_edit(ctx: RequestContext, start_response, player_id: str):
                     "display_name": display_name or player["display_name"],
                     "aliases": parse_aliases_text(aliases_raw),
                     "notes": notes,
+                    "is_star_player": is_star_player,
                 },
             ),
         )
@@ -17200,6 +17252,7 @@ def handle_player_edit(ctx: RequestContext, start_response, player_id: str):
         item["display_name"] = display_name
         item["aliases"] = parse_aliases_text(aliases_raw)
         item["notes"] = notes
+        item["is_star_player"] = is_star_player
         new_photo = save_uploaded_player_photo(player_id, upload)
         if new_photo:
             item["photo"] = new_photo
@@ -17219,8 +17272,13 @@ def handle_player_edit(ctx: RequestContext, start_response, player_id: str):
         target_type="player",
         target_id=player_id,
         summary=f"管理员更新选手 {player_id} 的资料",
-        metadata={"display_name": display_name, "photo_updated": bool(new_photo)},
+        metadata={
+            "display_name": display_name,
+            "photo_updated": bool(new_photo),
+            "is_star_player": is_star_player,
+        },
     )
+    invalidate_public_api_cache()
     next_path = form_value(ctx.query, "next").strip() or f"/players/{player_id}"
     return redirect(start_response, next_path)
 
@@ -17412,6 +17470,10 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
     )
 
     data = load_validated_data()
+    player_lookup = {
+        str(player.get("player_id") or ""): player
+        for player in data.get("players", [])
+    }
     competition_names = sorted({get_match_competition_name(match) for match in data.get("matches", [])})
     selected_competition = get_selected_competition(ctx, competition_names)
     season_names = list_seasons(data, selected_competition) if selected_competition else []
@@ -17618,6 +17680,9 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
         return {
             "player_id": entry["player_id"],
             "player_name": entry["player_name"],
+            "is_star_player": bool(
+                player_lookup.get(str(entry.get("player_id") or ""), {}).get("is_star_player")
+            ),
             "team_name": entry["team_name"],
             "win_rate": entry["win_rate"],
             "confidence": confidence,
@@ -17973,6 +18038,8 @@ def app(environ, start_response):
             return handle_miniprogram_player_search(ctx, start_response)
         if path == "/api/miniprogram/current-player":
             return handle_miniprogram_current_player(ctx, start_response)
+        if path == "/api/miniprogram/player-labels":
+            return handle_miniprogram_player_labels(ctx, start_response)
         if path == "/api/miniprogram/bind-player":
             return handle_miniprogram_bind_player(ctx, start_response)
         if path == "/api/miniprogram/unbind-player":

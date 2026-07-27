@@ -43,6 +43,37 @@ function drawText(ctx, text, x, y, options = {}) {
   ctx.fillText(String(text || "--"), x, y);
 }
 
+function drawStarBadge(ctx, x, y, compact = false) {
+  const width = compact ? 118 : 142;
+  const height = compact ? 32 : 38;
+  const radius = height / 2;
+  ctx.beginPath();
+  ctx.moveTo(x + radius, y);
+  ctx.lineTo(x + width - radius, y);
+  ctx.quadraticCurveTo(x + width, y, x + width, y + radius);
+  ctx.lineTo(x + width, y + height - radius);
+  ctx.quadraticCurveTo(x + width, y + height, x + width - radius, y + height);
+  ctx.lineTo(x + radius, y + height);
+  ctx.quadraticCurveTo(x, y + height, x, y + height - radius);
+  ctx.lineTo(x, y + radius);
+  ctx.quadraticCurveTo(x, y, x + radius, y);
+  ctx.closePath();
+  ctx.fillStyle = "#f3bd38";
+  ctx.fill();
+  ctx.strokeStyle = "#ffe08a";
+  ctx.lineWidth = 1;
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(x + 16, y + height / 2, compact ? 4 : 5, 0, Math.PI * 2);
+  ctx.fillStyle = "#3b2800";
+  ctx.fill();
+  drawText(ctx, "明星选手", x + 28, y + (compact ? 23 : 27), {
+    size: compact ? 18 : 21,
+    color: "#2b1b00",
+    weight: 700
+  });
+}
+
 Page({
   data: {
     loading: true,
@@ -132,7 +163,8 @@ Page({
     ctx.globalAlpha = 1;
     ctx.beginPath(); ctx.arc(120, 132, 74, 0, Math.PI * 2); ctx.stroke();
     drawText(ctx, player.name || player.display_name || this.playerId, 220, 115, { size: 44, weight: 700 });
-    drawText(ctx, player.team_name || "未绑定战队", 220, 162, { size: 25, color: "#d4af37" });
+    if (player.is_star_player) drawStarBadge(ctx, 220, 135);
+    drawText(ctx, player.team_name || "未绑定战队", 220, player.is_star_player ? 205 : 162, { size: 25, color: "#d4af37" });
     drawText(ctx, "赛季排名", 66, 306, { size: 28, color: "#d4af37", weight: 700 });
     drawText(ctx, `#${player.rank || "--"}`, 66, 438, { size: 118, color: "#d4af37", weight: 700 });
     const cards = [["总积分", points], ["胜率", winRate], ["MVP", mvp]];
@@ -181,7 +213,8 @@ Page({
     ctx.globalAlpha = 1;
     ctx.beginPath(); ctx.arc(126, 135, 76, 0, Math.PI * 2); ctx.stroke();
     drawText(ctx, values.player.name || values.player.display_name || this.playerId, 235, 116, { size: 46, weight: 700 });
-    drawText(ctx, values.player.team_name || "未绑定战队", 235, 162, { size: 25, color: "#d4af37" });
+    if (values.player.is_star_player) drawStarBadge(ctx, 235, 134, true);
+    drawText(ctx, values.player.team_name || "未绑定战队", 235, values.player.is_star_player ? 202 : 162, { size: 25, color: "#d4af37" });
     drawText(ctx, "赛季排名", 55, 315, { size: 26, color: "#d4af37", weight: 700 });
     drawText(ctx, `#${values.player.rank || "--"}`, 55, 446, { size: 122, color: "#d4af37", weight: 700 });
     [["总积分", values.points], ["胜率", values.winRate], ["MVP", values.mvp]].forEach((item, index) => {

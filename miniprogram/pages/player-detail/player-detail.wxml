@@ -4,7 +4,10 @@
     <view wx:else class="detail-avatar image-placeholder"></view>
     <view class="detail-main">
       <text class="detail-eyebrow">{{player.team_name || "未绑定战队"}}</text>
-      <text class="detail-name">{{player.name || "选手详情"}}</text>
+      <view class="player-name-line">
+        <text class="detail-name">{{player.name || "选手详情"}}</text>
+        <star-player-badge wx:if="{{player.is_star_player}}" dark="{{true}}" />
+      </view>
       <text class="detail-copy">排名 #{{player.rank || "-"}} · {{player.owner || "未绑定账号"}}</text>
       <view wx:if="{{player.power_rating}}" class="power-rating-badge {{player.power_rating.class_name}}">
         <text>战力 {{player.power_rating.grade}}</text>

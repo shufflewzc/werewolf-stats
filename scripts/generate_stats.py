@@ -217,6 +217,7 @@ def build_player_rows(
             "current_team_id": player.get("team_id", ""),
             "current_team_name": teams.get(player.get("team_id", ""), {}).get("name", "个人赛"),
             "photo": player["photo"],
+            "is_star_player": bool(player.get("is_star_player")),
             "games_played": 0,
             "wins": 0,
             "losses": 0,

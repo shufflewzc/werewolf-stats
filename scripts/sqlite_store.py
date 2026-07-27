@@ -386,6 +386,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             photo TEXT NOT NULL,
             aliases_json TEXT NOT NULL,
             active INTEGER NOT NULL CHECK (active IN (0, 1)),
+            is_star_player INTEGER NOT NULL DEFAULT 0 CHECK (is_star_player IN (0, 1)),
             joined_on TEXT NOT NULL,
             notes TEXT NOT NULL
         );
@@ -717,6 +718,15 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "ALTER TABLE match_players ADD COLUMN score_breakdown_json TEXT NOT NULL DEFAULT '{}'"
         )
+    player_columns = {
+        row["name"]
+        for row in connection.execute("PRAGMA table_info(players)").fetchall()
+    }
+    if "is_star_player" not in player_columns:
+        connection.execute(
+            "ALTER TABLE players ADD COLUMN is_star_player INTEGER NOT NULL DEFAULT 0"
+        )
+
     request_columns = {
         row["name"]
         for row in connection.execute("PRAGMA table_info(membership_requests)").fetchall()
@@ -1231,9 +1241,9 @@ def replace_repository_data(
             connection.execute(
                 """
                 INSERT INTO players (
-                    player_id, display_name, team_id, photo, aliases_json, active, joined_on, notes
+                    player_id, display_name, team_id, photo, aliases_json, active, is_star_player, joined_on, notes
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     player["player_id"],
@@ -1242,6 +1252,7 @@ def replace_repository_data(
                     player["photo"],
                     json.dumps(player["aliases"], ensure_ascii=False),
                     1 if player.get("active") else 0,
+                    1 if player.get("is_star_player") else 0,
                     player["joined_on"],
                     player["notes"],
                 ),
@@ -1362,9 +1373,9 @@ def replace_matches_by_id(
                 connection.execute(
                     """
                     INSERT INTO players (
-                        player_id, display_name, team_id, photo, aliases_json, active, joined_on, notes
+                        player_id, display_name, team_id, photo, aliases_json, active, is_star_player, joined_on, notes
                     )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(player_id) DO UPDATE SET
                         display_name = excluded.display_name,
                         team_id = excluded.team_id,
@@ -1381,6 +1392,7 @@ def replace_matches_by_id(
                         player["photo"],
                         json.dumps(player["aliases"], ensure_ascii=False),
                         1 if player.get("active") else 0,
+                        1 if player.get("is_star_player") else 0,
                         player["joined_on"],
                         player["notes"],
                     ),
@@ -1687,7 +1699,7 @@ def load_players(connection: Any | None = None) -> list[dict[str, Any]]:
         require_initialized_database(connection)
         rows = connection.execute(
             """
-            SELECT player_id, display_name, team_id, photo, aliases_json, active, joined_on, notes
+            SELECT player_id, display_name, team_id, photo, aliases_json, active, is_star_player, joined_on, notes
             FROM players
             ORDER BY player_id
             """
@@ -1700,6 +1712,7 @@ def load_players(connection: Any | None = None) -> list[dict[str, Any]]:
                 "photo": row["photo"],
                 "aliases": json.loads(row["aliases_json"]),
                 "active": bool(row["active"]),
+                "is_star_player": bool(row["is_star_player"]),
                 "joined_on": row["joined_on"],
                 "notes": row["notes"],
             }

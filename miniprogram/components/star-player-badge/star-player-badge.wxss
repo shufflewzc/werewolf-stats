@@ -1,0 +1,53 @@
+.star-badge {
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 7rpx;
+  min-height: 38rpx;
+  padding: 5rpx 14rpx;
+  border: 1rpx solid #d69b20;
+  border-radius: 999rpx;
+  background: #fff4c7;
+  color: #7a4700;
+  font-size: 21rpx;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: 1rpx;
+  box-shadow: 0 3rpx 9rpx rgba(181, 119, 0, 0.16);
+}
+
+.star-mark {
+  width: 10rpx;
+  height: 10rpx;
+  flex: none;
+  border-radius: 50%;
+  background: #d99708;
+  box-shadow: 0 0 0 3rpx rgba(217, 151, 8, 0.18);
+}
+
+.star-badge.is-compact {
+  gap: 5rpx;
+  min-height: 32rpx;
+  padding: 3rpx 10rpx;
+  font-size: 18rpx;
+  letter-spacing: 0;
+  box-shadow: none;
+}
+
+.star-badge.is-compact .star-mark {
+  width: 8rpx;
+  height: 8rpx;
+}
+
+.star-badge.is-dark {
+  border-color: #ffd86b;
+  background: linear-gradient(135deg, #ffe38a, #e6a817);
+  color: #2b1b00;
+  box-shadow: 0 4rpx 14rpx rgba(255, 196, 45, 0.3);
+}
+
+.star-badge.is-dark .star-mark {
+  background: #473000;
+  box-shadow: 0 0 0 3rpx rgba(71, 48, 0, 0.14);
+}

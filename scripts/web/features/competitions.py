@@ -796,6 +796,7 @@ def _serialize_player_ranking_row(
         "rank": int(row["rank"]),
         "player_id": row["player_id"],
         "display_name": row["display_name"],
+        "is_star_player": bool(row.get("is_star_player")),
         "team_name": row["team_name"],
         "games_played": int(row["games_played"]),
         "record": row["record"],
@@ -2967,6 +2968,9 @@ def _serialize_day_match_competition_section(
                 {
                     "seat": participant["seat"],
                     "player_name": player_name,
+                    "is_star_player": bool(
+                        player_lookup.get(participant["player_id"], {}).get("is_star_player")
+                    ),
                     "player_href": build_scoped_path(
                         "/players/" + participant["player_id"],
                         competition_name,

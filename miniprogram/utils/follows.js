@@ -1,5 +1,6 @@
 const STORAGE_KEY = "werewolf:followedPlayers";
 const MAX_FOLLOWS = 50;
+const { request } = require("./api");
 
 function readFollows() {
   const follows = wx.getStorageSync(STORAGE_KEY);
@@ -38,6 +39,7 @@ function toggleFollow(player, scope) {
     player_id: playerId,
     display_name: player.display_name || player.name || playerId,
     team_name: player.team_name || "未绑定战队",
+    is_star_player: Boolean(player.is_star_player),
     competition: scope.competition,
     season: scope.season || "",
     followed_at: Date.now()
@@ -57,8 +59,37 @@ function getFollowedPlayers(scope) {
     .sort((left, right) => Number(right.followed_at || 0) - Number(left.followed_at || 0));
 }
 
+async function refreshFollowedPlayers(scope) {
+  const follows = getFollowedPlayers(scope);
+  const ids = follows.map((item) => item.player_id).filter(Boolean);
+  if (!ids.length) {
+    return follows;
+  }
+  try {
+    const payload = await request("/api/miniprogram/player-labels", {
+      player_ids: ids.join(",")
+    }, { useCache: false });
+    const labels = {};
+    (payload.players || []).forEach((player) => {
+      labels[player.player_id] = player;
+    });
+    const allFollows = readFollows().map((item) => labels[item.player_id]
+      ? {
+        ...item,
+        display_name: labels[item.player_id].display_name || item.display_name,
+        is_star_player: Boolean(labels[item.player_id].is_star_player)
+      }
+      : item);
+    wx.setStorageSync(STORAGE_KEY, allFollows);
+    return getFollowedPlayers(scope);
+  } catch (error) {
+    return follows;
+  }
+}
+
 module.exports = {
   getFollowedPlayers,
+  refreshFollowedPlayers,
   isFollowed,
   toggleFollow
 };

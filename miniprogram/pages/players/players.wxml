@@ -65,7 +65,10 @@
             <image wx:if="{{item.photoUrl}}" class="avatar" src="{{item.photoUrl}}" mode="aspectFill" lazy-load="{{true}}" aria-label="{{item.display_name}}头像" data-index="{{index}}" binderror="onPlayerImageError"></image>
             <view wx:else class="avatar image-placeholder"></view>
             <view class="list-main">
-              <text class="list-title">{{item.display_name}}</text>
+              <view class="player-name-line">
+                <text class="list-title">{{item.display_name}}</text>
+                <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+              </view>
               <text class="list-meta">{{item.team_name}} · {{item.record}} · 胜率 {{item.win_rate}}</text>
             </view>
             <view wx:if="{{item.power_rating}}" class="power-rating-badge is-compact {{item.power_rating.class_name}}">{{item.power_rating.grade}}</view>

@@ -11,6 +11,7 @@
     "photo",
     "aliases",
     "active",
+    "is_star_player",
     "joined_on",
     "notes"
   ],
@@ -39,6 +40,10 @@
     },
     "active": {
       "type": "boolean"
+    },
+    "is_star_player": {
+      "type": "boolean",
+      "default": false
     },
     "joined_on": {
       "type": "string",

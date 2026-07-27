@@ -1120,6 +1120,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
             {
                 "player_id": player_id,
                 "name": player.get("display_name") or player_id,
+                "is_star_player": bool(player.get("is_star_player")),
                 "photo": _team_asset_href(player.get("photo"), DEFAULT_PLAYER_PHOTO),
                 "notes": player.get("notes") or "暂无选手备注",
                 "href": build_scoped_path(

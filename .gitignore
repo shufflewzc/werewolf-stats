@@ -19,5 +19,7 @@ data/backups/
 assets/players/uploads/
 assets/teams/uploads/
 tmp/
+build/
+dist/
 tmp_web_app_stdout.log
 tmp_web_app_stderr.log

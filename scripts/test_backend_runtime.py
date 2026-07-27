@@ -155,6 +155,49 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(claimed["locked_by"], "worker-1")
         self.assertIsNone(sqlite_store.claim_import_job("worker-2"))
 
+    def test_import_job_update_preserves_or_clears_payload_path(self):
+        batch_id = "imp_20260727_140000_update"
+        sqlite_store.create_import_job_record(
+            {
+                "batch_id": batch_id,
+                "action": "matches.import_excel",
+                "label": "状态更新测试",
+                "status": "queued",
+                "created_at": "2026-07-27 14:00:00 中国时间",
+                "created_by": "admin",
+                "payload_path": "/tmp/import.xlsx",
+                "metadata": {"background": True},
+            },
+            snapshot_json='{"data":{},"users":[]}',
+        )
+        sqlite_store.claim_import_job("worker-1")
+
+        sqlite_store.update_import_job_record(
+            batch_id,
+            status="succeeded",
+            summary="导入完成",
+            completed_at="2026-07-27 14:01:00 中国时间",
+            metadata={"created_matches": 6},
+        )
+
+        updated = sqlite_store.load_import_job_records()[0]
+        self.assertEqual(updated["status"], "succeeded")
+        self.assertEqual(updated["payload_path"], "/tmp/import.xlsx")
+        self.assertEqual(updated["locked_at_epoch"], 0)
+        self.assertEqual(updated["locked_by"], "")
+        self.assertEqual(updated["metadata"]["created_matches"], 6)
+
+        sqlite_store.update_import_job_record(
+            batch_id,
+            status="succeeded",
+            payload_path="",
+        )
+
+        self.assertEqual(
+            sqlite_store.load_import_job_records()[0]["payload_path"],
+            "",
+        )
+
     def test_incremental_repository_save_preserves_active_sessions(self):
         user = {
             "username": "admin",

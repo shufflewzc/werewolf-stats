@@ -2767,37 +2767,46 @@ def update_import_job_record(
             if not isinstance(next_metadata, dict):
                 next_metadata = {}
             next_metadata.update(metadata or {})
+            assignments = [
+                "status = ?",
+                "summary = CASE WHEN ? != '' THEN ? ELSE summary END",
+                "metadata_json = ?",
+                "completed_at = CASE WHEN ? != '' THEN ? ELSE completed_at END",
+                "rolled_back_at = CASE WHEN ? != '' THEN ? ELSE rolled_back_at END",
+                "rolled_back_by = CASE WHEN ? != '' THEN ? ELSE rolled_back_by END",
+            ]
+            params: list[Any] = [
+                status,
+                summary,
+                summary,
+                json.dumps(next_metadata, ensure_ascii=False),
+                completed_at,
+                completed_at,
+                rolled_back_at,
+                rolled_back_at,
+                rolled_back_by,
+                rolled_back_by,
+            ]
+            # PostgreSQL cannot infer the type of a NULL parameter used only in
+            # ``CASE WHEN ? IS NOT NULL``. Omitting the assignment also expresses
+            # the intended "preserve the existing path" behavior more directly.
+            if payload_path is not None:
+                assignments.append("payload_path = ?")
+                params.append(payload_path)
+            assignments.extend(
+                [
+                    "locked_at_epoch = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN 0 ELSE locked_at_epoch END",
+                    "locked_by = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN '' ELSE locked_by END",
+                ]
+            )
+            params.extend((status, status, job_id))
             connection.execute(
-                """
+                f"""
                 UPDATE import_jobs
-                SET status = ?,
-                    summary = CASE WHEN ? != '' THEN ? ELSE summary END,
-                    metadata_json = ?,
-                    completed_at = CASE WHEN ? != '' THEN ? ELSE completed_at END,
-                    rolled_back_at = CASE WHEN ? != '' THEN ? ELSE rolled_back_at END,
-                    rolled_back_by = CASE WHEN ? != '' THEN ? ELSE rolled_back_by END,
-                    payload_path = CASE WHEN ? IS NOT NULL THEN ? ELSE payload_path END,
-                    locked_at_epoch = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN 0 ELSE locked_at_epoch END,
-                    locked_by = CASE WHEN ? IN ('succeeded', 'failed', 'rolled_back') THEN '' ELSE locked_by END
+                SET {", ".join(assignments)}
                 WHERE job_id = ?
                 """,
-                (
-                    status,
-                    summary,
-                    summary,
-                    json.dumps(next_metadata, ensure_ascii=False),
-                    completed_at,
-                    completed_at,
-                    rolled_back_at,
-                    rolled_back_at,
-                    rolled_back_by,
-                    rolled_back_by,
-                    payload_path,
-                    payload_path,
-                    status,
-                    status,
-                    job_id,
-                ),
+                params,
             )
 
 

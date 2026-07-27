@@ -6693,6 +6693,7 @@ def build_placeholder_player(
         "photo": DEFAULT_PLAYER_PHOTO,
         "aliases": [],
         "active": True,
+        "is_star_player": False,
         "profile_status": "auto_created",
         "created_source": "match_entry",
         "joined_on": china_today_label(),

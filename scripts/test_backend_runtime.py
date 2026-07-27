@@ -4,9 +4,12 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import import_worker
 import sqlite_store
 from web_app import (
+    build_placeholder_player,
     get_client_ip,
     resolve_match_award_player_ids,
     validate_match_awards,
@@ -197,6 +200,60 @@ class BackendRuntimeTests(unittest.TestCase):
             sqlite_store.load_import_job_records()[0]["payload_path"],
             "",
         )
+
+    def test_placeholder_player_includes_star_player_default(self):
+        player = build_placeholder_player(
+            "player-newcomer",
+            "team-newcomer",
+            "测试赛事",
+            "S1",
+        )
+
+        self.assertIn("is_star_player", player)
+        self.assertIs(player["is_star_player"], False)
+
+    def test_failed_import_job_keeps_payload_for_retry(self):
+        batch_id = "imp_20260727_150000_retry"
+        payload_path = Path(self.temp_dir.name) / "retry.xlsx"
+        payload_path.write_bytes(b"retry")
+        sqlite_store.create_import_job_record(
+            {
+                "batch_id": batch_id,
+                "action": "matches.import_excel",
+                "label": "失败重试测试",
+                "filename": payload_path.name,
+                "status": "running",
+                "created_at": "2026-07-27 15:00:00 中国时间",
+                "created_by": "admin",
+                "payload_path": str(payload_path),
+                "metadata": {},
+            },
+            snapshot_json='{"data":{},"users":[]}',
+        )
+        job = sqlite_store.load_import_job_records()[0]
+
+        def mark_failed(_ctx, _upload, _group_label, job_id):
+            sqlite_store.update_import_job_record(
+                job_id,
+                status="failed",
+                summary="测试失败",
+            )
+
+        with patch.object(
+            import_worker,
+            "build_worker_context",
+            return_value=object(),
+        ), patch.object(
+                import_worker,
+                "run_match_excel_import_job",
+                side_effect=mark_failed,
+        ):
+            import_worker.process_job(job)
+
+        refreshed = sqlite_store.load_import_job_records()[0]
+        self.assertEqual(refreshed["status"], "failed")
+        self.assertEqual(refreshed["payload_path"], str(payload_path))
+        self.assertTrue(payload_path.is_file())
 
     def test_incremental_repository_save_preserves_active_sessions(self):
         user = {

@@ -87,11 +87,11 @@ def process_job(job: dict) -> None:
         ),
         None,
     )
-    if refreshed and refreshed.get("status") in {"succeeded", "failed"}:
+    if refreshed and refreshed.get("status") == "succeeded":
         payload_path.unlink(missing_ok=True)
         update_import_job_record(
             job_id,
-            status=str(refreshed["status"]),
+            status="succeeded",
             payload_path="",
         )
 

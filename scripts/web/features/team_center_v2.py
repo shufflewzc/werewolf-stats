@@ -470,6 +470,8 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
                 display_name=requester.get("display_name") or requester["username"],
             )
             captain_player["notes"] = "经管理员审核通过后认领赛季战队时创建的负责人档案。"
+            captain_player["profile_status"] = "verified"
+            captain_player["created_source"] = "team_claim"
             data["players"].append(captain_player)
         if captain_player["player_id"] not in target_team["members"]:
             target_team["members"].append(captain_player["player_id"])

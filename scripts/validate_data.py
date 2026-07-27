@@ -298,6 +298,8 @@ def validate_players(
         "aliases",
         "active",
         "is_star_player",
+        "profile_status",
+        "created_source",
         "joined_on",
         "notes",
     }
@@ -344,6 +346,17 @@ def validate_players(
 
         if "is_star_player" in player and not isinstance(player.get("is_star_player"), bool):
             errors.append(f"{label}.is_star_player: expected boolean")
+
+        if player.get("profile_status") not in {"verified", "auto_created"}:
+            errors.append(
+                f"{label}.profile_status: expected 'verified' or 'auto_created'"
+            )
+        errors.extend(
+            validate_non_empty_string(
+                player.get("created_source"),
+                f"{label}.created_source",
+            )
+        )
 
         errors.extend(validate_iso_date(player.get("joined_on"), f"{label}.joined_on"))
 

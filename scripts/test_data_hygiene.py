@@ -2,6 +2,8 @@ import unittest
 
 from web.features.data_hygiene import (
     _case_insensitive_duplicate_groups,
+    _delete_empty_player,
+    _delete_player_impact,
     _merge_player,
     _player_season_scope_map,
 )
@@ -55,6 +57,45 @@ def build_data():
 
 
 class DataHygieneTests(unittest.TestCase):
+    def test_delete_empty_player_rejects_captain(self):
+        data = build_data()
+        data["matches"] = []
+        player = data["players"][0]
+        player["profile_status"] = "auto_created"
+
+        with self.assertRaisesRegex(ValueError, "担任战队队长"):
+            _delete_empty_player(data, [], "player-foo")
+
+        self.assertIn(
+            "player-foo",
+            {item["player_id"] for item in data["players"]},
+        )
+
+    def test_delete_empty_player_removes_non_captain_roster_reference(self):
+        data = build_data()
+        data["matches"] = []
+        player = data["players"][1]
+        player["profile_status"] = "auto_created"
+
+        impact = _delete_empty_player(data, [], "player-foo-2")
+
+        self.assertEqual(impact["roster_team_ids"], ["team-b"])
+        self.assertNotIn(
+            "player-foo-2",
+            {item["player_id"] for item in data["players"]},
+        )
+        self.assertEqual(data["teams"][1]["members"], [])
+
+    def test_delete_impact_detects_dimension_and_account_references(self):
+        data = build_data()
+        data["season_player_dimension_stats"] = [{"player_id": "player-foo-2"}]
+        users = [{"player_id": "player-foo-2", "linked_player_ids": []}]
+
+        impact = _delete_player_impact(data, users, "player-foo-2")
+
+        self.assertEqual(impact["bindings"], 1)
+        self.assertEqual(impact["dimension_rows"], 1)
+
     def test_case_only_names_are_grouped_within_the_same_season(self):
         data = build_data()
         groups = _case_insensitive_duplicate_groups(

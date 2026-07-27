@@ -14,8 +14,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--access-days",
         type=int,
-        default=int(os.getenv("ACCESS_LOG_RETENTION_DAYS", "30")),
-        help="Keep access logs for this many days. Defaults to ACCESS_LOG_RETENTION_DAYS or 30.",
+        default=int(os.getenv("ACCESS_LOG_RETENTION_DAYS", "90")),
+        help="Keep access logs for this many days. Defaults to ACCESS_LOG_RETENTION_DAYS or 90.",
     )
     parser.add_argument(
         "--audit-days",

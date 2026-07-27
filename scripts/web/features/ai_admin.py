@@ -511,7 +511,7 @@ def get_access_stats_page(ctx: RequestContext, alert: str = "") -> str:
         }
         schema_error = str(exc)
     cleanup_state = load_log_cleanup_state()
-    access_retention_days = _retention_days_from_env("ACCESS_LOG_RETENTION_DAYS", 30)
+    access_retention_days = _retention_days_from_env("ACCESS_LOG_RETENTION_DAYS", 90)
     audit_retention_days = _retention_days_from_env("AUDIT_LOG_RETENTION_DAYS", 365)
     last_cleanup_text = (
         f"{cleanup_state.get('ran_at', '')}，访问日志 {cleanup_state.get('deleted_access_logs', 0)} 条，审计日志 {cleanup_state.get('deleted_audit_logs', 0)} 条"
@@ -792,7 +792,7 @@ def handle_access_stats(ctx: RequestContext, start_response):
     if action not in {"cleanup_logs_preview", "cleanup_logs_confirm"}:
         return start_response_html(start_response, "200 OK", get_access_stats_page(ctx, alert="未识别的操作。"))
     try:
-        access_days = max(1, min(3650, int(form_value(ctx.form, "access_retention_days") or "30")))
+        access_days = max(1, min(3650, int(form_value(ctx.form, "access_retention_days") or "90")))
         audit_days = max(1, min(3650, int(form_value(ctx.form, "audit_retention_days") or "365")))
     except ValueError:
         return start_response_html(start_response, "200 OK", get_access_stats_page(ctx, alert="保留天数必须是数字。"))

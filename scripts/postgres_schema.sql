@@ -30,6 +30,71 @@ CREATE TABLE IF NOT EXISTS app_meta (
     meta_value TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS data_revisions (
+    revision_key TEXT PRIMARY KEY,
+    revision BIGINT NOT NULL DEFAULT 0,
+    updated_at_epoch BIGINT NOT NULL DEFAULT 0
+);
+
+INSERT INTO data_revisions (revision_key, revision, updated_at_epoch)
+VALUES ('repository', 1, EXTRACT(EPOCH FROM NOW())::BIGINT)
+ON CONFLICT (revision_key) DO NOTHING;
+
+CREATE TABLE IF NOT EXISTS web_login_challenges (
+    token TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    username TEXT NOT NULL DEFAULT '',
+    next_path TEXT NOT NULL DEFAULT '/dashboard',
+    created_at_epoch BIGINT NOT NULL,
+    confirmed_at_epoch BIGINT NOT NULL DEFAULT 0,
+    used_at_epoch BIGINT NOT NULL DEFAULT 0,
+    expires_at_epoch BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS request_rate_limits (
+    bucket_key TEXT PRIMARY KEY,
+    window_started_epoch BIGINT NOT NULL,
+    request_count INTEGER NOT NULL,
+    expires_at_epoch BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS idempotency_keys (
+    fingerprint TEXT PRIMARY KEY,
+    created_at_epoch BIGINT NOT NULL,
+    expires_at_epoch BIGINT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS import_jobs (
+    job_id TEXT PRIMARY KEY,
+    action TEXT NOT NULL,
+    label TEXT NOT NULL,
+    filename TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    created_by TEXT NOT NULL,
+    completed_at TEXT NOT NULL DEFAULT '',
+    rolled_back_at TEXT NOT NULL DEFAULT '',
+    rolled_back_by TEXT NOT NULL DEFAULT '',
+    summary TEXT NOT NULL DEFAULT '',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    payload_path TEXT NOT NULL DEFAULT '',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    locked_at_epoch BIGINT NOT NULL DEFAULT 0,
+    locked_by TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS import_snapshots (
+    job_id TEXT PRIMARY KEY REFERENCES import_jobs(job_id) ON DELETE CASCADE,
+    snapshot_json TEXT NOT NULL,
+    created_at_epoch BIGINT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS ai_jobs (
     job_id TEXT PRIMARY KEY,
     job_type TEXT NOT NULL,
@@ -155,9 +220,26 @@ CREATE TABLE IF NOT EXISTS players (
     aliases_json TEXT NOT NULL,
     active INTEGER NOT NULL CHECK (active IN (0, 1)),
     is_star_player INTEGER NOT NULL DEFAULT 0 CHECK (is_star_player IN (0, 1)),
+    profile_status TEXT NOT NULL DEFAULT 'verified',
+    created_source TEXT NOT NULL DEFAULT 'manual',
     joined_on TEXT NOT NULL,
     notes TEXT NOT NULL
 );
+
+ALTER TABLE players
+ADD COLUMN IF NOT EXISTS profile_status TEXT NOT NULL DEFAULT 'verified';
+
+ALTER TABLE players
+ADD COLUMN IF NOT EXISTS created_source TEXT NOT NULL DEFAULT 'manual';
+
+UPDATE players
+SET profile_status = 'auto_created',
+    created_source = CASE
+        WHEN created_source = '' OR created_source = 'manual' THEN 'match_entry'
+        ELSE created_source
+    END
+WHERE notes LIKE '%自动创建%'
+  AND profile_status = 'verified';
 
 CREATE TABLE IF NOT EXISTS matches (
     match_id TEXT PRIMARY KEY,
@@ -218,6 +300,90 @@ DROP CONSTRAINT IF EXISTS match_players_team_id_fkey;
 
 ALTER TABLE match_players
 ADD COLUMN IF NOT EXISTS score_breakdown_json TEXT NOT NULL DEFAULT '{}';
+
+DELETE FROM team_members AS member
+WHERE NOT EXISTS (
+    SELECT 1 FROM players WHERE players.player_id = member.player_id
+);
+
+UPDATE teams
+SET captain_player_id = NULL
+WHERE captain_player_id IS NOT NULL
+  AND (
+      NOT EXISTS (
+          SELECT 1 FROM players
+          WHERE players.player_id = teams.captain_player_id
+      )
+      OR NOT EXISTS (
+          SELECT 1 FROM team_members
+          WHERE team_members.team_id = teams.team_id
+            AND team_members.player_id = teams.captain_player_id
+      )
+  );
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'team_members_player_id_fkey'
+    ) THEN
+        ALTER TABLE team_members
+        ADD CONSTRAINT team_members_player_id_fkey
+        FOREIGN KEY (player_id) REFERENCES players(player_id)
+        ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint WHERE conname = 'teams_captain_player_id_fkey'
+    ) THEN
+        ALTER TABLE teams
+        ADD CONSTRAINT teams_captain_player_id_fkey
+        FOREIGN KEY (captain_player_id) REFERENCES players(player_id)
+        ON DELETE SET NULL DEFERRABLE INITIALLY DEFERRED;
+    END IF;
+END $$;
+
+CREATE OR REPLACE FUNCTION enforce_team_captain_membership()
+RETURNS TRIGGER AS $$
+DECLARE
+    checked_team_id TEXT;
+    checked_captain_id TEXT;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        checked_team_id := OLD.team_id;
+    ELSE
+        checked_team_id := NEW.team_id;
+    END IF;
+    SELECT captain_player_id
+    INTO checked_captain_id
+    FROM teams
+    WHERE team_id = checked_team_id;
+    IF checked_captain_id IS NOT NULL
+       AND NOT EXISTS (
+           SELECT 1
+           FROM team_members
+           WHERE team_id = checked_team_id
+             AND player_id = checked_captain_id
+       )
+    THEN
+        RAISE EXCEPTION
+            'team captain % must be a member of team %',
+            checked_captain_id,
+            checked_team_id;
+    END IF;
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS teams_captain_membership_check ON teams;
+CREATE CONSTRAINT TRIGGER teams_captain_membership_check
+AFTER INSERT OR UPDATE OF captain_player_id ON teams
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION enforce_team_captain_membership();
+
+DROP TRIGGER IF EXISTS team_members_captain_membership_check ON team_members;
+CREATE CONSTRAINT TRIGGER team_members_captain_membership_check
+AFTER DELETE OR UPDATE OF player_id, team_id ON team_members
+DEFERRABLE INITIALLY DEFERRED
+FOR EACH ROW EXECUTE FUNCTION enforce_team_captain_membership();
 
 CREATE TABLE IF NOT EXISTS season_player_dimension_stats (
     competition_name TEXT NOT NULL,
@@ -306,6 +472,27 @@ ON ai_job_steps(job_id, step_order);
 CREATE INDEX IF NOT EXISTS idx_access_logs_created_at
 ON access_logs(created_at);
 
+CREATE INDEX IF NOT EXISTS idx_web_login_challenges_expires
+ON web_login_challenges(expires_at_epoch);
+
+CREATE INDEX IF NOT EXISTS idx_request_rate_limits_expires
+ON request_rate_limits(expires_at_epoch);
+
+CREATE INDEX IF NOT EXISTS idx_idempotency_keys_expires
+ON idempotency_keys(expires_at_epoch);
+
+CREATE INDEX IF NOT EXISTS idx_import_jobs_status_created
+ON import_jobs(status, created_at);
+
+CREATE INDEX IF NOT EXISTS idx_matches_scope_played
+ON matches(competition_name, season, played_on);
+
+CREATE INDEX IF NOT EXISTS idx_match_players_player
+ON match_players(player_id, match_id);
+
+CREATE INDEX IF NOT EXISTS idx_match_players_team
+ON match_players(team_id, match_id);
+
 CREATE INDEX IF NOT EXISTS idx_access_logs_path_created_at
 ON access_logs(path, created_at);
 
@@ -376,7 +563,7 @@ ALTER TABLE players
 ADD COLUMN IF NOT EXISTS is_star_player INTEGER NOT NULL DEFAULT 0;
 
 INSERT INTO app_meta (meta_key, meta_value)
-VALUES ('schema_version', '5')
+VALUES ('schema_version', '6')
 ON CONFLICT (meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value;
 
 COMMIT;

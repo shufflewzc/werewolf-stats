@@ -1,0 +1,17 @@
+[Unit]
+Description=Werewolf Stats durable Excel import worker
+After=network.target postgresql.service werewolf-stats.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/werewolf-stats
+EnvironmentFile=/opt/werewolf-stats/.env.production
+Environment=PYTHONPATH=/opt/werewolf-stats/scripts
+Environment=ENABLE_POSTGRES_WRITES=1
+ExecStart=/usr/bin/python3 /opt/werewolf-stats/scripts/import_worker.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

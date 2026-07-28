@@ -522,6 +522,12 @@ def build_regular_season_team_leaderboards(
                 badges.append(progress)
                 row["progress_status"] = progress["text"]
             row["badges"] = badges
+            if not display.get("show_team_group"):
+                # Do not leak subgroup labels through legacy leaderboard fields.
+                # Older mini-program releases build their own group badge from
+                # these fields even when the canonical badges list omits it.
+                row.pop("group_label", None)
+                row.pop("regular_season_group", None)
         result[section_key] = rows
     return result
 

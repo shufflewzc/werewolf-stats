@@ -174,6 +174,13 @@ class SeasonGroupingTests(unittest.TestCase):
                 for row in rows
             )
         )
+        self.assertTrue(
+            all(
+                "regular_season_group" not in row and "group_label" not in row
+                for rows in boards.values()
+                for row in rows
+            )
+        )
 
     def test_progress_status_boundaries(self):
         self.assertEqual(progress_status("S", 2), "直通")

@@ -19,7 +19,7 @@ from season_grouping import (
     progress_status,
 )
 from season_policy import build_tiered_league_policy, validate_season_policy
-from web.features import match_page
+from web.features import competitions, match_page
 
 
 def build_sample_data():
@@ -290,6 +290,79 @@ class SeasonGroupingTests(unittest.TestCase):
         )
         self.assertEqual(
             [row["regular_season_group"] for row in payload["participants"]],
+            ["S1", "S3"],
+        )
+
+    def test_match_day_api_passes_scope_data_to_group_serializer(self):
+        data = build_sample_data()
+        preview = build_placement_assignment_preview(data)
+        apply_placement_assignments(data, preview["revision"])
+        regular_match = {
+            "match_id": "regular-day-api",
+            "competition_name": TARGET_COMPETITION_NAME,
+            "season": TARGET_SEASON_NAME,
+            "stage": "regular_season",
+            "round": 1,
+            "game_no": 1,
+            "played_on": "2026-08-01",
+            "winning_camp": "villagers",
+            "players": [
+                {
+                    "seat": 1,
+                    "player_id": "player-01",
+                    "team_id": "team-01",
+                    "role": "预言家",
+                    "result": "win",
+                    "points_earned": 10,
+                },
+                {
+                    "seat": 2,
+                    "player_id": "player-09",
+                    "team_id": "team-09",
+                    "role": "狼人",
+                    "result": "loss",
+                    "points_earned": 3,
+                },
+            ],
+        }
+        player_lookup = {
+            player["player_id"]: player for player in data["players"]
+        }
+        team_lookup = {team["team_id"]: team for team in data["teams"]}
+        scope = {
+            "data": data,
+            "catalog": [],
+            "player_lookup": player_lookup,
+            "team_lookup": team_lookup,
+            "completed_day_matches": [regular_match],
+            "day_player_rows": [],
+            "day_team_rows": [],
+            "day_matches": [regular_match],
+            "grouped_matches": {
+                (TARGET_COMPETITION_NAME, TARGET_SEASON_NAME): [regular_match]
+            },
+            "selected_competition": TARGET_COMPETITION_NAME,
+            "selected_season": TARGET_SEASON_NAME,
+            "next_path": "/dashboard",
+            "ai_settings": {},
+            "ai_report": None,
+        }
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/days/2026-08-01",
+            query={},
+            form={},
+            files={},
+            current_user=None,
+            now_label="now",
+        )
+        payload = competitions.build_match_day_api_payload(
+            ctx,
+            "2026-08-01",
+            scope,
+        )
+        self.assertEqual(
+            payload["competitions"][0]["matches"][0]["group_labels"],
             ["S1", "S3"],
         )
 

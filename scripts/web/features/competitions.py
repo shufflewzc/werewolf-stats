@@ -3233,7 +3233,7 @@ def build_match_day_api_payload(
         ],
         "competitions": [
             _serialize_day_match_competition_section(
-                data,
+                scope["data"],
                 played_on,
                 competition_name,
                 season_name,

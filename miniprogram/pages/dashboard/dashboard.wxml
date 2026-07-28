@@ -197,15 +197,15 @@
           <text class="leaderboard-tab-text">{{item.label}}</text>
         </view>
       </view>
-      <view class="regular-tier-tabs" wx:if="{{targetGroupingEnabled && activeLeaderboardStage === 'regular_season' && activeLeaderboard === 'teams'}}">
+      <view class="regular-tier-tabs" wx:if="{{hasTeamSections && teamSectionTabs.length && activeLeaderboard === 'teams'}}">
         <view
-          class="regular-tier-tab {{activeRegularSeasonTier === item.key ? 'is-active' : ''}}"
-          wx:for="{{regularSeasonTiers}}"
+          class="regular-tier-tab {{activeTeamSection === item.key ? 'is-active' : ''}}"
+          wx:for="{{teamSectionTabs}}"
           wx:key="key"
           data-tier="{{item.key}}"
           hover-class="tap-chip-hover"
-          bindtap="changeRegularSeasonTier"
-        >{{item.label}}常规赛榜</view>
+          bindtap="changeTeamSection"
+        >{{item.title || item.label}}</view>
       </view>
       <view class="stack leaderboard-list" wx:if="{{leaderboardRows.length}}">
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
@@ -214,8 +214,9 @@
             <view class="player-name-line">
               <text class="list-title">{{item.title}}</text>
               <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
-              <text class="group-badge {{item.groupClass}}" wx:if="{{item.type === 'team' && item.regularSeasonGroup && (activeLeaderboardStage === 'placement' || activeLeaderboardStage === 'regular_season')}}">{{item.regularSeasonGroup}}</text>
-              <text class="progress-badge {{item.progressClass}}" wx:if="{{item.type === 'team' && activeLeaderboardStage === 'regular_season' && item.progressStatus}}">{{item.progressStatus}}</text>
+              <block wx:if="{{item.type === 'team'}}">
+                <text class="row-badge {{badge.className}}" wx:for="{{item.badges}}" wx:for-item="badge" wx:key="text">{{badge.text}}</text>
+              </block>
             </view>
             <text class="list-meta">{{item.meta}}</text>
           </view>

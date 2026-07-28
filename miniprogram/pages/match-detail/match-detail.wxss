@@ -42,6 +42,38 @@
   border: 1rpx solid #93c5fd;
 }
 
+.group-badge.is-gold {
+  color: #92400e;
+  background: #fef3c7;
+  border: 1rpx solid #fbbf24;
+}
+
+.group-badge.is-blue {
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1rpx solid #93c5fd;
+}
+
+.group-badge.is-green {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.group-badge.is-red {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.group-badge.is-orange {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
+.group-badge.is-gray {
+  color: #475569;
+  background: #e2e8f0;
+}
+
 .award-card,
 .participant-card,
 .detail-card {

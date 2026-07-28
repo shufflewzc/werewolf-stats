@@ -6,7 +6,6 @@ from datetime import datetime, date
 
 import web_app as legacy
 from season_grouping import (
-    is_target_scope as is_grouping_target_scope,
     match_group_labels,
 )
 from ai.workflows import run_match_day_report_workflow
@@ -2925,6 +2924,7 @@ def _serialize_day_player_row(
 
 
 def _serialize_day_match_competition_section(
+    data: dict[str, Any],
     played_on: str,
     competition_name: str,
     season_name: str,
@@ -2952,14 +2952,10 @@ def _serialize_day_match_competition_section(
         ),
     ):
         season_name = (match.get("season") or "").strip()
-        target_regular_season = (
-            is_grouping_target_scope(competition_name, season_name)
-            and str(match.get("stage") or "").strip() == "regular_season"
-        )
         regular_season_groups = match_group_labels(
-            {"teams": list(team_lookup.values())},
+            data,
             match,
-        ) if target_regular_season else []
+        )
         detail_path = build_match_day_path(
             played_on,
             competition_name=competition_name,
@@ -3020,7 +3016,7 @@ def _serialize_day_match_competition_section(
                 "round": int(match["round"]),
                 "game_no": int(match["game_no"]),
                 "meta_text": " · ".join(meta_parts),
-                **({"group_labels": regular_season_groups} if target_regular_season else {}),
+                **({"group_labels": regular_season_groups} if regular_season_groups else {}),
                 "detail_href": f"/matches/{match['match_id']}?next={quote(detail_path)}",
                 "participants": participants,
             }
@@ -3237,6 +3233,7 @@ def build_match_day_api_payload(
         ],
         "competitions": [
             _serialize_day_match_competition_section(
+                data,
                 played_on,
                 competition_name,
                 season_name,

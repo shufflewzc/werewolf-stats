@@ -61,7 +61,7 @@
           <view class="list-main">
             <view class="player-name-line">
               <text class="list-title">{{item.team_name}}</text>
-              <text class="group-badge {{item.groupClass}}" wx:if="{{item.regular_season_group}}">{{item.regular_season_group}}</text>
+              <text class="group-badge {{badge.className}}" wx:for="{{item.badges}}" wx:for-item="badge" wx:key="text">{{badge.text}}</text>
             </view>
             <text class="list-meta">点击查看战队详情</text>
           </view>
@@ -100,7 +100,7 @@
           <view class="participant-meta">
             <view class="team-link-wrap">
               <text class="team-link" hover-class="tap-chip-hover" data-team-id="{{item.team_id}}" bindtap="openTeam">{{item.team_name || "未绑定战队"}} ›</text>
-              <text class="group-badge {{item.groupClass}}" wx:if="{{item.regular_season_group}}">{{item.regular_season_group}}</text>
+              <text class="group-badge {{badge.className}}" wx:for="{{item.badges}}" wx:for-item="badge" wx:key="text">{{badge.text}}</text>
             </view>
             <text wx:if="{{item.stance}}">站边：{{item.stance}}</text>
           </view>

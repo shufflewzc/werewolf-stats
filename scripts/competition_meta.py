@@ -13,6 +13,12 @@ from generate_stats import (
     list_seasons as stats_list_seasons,
 )
 from sqlite_store import load_meta_value, save_meta_value
+from season_policy import (
+    default_season_policy,
+    legacy_policy_for_scope,
+    merge_season_policies,
+    normalize_season_policy,
+)
 from web_config import STAGE_OPTIONS
 
 
@@ -347,6 +353,7 @@ def normalize_series_catalog_entry(entry: dict[str, Any]) -> dict[str, Any] | No
         "hero_note": hero_note,
         "participation_mode": participation_mode,
         "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule")),
+        "season_policy": normalize_season_policy(entry.get("season_policy")),
         "active": bool(entry.get("active", True)),
         "created_by": str(entry.get("created_by") or "system").strip() or "system",
         "created_on": str(entry.get("created_on") or china_today_label()).strip()
@@ -856,6 +863,12 @@ def normalize_season_catalog_entry(
         for team_id in entry.get("registered_team_ids", [])
         if str(team_id).strip()
     ]
+    raw_season_policy = entry.get("season_policy")
+    if "season_policy" not in entry:
+        raw_season_policy = (
+            legacy_policy_for_scope(competition_name, season_name)
+            or {"inherit": True}
+        )
 
     return {
         "series_slug": series_slug,
@@ -867,6 +880,10 @@ def normalize_season_catalog_entry(
         "end_at": normalize_datetime_local_value(str(entry.get("end_at") or "")),
         "stage_windows": normalize_stage_windows(entry.get("stage_windows", [])),
         "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule"), allow_inherit=True),
+        "season_policy": normalize_season_policy(
+            raw_season_policy,
+            allow_inherit=True,
+        ),
         "participation_mode": normalize_participation_mode(
             entry.get("participation_mode"),
             allow_inherit=True,
@@ -1055,6 +1072,40 @@ def resolve_scoring_rule_for_scope(
         )
     season_rule = season_entry.get("scoring_rule") if season_entry else None
     return merge_scoring_rules(series_rule, season_rule)
+
+
+def resolve_season_policy_for_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str = "",
+) -> dict[str, Any]:
+    series_catalog = load_series_catalog(data)
+    season_catalog = load_season_catalog(data)
+    series_entry = get_series_entry_by_competition(series_catalog, competition_name)
+    series_policy = (
+        series_entry.get("season_policy")
+        if series_entry
+        else default_season_policy()
+    )
+    season_entry = None
+    if series_entry and season_name:
+        season_entry = get_season_entry(
+            season_catalog,
+            series_entry["series_slug"],
+            season_name,
+            competition_name=competition_name,
+        )
+    season_policy = season_entry.get("season_policy") if season_entry else None
+    resolved = merge_season_policies(series_policy, season_policy)
+    season_has_explicit_policy = bool(
+        isinstance(season_policy, dict)
+        and not season_policy.get("inherit", False)
+    )
+    if not season_has_explicit_policy:
+        legacy_policy = legacy_policy_for_scope(competition_name, season_name)
+        if legacy_policy and not resolved.get("stages"):
+            return legacy_policy
+    return resolved
 
 
 def resolve_participation_mode_for_scope(

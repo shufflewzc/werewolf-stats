@@ -1,6 +1,22 @@
 const { request } = require("../../utils/api");
 const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, scopeParams } = require("../../utils/scope");
 
+function decorateBadges(item) {
+  const groupLabel = item.group_label || item.regular_season_group || "";
+  const fallback = groupLabel
+    ? [{
+      text: groupLabel,
+      style: String(groupLabel).indexOf("S") === 0 ? "gold" : "blue",
+      kind: "group"
+    }]
+    : [];
+  return (Array.isArray(item.badges) && item.badges.length ? item.badges : fallback)
+    .map((badge) => ({
+      ...badge,
+      className: `is-${badge.style || "gray"}`
+    }));
+}
+
 function decorateParticipant(item) {
   const breakdown = item.breakdown || {};
   const result = String(item.result || "");
@@ -8,6 +24,7 @@ function decorateParticipant(item) {
     ...item,
     resultClass: result === "胜" ? "is-win" : (result === "负" ? "is-loss" : ""),
     groupClass: String(item.regular_season_group || "").indexOf("S") === 0 ? "is-s" : "is-f",
+    badges: decorateBadges(item),
     breakdownEntries: Object.keys(breakdown).map((label) => ({
       label,
       value: breakdown[label]
@@ -88,7 +105,8 @@ Page({
         })),
         teamScores: (payload.team_scores || []).map((item) => ({
           ...item,
-          groupClass: String(item.regular_season_group || "").indexOf("S") === 0 ? "is-s" : "is-f"
+          groupClass: String(item.regular_season_group || "").indexOf("S") === 0 ? "is-s" : "is-f",
+          badges: decorateBadges(item)
         })),
         participants: (payload.participants || []).map(decorateParticipant),
         scoreFields: payload.score_fields || [],

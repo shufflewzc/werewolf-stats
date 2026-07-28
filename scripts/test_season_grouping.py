@@ -2,6 +2,8 @@ import unittest
 from unittest.mock import patch
 
 import web_app
+import season_grouping
+from competition_meta import normalize_season_catalog_entry
 from season_grouping import (
     EXPECTED_TEAM_COUNT,
     TARGET_COMPETITION_NAME,
@@ -9,12 +11,14 @@ from season_grouping import (
     apply_placement_assignments,
     build_placement_assignment_preview,
     build_regular_season_team_leaderboards,
+    build_team_leaderboard_sections,
     get_team_regular_season_group,
     is_target_scope,
     match_group_labels,
     placement_group_for_rank,
     progress_status,
 )
+from season_policy import build_tiered_league_policy, validate_season_policy
 from web.features import match_page
 
 
@@ -309,6 +313,210 @@ class SeasonGroupingTests(unittest.TestCase):
         self.assertEqual(context["final_rows"], [])
         self.assertEqual(context["playoff_rows"], [])
         self.assertIn("不自动生成季后赛名单", context["rules"][0])
+
+    def test_non_target_season_uses_configured_groups_sections_and_badges(self):
+        competition_name = "测试城市联赛"
+        season_name = "2027测试S3"
+        policy = build_tiered_league_policy(
+            group_labels=["A1", "A2", "B1", "B2"],
+            group_size=2,
+            sections=[
+                {
+                    "key": "ELITE",
+                    "label": "精英组",
+                    "title": "精英组积分榜",
+                    "groups": ["A1", "A2"],
+                },
+                {
+                    "key": "OPEN",
+                    "label": "公开组",
+                    "title": "公开组积分榜",
+                    "groups": ["B1", "B2"],
+                },
+            ],
+            progression={
+                "ELITE": [
+                    {"from": 1, "to": 1, "status": "直通", "style": "orange"},
+                    {"from": 2, "to": 4, "status": "晋级", "style": "green"},
+                ],
+                "OPEN": [
+                    {"from": 1, "to": 2, "status": "晋级", "style": "green"},
+                    {"from": 3, "to": 4, "status": "淘汰", "style": "red"},
+                ],
+            },
+        )
+        teams = []
+        players = []
+        placement_matches = []
+        for index in range(1, 9):
+            team_id = f"custom-team-{index}"
+            player_id = f"custom-player-{index}"
+            teams.append(
+                {
+                    "team_id": team_id,
+                    "name": f"自定义战队{index}",
+                    "short_name": f"C{index}",
+                    "logo": "",
+                    "competition_name": competition_name,
+                    "season_name": season_name,
+                    "members": [player_id],
+                    "stage_groups": [],
+                }
+            )
+            players.append(
+                {
+                    "player_id": player_id,
+                    "display_name": f"自定义选手{index}",
+                    "team_id": team_id,
+                }
+            )
+            placement_matches.append(
+                {
+                    "match_id": f"custom-placement-{index}",
+                    "competition_name": competition_name,
+                    "season": season_name,
+                    "stage": "placement",
+                    "round": index,
+                    "game_no": 1,
+                    "played_on": f"2027-01-{index:02d}",
+                    "players": [
+                        {
+                            "player_id": player_id,
+                            "team_id": team_id,
+                            "points_earned": float(9 - index),
+                            "result": "win",
+                            "stance_result": "correct",
+                        }
+                    ],
+                }
+            )
+        data = {
+            "teams": teams,
+            "players": players,
+            "matches": placement_matches,
+        }
+        with patch.object(
+            season_grouping,
+            "resolve_season_policy_for_scope",
+            return_value=policy,
+        ):
+            preview = build_placement_assignment_preview(
+                data,
+                competition_name,
+                season_name,
+            )
+            self.assertTrue(preview["ready"])
+            self.assertEqual(
+                [row["proposed_group"] for row in preview["rows"]],
+                ["A1", "A1", "A2", "A2", "B1", "B1", "B2", "B2"],
+            )
+            apply_placement_assignments(
+                data,
+                preview["revision"],
+                competition_name,
+                season_name,
+            )
+            data["matches"].append(
+                {
+                    "match_id": "custom-regular",
+                    "competition_name": competition_name,
+                    "season": season_name,
+                    "stage": "regular_season",
+                    "round": 1,
+                    "game_no": 1,
+                    "played_on": "2027-02-01",
+                    "players": [
+                        {
+                            "player_id": team["members"][0],
+                            "team_id": team["team_id"],
+                            "points_earned": float(9 - index),
+                            "result": "win",
+                            "stance_result": "correct",
+                        }
+                        for index, team in enumerate(teams, start=1)
+                    ],
+                }
+            )
+            sections = build_team_leaderboard_sections(
+                data,
+                competition_name,
+                season_name,
+                "regular_season",
+            )
+        self.assertEqual(
+            [(section["key"], section["title"]) for section in sections],
+            [("ELITE", "精英组积分榜"), ("OPEN", "公开组积分榜")],
+        )
+        self.assertEqual([len(section["rows"]) for section in sections], [4, 4])
+        self.assertEqual(
+            [badge["text"] for badge in sections[0]["rows"][0]["badges"]],
+            ["A1", "直通"],
+        )
+        self.assertEqual(
+            sections[1]["rows"][2]["progress_status"],
+            "淘汰",
+        )
+
+    def test_policy_validation_rejects_overlapping_rank_ranges(self):
+        policy = build_tiered_league_policy(
+            group_labels=["A", "B"],
+            group_size=2,
+            sections=[
+                {
+                    "key": "ALL",
+                    "label": "全部",
+                    "title": "全部榜",
+                    "groups": ["A", "B"],
+                }
+            ],
+            progression={},
+        )
+        policy["stages"]["placement"]["grouping"]["ranges"][1]["from"] = 2
+        errors = validate_season_policy(policy)
+        self.assertTrue(any("被多个分组区间覆盖" in error for error in errors))
+
+    def test_tiered_policy_keeps_whitelisted_ranking_mode(self):
+        policy = build_tiered_league_policy(
+            group_labels=["A"],
+            group_size=4,
+            sections=[
+                {
+                    "key": "A",
+                    "label": "A组",
+                    "title": "A组榜",
+                    "groups": ["A"],
+                }
+            ],
+            progression={},
+            ranking_mode="win_rate",
+        )
+        self.assertEqual(
+            policy["stages"]["regular_season"]["standings"]["ranking"],
+            "win_rate",
+        )
+
+    def test_legacy_s2_catalog_entry_is_migrated_to_explicit_policy(self):
+        entry = normalize_season_catalog_entry(
+            {
+                "competition_name": TARGET_COMPETITION_NAME,
+                "season_name": TARGET_SEASON_NAME,
+            }
+        )
+        self.assertIsNotNone(entry)
+        self.assertFalse(entry["season_policy"].get("inherit", False))
+        self.assertEqual(entry["season_policy"]["preset"], "tiered_league")
+        self.assertEqual(
+            set(entry["season_policy"]["stages"]),
+            {"placement", "regular_season"},
+        )
+
+        ordinary_entry = normalize_season_catalog_entry(
+            {
+                "competition_name": "普通赛事",
+                "season_name": "普通赛季",
+            }
+        )
+        self.assertTrue(ordinary_entry["season_policy"].get("inherit"))
 
 
 if __name__ == "__main__":

@@ -4,11 +4,9 @@ import json
 
 import web_app as legacy
 from season_grouping import (
-    TARGET_COMPETITION_NAME,
-    TARGET_SEASON_NAME,
     apply_placement_assignments,
     build_placement_assignment_preview,
-    is_target_scope,
+    is_grouping_scope,
 )
 
 RequestContext = legacy.RequestContext
@@ -30,6 +28,7 @@ get_season_entries_for_series = legacy.get_season_entries_for_series
 get_season_entry = legacy.get_season_entry
 get_series_entry_by_competition = legacy.get_series_entry_by_competition
 is_admin_user = legacy.is_admin_user
+invalidate_public_api_cache = legacy.invalidate_public_api_cache
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
 load_season_catalog = legacy.load_season_catalog
@@ -54,6 +53,15 @@ save_series_catalog = legacy.save_series_catalog
 season_status_label = legacy.season_status_label
 scoring_rule_component_fields = legacy.scoring_rule_component_fields
 version_scoring_rule = legacy.version_scoring_rule
+build_tiered_league_policy = legacy.build_tiered_league_policy
+default_season_policy = legacy.default_season_policy
+get_grouping_source = legacy.get_grouping_source
+get_leaderboard_sections = legacy.get_leaderboard_sections
+merge_season_policies = legacy.merge_season_policies
+normalize_season_policy = legacy.normalize_season_policy
+resolve_season_policy_for_scope = legacy.resolve_season_policy_for_scope
+validate_season_policy = legacy.validate_season_policy
+version_season_policy = legacy.version_season_policy
 start_response_html = legacy.start_response_html
 STAGE_OPTIONS = legacy.STAGE_OPTIONS
 SCORING_RULE_COMPONENTS = legacy.SCORING_RULE_COMPONENTS
@@ -61,6 +69,9 @@ MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 MAX_SCORING_RULE_COMPONENTS = legacy.MAX_SCORING_RULE_COMPONENTS
 PARTICIPATION_MODE_INDIVIDUAL = legacy.PARTICIPATION_MODE_INDIVIDUAL
 PARTICIPATION_MODE_TEAM = legacy.PARTICIPATION_MODE_TEAM
+POLICY_PRESETS = legacy.POLICY_PRESETS
+POLICY_PRESET_STANDARD = legacy.POLICY_PRESET_STANDARD
+POLICY_PRESET_TIERED = legacy.POLICY_PRESET_TIERED
 
 RESERVED_EXCEL_SCORE_LABELS = {
     "座位号",
@@ -121,11 +132,27 @@ RESERVED_EXCEL_SCORE_LABELS = {
 }
 
 
-def render_target_grouping_panel(
+def render_grouping_panel(
     data: dict[str, object],
+    competition_name: str,
+    season_name: str,
     can_manage: bool,
 ) -> str:
-    preview = build_placement_assignment_preview(data)
+    preview = build_placement_assignment_preview(
+        data,
+        competition_name,
+        season_name,
+    )
+    if preview.get("error"):
+        return ""
+    source_stage_label = STAGE_OPTIONS.get(
+        str(preview.get("source_stage") or ""),
+        str(preview.get("source_stage") or "来源赛段"),
+    )
+    assignment_stage_label = STAGE_OPTIONS.get(
+        str(preview.get("assignment_stage") or ""),
+        str(preview.get("assignment_stage") or "目标赛段"),
+    )
     rows_html = "".join(
         f"""
         <tr>
@@ -139,7 +166,7 @@ def render_target_grouping_panel(
         for row in preview["rows"]
     )
     readiness_html = (
-        f'<div class="alert alert-success">已识别 {preview["team_count"]} 支有效定级赛战队，可以确认分组。</div>'
+        f'<div class="alert alert-success">已识别 {preview["team_count"]} 支有效{escape(source_stage_label)}战队，可以确认分组。</div>'
         if preview["ready"]
         else (
             '<div class="alert alert-warning">'
@@ -152,17 +179,17 @@ def render_target_grouping_panel(
     if can_manage and preview["ready"]:
         confirm_form = f"""
         <form method="post" action="/series-manage" class="mt-3">
-          <input type="hidden" name="action" value="apply_target_season_groups">
-          <input type="hidden" name="competition_name" value="{escape(TARGET_COMPETITION_NAME)}">
-          <input type="hidden" name="season_name" value="{escape(TARGET_SEASON_NAME)}">
+          <input type="hidden" name="action" value="apply_season_groups">
+          <input type="hidden" name="competition_name" value="{escape(competition_name)}">
+          <input type="hidden" name="season_name" value="{escape(season_name)}">
           <input type="hidden" name="assignment_revision" value="{escape(str(preview['revision']))}">
           <div class="form-check mb-3">
-            <input class="form-check-input" type="checkbox" name="confirm_grouping" value="yes" id="confirm-target-season-groups" required>
-            <label class="form-check-label" for="confirm-target-season-groups">
-              我已核对32队排名，同意固定写入本赛季常规赛分组
+            <input class="form-check-input" type="checkbox" name="confirm_grouping" value="yes" id="confirm-season-groups" required>
+            <label class="form-check-label" for="confirm-season-groups">
+              我已核对 {preview["team_count"]} 队排名，同意固定写入本赛季{escape(assignment_stage_label)}分组
             </label>
           </div>
-          <button type="submit" class="btn btn-dark" onclick="return confirm('确认按当前定级赛排名写入S1-S4、F1-F4分组吗？')">
+          <button type="submit" class="btn btn-dark" onclick="return confirm('确认按当前排行榜和赛季策略固定写入分组吗？')">
             确认并固定分组
           </button>
         </form>
@@ -173,16 +200,16 @@ def render_target_grouping_panel(
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
         <div>
-          <div class="eyebrow mb-2">S2 Placement Groups</div>
-          <h2 class="section-title mb-2">定级赛分组预览</h2>
-          <p class="section-copy mb-0">按当前战队积分榜连续分组，每4队一组；确认后固定保存，只有再次确认才会覆盖。</p>
+          <div class="eyebrow mb-2">Season Grouping Preview</div>
+          <h2 class="section-title mb-2">{escape(source_stage_label)}分组预览</h2>
+          <p class="section-copy mb-0">按照当前赛季策略和战队积分榜生成建议分组；确认后固定写入{escape(assignment_stage_label)}，只有再次确认才会覆盖。</p>
         </div>
       </div>
       {readiness_html}
       <div class="table-responsive">
         <table class="table align-middle mb-0">
-          <thead><tr><th>排名</th><th>战队</th><th>定级赛积分</th><th>当前分组</th><th>建议分组</th></tr></thead>
-          <tbody>{rows_html or '<tr><td colspan="5" class="text-secondary">暂无定级赛战队数据。</td></tr>'}</tbody>
+          <thead><tr><th>排名</th><th>战队</th><th>{escape(source_stage_label)}积分</th><th>当前分组</th><th>建议分组</th></tr></thead>
+          <tbody>{rows_html or '<tr><td colspan="5" class="text-secondary">暂无来源赛段战队数据。</td></tr>'}</tbody>
         </table>
       </div>
       {confirm_form}
@@ -394,6 +421,326 @@ def render_scoring_rule_summary(rule: dict[str, object] | None) -> str:
     <div class="small text-secondary mt-3">启用分项</div>
     <div class="fw-semibold mt-1">{escape(field_text)}</div>
     {f'<div class="small text-secondary mt-3">规则备注</div><div class="fw-semibold mt-1">{escape(notes)}</div>' if notes else ''}
+    """
+
+
+def _policy_form_values(policy: dict[str, object] | None) -> dict[str, str]:
+    normalized = normalize_season_policy(policy, allow_inherit=True)
+    if normalized.get("inherit"):
+        return {
+            "inherit": "1",
+            "preset": POLICY_PRESET_STANDARD,
+            "source_stage": "placement",
+            "target_stage": "regular_season",
+            "group_labels": "",
+            "group_size": "4",
+            "ranking": "points",
+            "sections": "",
+            "progression": "",
+            "show_source_group": "1",
+            "show_target_group": "1",
+            "show_match_groups": "1",
+        }
+    source = get_grouping_source(normalized)
+    source_stage = source[0] if source else "placement"
+    grouping = source[1] if source else {}
+    target_stage = str(grouping.get("assignment_stage") or "regular_season")
+    ranges = grouping.get("ranges", [])
+    group_labels = ",".join(str(item.get("group") or "") for item in ranges)
+    group_size = ""
+    if ranges:
+        first = ranges[0]
+        group_size = str(int(first.get("to") or 0) - int(first.get("from") or 0) + 1)
+    sections = get_leaderboard_sections(normalized, target_stage)
+    section_lines = "\n".join(
+        "|".join(
+            [
+                str(item.get("key") or ""),
+                str(item.get("label") or ""),
+                str(item.get("title") or ""),
+                ",".join(str(group) for group in item.get("groups", [])),
+            ]
+        )
+        for item in sections
+    )
+    target_config = normalized.get("stages", {}).get(target_stage, {})
+    ranking = str(
+        (target_config.get("standings") or {}).get("ranking") or "points"
+    )
+    progression_lines = "\n".join(
+        "|".join(
+            [
+                str(section_key),
+                str(band.get("from") or ""),
+                str(band.get("to") or ""),
+                str(band.get("status") or ""),
+                str(band.get("style") or "green"),
+            ]
+        )
+        for section_key, bands in (target_config.get("progression") or {}).items()
+        for band in bands
+    )
+    source_display = normalized.get("stages", {}).get(source_stage, {}).get("display", {})
+    target_display = target_config.get("display", {})
+    return {
+        "inherit": "",
+        "preset": str(normalized.get("preset") or POLICY_PRESET_STANDARD),
+        "source_stage": source_stage,
+        "target_stage": target_stage,
+        "group_labels": group_labels,
+        "group_size": group_size or "4",
+        "ranking": ranking,
+        "sections": section_lines,
+        "progression": progression_lines,
+        "show_source_group": "1" if source_display.get("show_team_group") else "",
+        "show_target_group": "1" if target_display.get("show_team_group") else "",
+        "show_match_groups": "1" if target_display.get("show_match_groups") else "",
+    }
+
+
+def collect_season_policy_from_form(
+    form: dict[str, list[str]],
+    prefix: str,
+    *,
+    allow_inherit: bool = False,
+) -> dict[str, object]:
+    if (
+        allow_inherit
+        and form_value(form, f"{prefix}_inherit").strip()
+        in {"1", "true", "on", "yes"}
+    ):
+        return {"inherit": True}
+    preset = form_value(form, f"{prefix}_preset").strip()
+    if preset not in POLICY_PRESETS:
+        preset = POLICY_PRESET_STANDARD
+    if preset != POLICY_PRESET_TIERED:
+        return default_season_policy(preset)
+    source_stage = form_value(form, f"{prefix}_source_stage").strip() or "placement"
+    target_stage = form_value(form, f"{prefix}_target_stage").strip() or "regular_season"
+    group_labels = [
+        item.strip().upper()
+        for item in form_value(form, f"{prefix}_group_labels").replace("，", ",").split(",")
+        if item.strip()
+    ]
+    try:
+        group_size = max(
+            1,
+            int(form_value(form, f"{prefix}_group_size", "4") or "4"),
+        )
+    except ValueError:
+        group_size = 0
+    sections: list[dict[str, object]] = []
+    for raw_line in form_value(form, f"{prefix}_sections").splitlines():
+        parts = [item.strip() for item in raw_line.split("|")]
+        if len(parts) != 4:
+            continue
+        key, label, title, raw_groups = parts
+        groups = [
+            item.strip().upper()
+            for item in raw_groups.replace("，", ",").split(",")
+            if item.strip()
+        ]
+        if key and groups:
+            sections.append(
+                {
+                    "key": key.upper(),
+                    "label": label or key.upper(),
+                    "title": title or f"{label or key.upper()}榜",
+                    "groups": groups,
+                }
+            )
+    progression: dict[str, list[dict[str, object]]] = {}
+    for raw_line in form_value(form, f"{prefix}_progression").splitlines():
+        parts = [item.strip() for item in raw_line.split("|")]
+        if len(parts) not in {4, 5}:
+            continue
+        section_key, raw_start, raw_end, status = parts[:4]
+        style = parts[4] if len(parts) == 5 else "green"
+        try:
+            start = int(raw_start)
+            end = int(raw_end)
+        except ValueError:
+            continue
+        if section_key and status:
+            progression.setdefault(section_key.upper(), []).append(
+                {
+                    "from": start,
+                    "to": end,
+                    "status": status,
+                    "style": style,
+                }
+            )
+    policy = build_tiered_league_policy(
+        group_labels=group_labels,
+        group_size=group_size,
+        sections=sections,
+        progression=progression,
+        source_stage=source_stage,
+        target_stage=target_stage,
+        ranking_mode=(
+            form_value(form, f"{prefix}_ranking").strip() or "points"
+        ),
+    )
+    source_display = policy["stages"][source_stage]["display"]
+    target_display = policy["stages"][target_stage]["display"]
+    source_display["show_team_group"] = (
+        form_value(form, f"{prefix}_show_source_group").strip()
+        in {"1", "true", "on", "yes"}
+    )
+    target_display["show_team_group"] = (
+        form_value(form, f"{prefix}_show_target_group").strip()
+        in {"1", "true", "on", "yes"}
+    )
+    target_display["show_match_groups"] = (
+        form_value(form, f"{prefix}_show_match_groups").strip()
+        in {"1", "true", "on", "yes"}
+    )
+    return normalize_season_policy(policy)
+
+
+def render_season_policy_summary(policy: dict[str, object] | None) -> str:
+    normalized = normalize_season_policy(policy)
+    preset = str(normalized.get("preset") or POLICY_PRESET_STANDARD)
+    preset_label = POLICY_PRESETS.get(preset, preset)
+    source = get_grouping_source(normalized)
+    grouping_text = "不自动分组"
+    if source:
+        source_stage, grouping = source
+        groups = "、".join(
+            str(item.get("group") or "")
+            for item in grouping.get("ranges", [])
+        )
+        grouping_text = (
+            f"{STAGE_OPTIONS.get(source_stage, source_stage)}排名分组 → "
+            f"{STAGE_OPTIONS.get(str(grouping.get('assignment_stage') or ''), str(grouping.get('assignment_stage') or ''))}"
+            f"（{groups}）"
+        )
+    section_parts = []
+    for stage in normalized.get("stages", {}):
+        sections = get_leaderboard_sections(normalized, stage)
+        if sections:
+            section_parts.append(
+                f"{STAGE_OPTIONS.get(stage, stage)}："
+                + " / ".join(str(item.get("label") or item.get("key")) for item in sections)
+            )
+    version = int(normalized.get("version") or 1)
+    return f"""
+    <div class="small text-secondary">赛制策略</div>
+    <div class="fw-semibold mt-1">{escape(preset_label)} · V{version}</div>
+    <div class="small text-secondary mt-3">分组方式</div>
+    <div class="fw-semibold mt-1">{escape(grouping_text)}</div>
+    <div class="small text-secondary mt-3">战队榜显示</div>
+    <div class="fw-semibold mt-1">{escape('；'.join(section_parts) or '统一战队榜')}</div>
+    """
+
+
+def render_season_policy_editor(
+    policy: dict[str, object] | None,
+    prefix: str,
+    *,
+    allow_inherit: bool = False,
+    inherited_policy: dict[str, object] | None = None,
+) -> str:
+    values = _policy_form_values(policy)
+    inherited_summary = render_season_policy_summary(inherited_policy)
+    inherit_html = ""
+    if allow_inherit:
+        inherit_html = f"""
+        <div class="col-12">
+          <div class="form-check">
+            <input class="form-check-input" id="{escape(prefix)}_inherit" name="{escape(prefix)}_inherit" type="checkbox" value="1"{' checked' if values['inherit'] else ''}>
+            <label class="form-check-label" for="{escape(prefix)}_inherit">继承系列赛默认赛制策略</label>
+          </div>
+          <div class="small text-secondary mt-2">{inherited_summary}</div>
+        </div>
+        """
+    preset_options = "".join(
+        f'<option value="{escape(key)}"{" selected" if values["preset"] == key else ""}>{escape(label)}</option>'
+        for key, label in POLICY_PRESETS.items()
+    )
+    stage_options = "".join(
+        f'<option value="{escape(key)}">{{label}}</option>'.replace(
+            "{label}",
+            escape(label),
+        )
+        for key, label in STAGE_OPTIONS.items()
+    )
+    return f"""
+    <div class="col-12" data-season-policy-editor>
+      <div class="team-link-card shadow-sm p-4">
+        <div class="mb-3">
+          <h3 class="h5 mb-1">赛制策略</h3>
+          <div class="small text-secondary">选择经过验证的预设，再填写少量分组与晋级参数；不会执行自定义脚本。</div>
+        </div>
+        <div class="row g-3">
+          {inherit_html}
+          <div class="col-12 col-md-6">
+            <label class="form-label">规则预设</label>
+            <select class="form-select" name="{escape(prefix)}_preset" data-policy-preset>{preset_options}</select>
+          </div>
+          <div class="col-12" data-tiered-policy-fields>
+            <div class="row g-3">
+              <div class="col-12 col-md-6">
+                <label class="form-label">分组来源赛段</label>
+                <select class="form-select" name="{escape(prefix)}_source_stage">{stage_options.replace(f'value="{escape(values["source_stage"])}"', f'value="{escape(values["source_stage"])}" selected')}</select>
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">分组写入及分层榜赛段</label>
+                <select class="form-select" name="{escape(prefix)}_target_stage">{stage_options.replace(f'value="{escape(values["target_stage"])}"', f'value="{escape(values["target_stage"])}" selected')}</select>
+              </div>
+              <div class="col-12 col-md-8">
+                <label class="form-label">分组名称</label>
+                <input class="form-control" name="{escape(prefix)}_group_labels" value="{escape(values['group_labels'])}" placeholder="例如 S1,S2,S3,S4,F1,F2,F3,F4">
+              </div>
+              <div class="col-12 col-md-4">
+                <label class="form-label">每组战队数</label>
+                <input class="form-control" name="{escape(prefix)}_group_size" type="number" min="1" max="64" value="{escape(values['group_size'])}">
+              </div>
+              <div class="col-12 col-md-6">
+                <label class="form-label">分层榜排名口径</label>
+                <select class="form-select" name="{escape(prefix)}_ranking">
+                  <option value="points"{" selected" if values["ranking"] == "points" else ""}>总积分优先</option>
+                  <option value="average_points"{" selected" if values["ranking"] == "average_points" else ""}>场均积分优先</option>
+                  <option value="win_rate"{" selected" if values["ranking"] == "win_rate" else ""}>胜率优先</option>
+                </select>
+              </div>
+              <div class="col-12">
+                <label class="form-label">榜单分区</label>
+                <textarea class="form-control" name="{escape(prefix)}_sections" rows="3" placeholder="每行：标识|名称|标题|包含分组&#10;S|S组|S组常规赛榜|S1,S2,S3,S4">{escape(values['sections'])}</textarea>
+              </div>
+              <div class="col-12">
+                <label class="form-label">晋级状态区间</label>
+                <textarea class="form-control" name="{escape(prefix)}_progression" rows="5" placeholder="每行：分区|起始名次|结束名次|状态|颜色&#10;S|1|2|直通|orange">{escape(values['progression'])}</textarea>
+                <div class="small text-secondary mt-2">颜色只支持 gold、blue、green、red、gray、orange。</div>
+              </div>
+              <div class="col-12 d-flex flex-wrap gap-3">
+                <div class="form-check"><input class="form-check-input" type="checkbox" name="{escape(prefix)}_show_source_group" value="1"{' checked' if values['show_source_group'] else ''}><label class="form-check-label">来源赛段战队榜显示分组</label></div>
+                <div class="form-check"><input class="form-check-input" type="checkbox" name="{escape(prefix)}_show_target_group" value="1"{' checked' if values['show_target_group'] else ''}><label class="form-check-label">目标赛段战队榜显示分组</label></div>
+                <div class="form-check"><input class="form-check-input" type="checkbox" name="{escape(prefix)}_show_match_groups" value="1"{' checked' if values['show_match_groups'] else ''}><label class="form-check-label">比赛卡片和详情显示分组</label></div>
+              </div>
+              <div class="col-12 small text-secondary">个人积分、MVP、SVP榜保持统一榜单，不附加战队分组。</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <script>
+        (function() {{
+          const editor = document.currentScript.parentElement;
+          if (!editor) return;
+          const preset = editor.querySelector("[data-policy-preset]");
+          const tiered = editor.querySelector("[data-tiered-policy-fields]");
+          const inherit = editor.querySelector("#{escape(prefix)}_inherit");
+          function refresh() {{
+            const inherited = inherit && inherit.checked;
+            tiered.style.display = !inherited && preset.value === {json.dumps(POLICY_PRESET_TIERED)} ? "" : "none";
+            preset.disabled = Boolean(inherited);
+          }}
+          preset.addEventListener("change", refresh);
+          if (inherit) inherit.addEventListener("change", refresh);
+          refresh();
+        }})();
+      </script>
+    </div>
     """
 
 
@@ -719,6 +1066,7 @@ def get_series_manage_page(
         "hero_note": "",
         "participation_mode": PARTICIPATION_MODE_TEAM,
         "scoring_rule": normalize_scoring_rule({}),
+        "season_policy": default_season_policy(),
         "scoring_template": "",
         "save_scoring_template": "",
         "scoring_template_name": "",
@@ -736,6 +1084,7 @@ def get_series_manage_page(
         "notes": "",
         "participation_mode": "inherit",
         "scoring_rule": {"inherit": True},
+        "season_policy": {"inherit": True},
         "edit_mode": requested_edit_mode,
         **build_stage_window_form_values(),
     }
@@ -753,6 +1102,9 @@ def get_series_manage_page(
                 "hero_note": selected_entry.get("hero_note", ""),
                 "participation_mode": normalize_participation_mode(selected_entry.get("participation_mode")),
                 "scoring_rule": normalize_scoring_rule(selected_entry.get("scoring_rule")),
+                "season_policy": normalize_season_policy(
+                    selected_entry.get("season_policy")
+                ),
                 "original_competition_name": selected_entry["competition_name"],
             }
         )
@@ -770,6 +1122,10 @@ def get_series_manage_page(
                     allow_inherit=True,
                 ),
                 "scoring_rule": normalize_scoring_rule(selected_season_entry.get("scoring_rule"), allow_inherit=True),
+                "season_policy": normalize_season_policy(
+                    selected_season_entry.get("season_policy"),
+                    allow_inherit=True,
+                ),
                 **build_stage_window_form_values(selected_season_entry),
             }
         )
@@ -777,6 +1133,8 @@ def get_series_manage_page(
         current_form.update(form_values)
         if "catalog_scoring_rule" in form_values:
             current_form["scoring_rule"] = form_values["catalog_scoring_rule"]
+        if "catalog_season_policy" in form_values:
+            current_form["season_policy"] = form_values["catalog_season_policy"]
         season_form.update(
             {
                 key: form_values[key]
@@ -804,6 +1162,8 @@ def get_series_manage_page(
         )
         if "season_scoring_rule" in form_values:
             season_form["scoring_rule"] = form_values["season_scoring_rule"]
+        if "season_policy" in form_values:
+            season_form["season_policy"] = form_values["season_policy"]
     editing_existing = bool(current_form["original_competition_name"])
     form_heading = "编辑赛事页信息" if editing_existing else "新建地区系列赛"
     form_copy = (
@@ -920,6 +1280,11 @@ def get_series_manage_page(
                 {render_scoring_rule_summary(selected_entry.get('scoring_rule'))}
               </div>
             </div>
+            <div class="col-12">
+              <div class="team-link-card shadow-sm p-4">
+                {render_season_policy_summary(selected_entry.get('season_policy'))}
+              </div>
+            </div>
           </div>
         </section>
         """
@@ -946,6 +1311,7 @@ def get_series_manage_page(
             <div class="col-12"><div class="team-link-card shadow-sm p-4"><div class="small text-secondary">赛季说明</div><div class="fw-semibold mt-1">{escape(selected_season_entry.get('notes') or '暂无赛季说明')}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_participation_mode_summary(merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}</div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_scoring_rule_summary(merge_scoring_rules(selected_entry.get('scoring_rule') if selected_entry else None, selected_season_entry.get('scoring_rule')))}</div></div>
+            <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_season_policy_summary(resolve_season_policy_for_scope(data, selected_competition_name, selected_season_entry['season_name']))}</div></div>
             <div class="col-12"><h3 class="h5 mb-0 mt-2">赛段设置</h3></div>
             {render_stage_window_cards(selected_season_entry, merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}
           </div>
@@ -955,9 +1321,18 @@ def get_series_manage_page(
     target_grouping_html = ""
     if (
         selected_season_entry
-        and is_target_scope(selected_competition_name, selected_season_entry["season_name"])
+        and is_grouping_scope(
+            data,
+            selected_competition_name,
+            selected_season_entry["season_name"],
+        )
     ):
-        target_grouping_html = render_target_grouping_panel(data, can_manage_selected_seasons)
+        target_grouping_html = render_grouping_panel(
+            data,
+            selected_competition_name,
+            selected_season_entry["season_name"],
+            can_manage_selected_seasons,
+        )
 
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     season_cards = []
@@ -1091,6 +1466,7 @@ def get_series_manage_page(
                         <div class="small text-secondary mt-2">个人赛允许参赛选手不填战队，并自动不进入战队榜。</div>
                       </div>
                       {render_scoring_rule_editor(season_form.get('scoring_rule'), 'season', allow_inherit=True, inherited_rule=(selected_entry or {}).get('scoring_rule'))}
+                      {render_season_policy_editor(season_form.get('season_policy'), 'season_policy', allow_inherit=True, inherited_policy=(selected_entry or {}).get('season_policy'))}
                       <div class="col-12">
                         <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mt-2">
                           <div>
@@ -1151,6 +1527,7 @@ def get_series_manage_page(
                     <div class="small text-secondary mt-2">团队赛保留战队统计；个人赛录入时战队可为空。</div>
                   </div>
                   {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog', templates=scoring_templates, selected_template_slug=current_form.get('scoring_template', ''))}
+                  {render_season_policy_editor(current_form.get('season_policy'), 'catalog_policy')}
                   <div class="col-12">
                     <div class="team-link-card shadow-sm p-4">
                       <div class="form-check">
@@ -1207,6 +1584,7 @@ def get_series_manage_page(
                     <div class="small text-secondary mt-2">团队赛保留战队统计；个人赛录入时战队可为空。</div>
                   </div>
                   {render_scoring_rule_editor(current_form.get('scoring_rule'), 'catalog', templates=scoring_templates, selected_template_slug=current_form.get('scoring_template', ''))}
+                  {render_season_policy_editor(current_form.get('season_policy'), 'catalog_policy')}
                   <div class="col-12">
                     <div class="team-link-card shadow-sm p-4">
                       <div class="form-check">
@@ -1275,14 +1653,14 @@ def handle_series_manage(ctx: RequestContext, start_response):
     catalog = load_series_catalog(data)
     season_catalog = load_season_catalog(data)
     action = form_value(ctx.form, "action").strip() or "save_catalog"
-    if action == "apply_target_season_groups":
+    if action in {"apply_season_groups", "apply_target_season_groups"}:
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season_name").strip()
-        if not is_target_scope(competition_name, season_name):
+        if not is_grouping_scope(data, competition_name, season_name):
             return start_response_html(
                 start_response,
                 "400 Bad Request",
-                get_series_manage_page(ctx, alert="定级赛自动分组只允许用于京城大师赛广州公开赛S2。"),
+                get_series_manage_page(ctx, alert="当前赛季策略没有启用按排名分组。"),
             )
         permission_guard = require_competition_season_manager(
             ctx,
@@ -1316,6 +1694,8 @@ def handle_series_manage(ctx: RequestContext, start_response):
             updated_count, revision = apply_placement_assignments(
                 data,
                 form_value(ctx.form, "assignment_revision").strip(),
+                competition_name,
+                season_name,
             )
         except ValueError as exc:
             return start_response_html(
@@ -1330,12 +1710,13 @@ def handle_series_manage(ctx: RequestContext, start_response):
                 "200 OK",
                 get_series_manage_page(page_ctx, alert="分组保存失败：" + "；".join(errors[:3])),
             )
+        invalidate_public_api_cache()
         audit_action(
             ctx,
             "season.regular_groups_apply",
             target_type="competition",
             target_id=competition_name,
-            summary=f"固定写入 {competition_name} / {season_name} 定级赛分组",
+            summary=f"固定写入 {competition_name} / {season_name} 赛季策略分组",
             metadata={
                 "competition_name": competition_name,
                 "season_name": season_name,
@@ -1361,6 +1742,11 @@ def handle_series_manage(ctx: RequestContext, start_response):
             allow_inherit=True,
         )
         season_scoring_rule = collect_scoring_rule_from_form(ctx.form, "season", allow_inherit=True)
+        season_policy = collect_season_policy_from_form(
+            ctx.form,
+            "season_policy",
+            allow_inherit=True,
+        )
         next_path = form_value(ctx.form, "next").strip()
         stage_windows = collect_stage_windows_from_form(ctx.form)
         permission_guard = require_competition_season_manager(ctx, start_response, data, competition_name, "你只能编辑自己负责地区系列赛下的赛季。")
@@ -1377,6 +1763,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
             "notes": notes,
             "participation_mode": participation_mode,
             "season_scoring_rule": season_scoring_rule,
+            "season_policy": season_policy,
             "original_competition_name": competition_name,
             "next": next_path,
             "edit_mode": edit_mode,
@@ -1389,6 +1776,8 @@ def handle_series_manage(ctx: RequestContext, start_response):
         error = legacy.validate_season_catalog_form(series_slug, season_name, start_at, end_at)
         error = error or validate_stage_windows(stage_windows)
         error = error or validate_scoring_rule_labels(season_scoring_rule)
+        policy_errors = validate_season_policy(season_policy)
+        error = error or ("；".join(policy_errors) if policy_errors else "")
         if error:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert=error, form_values=form_values))
         lookup_season_name = original_season_name or season_name
@@ -1398,12 +1787,18 @@ def handle_series_manage(ctx: RequestContext, start_response):
             existing_entry.get("scoring_rule") if existing_entry else None,
             allow_inherit=True,
         )
-        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_windows": stage_windows, "participation_mode": participation_mode, "scoring_rule": season_scoring_rule, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
+        season_policy = version_season_policy(
+            season_policy,
+            existing_entry.get("season_policy") if existing_entry else None,
+            allow_inherit=True,
+        )
+        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_windows": stage_windows, "participation_mode": participation_mode, "scoring_rule": season_scoring_rule, "season_policy": season_policy, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
         if not new_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季保存失败。", form_values=form_values))
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == series_slug and item.get("competition_name", "") == competition_name and item["season_name"] == lookup_season_name)]
         updated_catalog.append(new_entry)
         save_season_catalog(updated_catalog)
+        invalidate_public_api_cache()
         if lookup_season_name and lookup_season_name != season_name:
             for match in data["matches"]:
                 if get_match_competition_name(match) == competition_name and str(match.get("season") or "").strip() == lookup_season_name:
@@ -1416,6 +1811,23 @@ def handle_series_manage(ctx: RequestContext, start_response):
             if errors:
                 return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季改名失败：" + "；".join(errors[:3]), form_values=form_values))
             save_membership_requests(requests)
+        audit_action(
+            ctx,
+            "season.policy_save",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"保存 {competition_name} / {season_name} 赛季策略",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "policy_preset": (
+                    "inherit"
+                    if season_policy.get("inherit")
+                    else season_policy.get("preset", POLICY_PRESET_STANDARD)
+                ),
+                "policy_version": int(season_policy.get("version") or 0),
+            },
+        )
         return start_response_html(start_response, "200 OK", get_series_manage_page(RequestContext(method="GET", path=ctx.path, query={"competition_name": [competition_name], "season_name": [season_name], **({"next": [next_path]} if next_path else {})}, form={}, files={}, current_user=ctx.current_user, now_label=ctx.now_label), alert=f"{competition_name} / {season_name} 的赛季档期已保存。"))
     if action == "delete_season":
         competition_name = form_value(ctx.form, "competition_name").strip()
@@ -1431,6 +1843,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         # Persist the current series directory before deleting the last season/matches,
         # so the competition page remains visible even when its data is temporarily empty.
         save_series_catalog(catalog)
+        invalidate_public_api_cache()
         target_entry = get_season_entry(season_catalog, selected_entry["series_slug"], season_name, competition_name=competition_name)
         if not target_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="没有找到要删除的赛季。"))
@@ -1452,6 +1865,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         ]
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == selected_entry["series_slug"] and item.get("competition_name", "") == competition_name and item["season_name"] == season_name)]
         save_season_catalog(updated_catalog)
+        invalidate_public_api_cache()
         errors = save_repository_state(data, load_users())
         if errors:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="强制删除赛季失败：" + "；".join(errors[:3])))
@@ -1478,6 +1892,10 @@ def handle_series_manage(ctx: RequestContext, start_response):
         form_value(ctx.form, "participation_mode").strip()
     )
     catalog_scoring_rule = collect_scoring_rule_from_form(ctx.form, "catalog")
+    catalog_season_policy = collect_season_policy_from_form(
+        ctx.form,
+        "catalog_policy",
+    )
     selected_scoring_template = form_value(ctx.form, "catalog_scoring_template").strip()
     save_as_scoring_template = form_value(ctx.form, "save_scoring_template").strip() in {"1", "true", "on", "yes"}
     scoring_template_name = form_value(ctx.form, "scoring_template_name").strip()
@@ -1497,6 +1915,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         "hero_note": hero_note,
         "participation_mode": participation_mode,
         "catalog_scoring_rule": catalog_scoring_rule,
+        "catalog_season_policy": catalog_season_policy,
         "scoring_template": selected_scoring_template,
         "save_scoring_template": "1" if save_as_scoring_template else "",
         "scoring_template_name": scoring_template_name,
@@ -1507,6 +1926,8 @@ def handle_series_manage(ctx: RequestContext, start_response):
     }
     error = legacy.validate_series_catalog_form(series_name, region_name, competition_name)
     error = error or validate_scoring_rule_labels(catalog_scoring_rule)
+    policy_errors = validate_season_policy(catalog_season_policy)
+    error = error or ("；".join(policy_errors) if policy_errors else "")
     if save_as_scoring_template and not scoring_template_name:
         error = error or "保存为计分模板时，需要填写模板名称。"
     if not error and original_competition_name and original_competition_name != competition_name:
@@ -1526,12 +1947,32 @@ def handle_series_manage(ctx: RequestContext, start_response):
         catalog_scoring_rule,
         existing_entry.get("scoring_rule") if existing_entry else None,
     )
-    new_entry = normalize_series_catalog_entry({"series_name": series_name, "series_code": series_code, "region_name": region_name, "competition_name": competition_name, "series_slug": existing_entry["series_slug"] if existing_entry else "", "summary": summary, "page_badge": page_badge, "hero_title": hero_title, "hero_intro": hero_intro, "hero_note": hero_note, "participation_mode": participation_mode, "scoring_rule": catalog_scoring_rule, "active": True, "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
+    catalog_season_policy = version_season_policy(
+        catalog_season_policy,
+        existing_entry.get("season_policy") if existing_entry else None,
+    )
+    new_entry = normalize_series_catalog_entry({"series_name": series_name, "series_code": series_code, "region_name": region_name, "competition_name": competition_name, "series_slug": existing_entry["series_slug"] if existing_entry else "", "summary": summary, "page_badge": page_badge, "hero_title": hero_title, "hero_intro": hero_intro, "hero_note": hero_note, "participation_mode": participation_mode, "scoring_rule": catalog_scoring_rule, "season_policy": catalog_season_policy, "active": True, "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
     if not new_entry:
         return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="系列赛目录保存失败。", form_values=form_values))
     updated_catalog = [item for item in catalog if item["competition_name"] != (original_competition_name or competition_name)]
     updated_catalog.append(new_entry)
     save_series_catalog(updated_catalog)
+    invalidate_public_api_cache()
+    audit_action(
+        ctx,
+        "series.policy_save",
+        target_type="competition",
+        target_id=competition_name,
+        summary=f"保存 {competition_name} 系列赛默认策略",
+        metadata={
+            "competition_name": competition_name,
+            "policy_preset": catalog_season_policy.get(
+                "preset",
+                POLICY_PRESET_STANDARD,
+            ),
+            "policy_version": int(catalog_season_policy.get("version") or 1),
+        },
+    )
     if save_as_scoring_template:
         existing_templates = load_scoring_rule_templates()
         matching_template = next(

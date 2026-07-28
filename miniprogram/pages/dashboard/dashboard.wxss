@@ -28,7 +28,8 @@
 }
 
 .group-badge,
-.progress-badge {
+.progress-badge,
+.row-badge {
   flex: 0 0 auto;
   padding: 6rpx 12rpx;
   border-radius: 999rpx;
@@ -62,6 +63,38 @@
 .progress-badge.is-eliminated {
   color: #991b1b;
   background: #fee2e2;
+}
+
+.row-badge.is-gold {
+  color: #92400e;
+  background: #fef3c7;
+  border: 1rpx solid #fbbf24;
+}
+
+.row-badge.is-blue {
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1rpx solid #93c5fd;
+}
+
+.row-badge.is-green {
+  color: #166534;
+  background: #dcfce7;
+}
+
+.row-badge.is-red {
+  color: #991b1b;
+  background: #fee2e2;
+}
+
+.row-badge.is-orange {
+  color: #7c2d12;
+  background: #ffedd5;
+}
+
+.row-badge.is-gray {
+  color: #475569;
+  background: #e2e8f0;
 }
 
 .day-pill {

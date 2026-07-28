@@ -4,9 +4,9 @@ import json
 
 import web_app as legacy
 from season_grouping import (
-    build_team_group_map,
-    is_target_scope as is_grouping_target_scope,
     match_group_labels,
+    match_team_group_map,
+    team_group_badge_for_stage,
 )
 
 Any = legacy.Any
@@ -1551,11 +1551,8 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
     player_lookup = {player["player_id"]: player for player in data["players"]}
     competition_name = get_match_competition_name(match)
     season_name = str(match.get("season") or "").strip()
-    target_regular_season = (
-        is_grouping_target_scope(competition_name, season_name)
-        and str(match.get("stage") or "").strip() == "regular_season"
-    )
-    team_group_map = build_team_group_map(data) if target_regular_season else {}
+    match_stage = str(match.get("stage") or "").strip()
+    team_group_map = match_team_group_map(data, match)
     regular_season_group_labels = match_group_labels(data, match)
     selected_region = form_value(ctx.query, "region").strip() or None
     selected_series_slug = form_value(ctx.query, "series").strip() or None
@@ -1600,8 +1597,19 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
                 "notes": participant.get("notes") or "",
                 "breakdown": {label: round(float(breakdown.get(field, 0.0)), 2) for field, label in score_component_fields} if show_score_breakdown else {},
         }
-        if target_regular_season:
-            participant_payload["regular_season_group"] = team_group_map.get(team_id, "")
+        group_label = team_group_map.get(team_id, "")
+        if group_label:
+            badge = team_group_badge_for_stage(
+                data,
+                competition_name,
+                season_name,
+                team_id,
+                match_stage,
+            )
+            participant_payload["group_label"] = group_label
+            participant_payload["regular_season_group"] = group_label
+            if badge:
+                participant_payload["badges"] = [badge]
         participants.append(participant_payload)
 
     def award_payload(label: str, player_id: str, empty_label: str) -> dict[str, Any]:
@@ -1635,8 +1643,19 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
             "href": build_scoped_path(f"/teams/{team_id}", competition_name, season_name, selected_region, selected_series_slug),
             "points": round(score, 2),
         }
-        if target_regular_season:
-            score_payload["regular_season_group"] = team_group_map.get(team_id, "")
+        group_label = team_group_map.get(team_id, "")
+        if group_label:
+            badge = team_group_badge_for_stage(
+                data,
+                competition_name,
+                season_name,
+                team_id,
+                match_stage,
+            )
+            score_payload["group_label"] = group_label
+            score_payload["regular_season_group"] = group_label
+            if badge:
+                score_payload["badges"] = [badge]
         scores.append(score_payload)
     edit_href = ""
     if can_manage_matches(ctx.current_user, data, competition_name):
@@ -1669,7 +1688,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         "notes": match.get("notes") or "暂无备注。",
         "show_score_breakdown": show_score_breakdown,
     }
-    if target_regular_season:
+    if regular_season_group_labels:
         match_payload["group_labels"] = regular_season_group_labels
 
     return {

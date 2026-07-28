@@ -1,4 +1,4 @@
-const { request } = require("../../utils/api");
+const { request, assetUrl } = require("../../utils/api");
 const { getRequiredScope, scopeParams } = require("../../utils/scope");
 const { apiBaseUrl } = require("../../config");
 
@@ -18,7 +18,7 @@ function loadImage(canvas, source) {
   });
 }
 
-function download(url) {
+function downloadImage(url, label = "图片") {
   return new Promise((resolve, reject) => {
     wx.downloadFile({
       url,
@@ -27,13 +27,65 @@ function download(url) {
           resolve(response.tempFilePath);
           return;
         }
-        reject(new Error("小程序码下载失败"));
+        reject(new Error(`${label}下载失败`));
       },
       fail() {
-        reject(new Error("小程序码下载失败"));
+        reject(new Error(`${label}下载失败`));
       }
     });
   });
+}
+
+function drawCircularAvatar(ctx, image, centerX, centerY, radius) {
+  const imageWidth = Number(image.width || image.naturalWidth || 0);
+  const imageHeight = Number(image.height || image.naturalHeight || 0);
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.clip();
+  if (imageWidth > 0 && imageHeight > 0) {
+    const sourceSize = Math.min(imageWidth, imageHeight);
+    const sourceX = (imageWidth - sourceSize) / 2;
+    const sourceY = (imageHeight - sourceSize) / 2;
+    ctx.drawImage(
+      image,
+      sourceX,
+      sourceY,
+      sourceSize,
+      sourceSize,
+      centerX - radius,
+      centerY - radius,
+      radius * 2,
+      radius * 2
+    );
+  } else {
+    ctx.drawImage(image, centerX - radius, centerY - radius, radius * 2, radius * 2);
+  }
+  ctx.restore();
+}
+
+function drawAvatarPlaceholder(ctx, player, centerX, centerY, radius) {
+  const playerName = String(player.name || player.display_name || "").trim();
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.fillStyle = "#211b10";
+  ctx.fill();
+  drawText(ctx, playerName.slice(0, 1) || "狼", centerX, centerY + radius * 0.28, {
+    size: Math.round(radius * 0.85),
+    color: "#d4af37",
+    weight: 700,
+    align: "center"
+  });
+  ctx.restore();
+}
+
+function drawAvatarFrame(ctx, centerX, centerY, radius) {
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
+  ctx.strokeStyle = "#d4af37";
+  ctx.lineWidth = 3;
+  ctx.stroke();
 }
 
 function drawText(ctx, text, x, y, options = {}) {
@@ -150,6 +202,7 @@ Page({
       await this.drawLandscapeCard(ctx, canvas, { player, points, winRate, mvp }, scope);
       return;
     }
+    const avatar = await this.loadPlayerAvatar(canvas, player);
     const { width: CARD_WIDTH, height: CARD_HEIGHT } = VERTICAL_CARD;
     ctx.fillStyle = "#0b0b0c";
     ctx.fillRect(0, 0, CARD_WIDTH, CARD_HEIGHT);
@@ -161,7 +214,9 @@ Page({
       ctx.beginPath(); ctx.moveTo(offset, 20); ctx.lineTo(CARD_WIDTH - 20, CARD_HEIGHT - offset); ctx.stroke();
     }
     ctx.globalAlpha = 1;
-    ctx.beginPath(); ctx.arc(120, 132, 74, 0, Math.PI * 2); ctx.stroke();
+    if (avatar) drawCircularAvatar(ctx, avatar, 120, 132, 74);
+    else drawAvatarPlaceholder(ctx, player, 120, 132, 74);
+    drawAvatarFrame(ctx, 120, 132, 74);
     drawText(ctx, player.name || player.display_name || this.playerId, 220, 115, { size: 44, weight: 700 });
     if (player.is_star_player) drawStarBadge(ctx, 220, 135);
     drawText(ctx, player.team_name || "未绑定战队", 220, player.is_star_player ? 205 : 162, { size: 25, color: "#d4af37" });
@@ -176,7 +231,10 @@ Page({
     });
     this.drawAchievements(ctx, 50, 792, 380);
     try {
-      const qrPath = await download(`${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?player_id=${encodeURIComponent(this.playerId)}`);
+      const qrPath = await downloadImage(
+        `${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?player_id=${encodeURIComponent(this.playerId)}`,
+        "小程序码"
+      );
       const qr = await loadImage(canvas, qrPath);
       ctx.fillStyle = "#ffffff"; ctx.fillRect(470, 804, 172, 172);
       ctx.drawImage(qr, 482, 816, 148, 148);
@@ -185,6 +243,21 @@ Page({
     }
     drawText(ctx, scope.competition, 50, 920, { size: 23, color: "#b8a77a" });
     drawText(ctx, scope.season || "当前赛季", 50, 956, { size: 23, color: "#b8a77a" });
+  },
+
+  async loadPlayerAvatar(canvas, player) {
+    const photoUrl = assetUrl(player.photo);
+    if (!photoUrl) {
+      return null;
+    }
+    try {
+      const photoPath = /^https?:\/\//i.test(photoUrl)
+        ? await downloadImage(photoUrl, "选手头像")
+        : photoUrl;
+      return await loadImage(canvas, photoPath);
+    } catch (error) {
+      return null;
+    }
   },
 
   drawAchievements(ctx, x, y, maxWidth) {
@@ -200,6 +273,7 @@ Page({
   },
 
   async drawLandscapeCard(ctx, canvas, values, scope) {
+    const avatar = await this.loadPlayerAvatar(canvas, values.player);
     const { width, height } = LANDSCAPE_CARD;
     ctx.fillStyle = "#0b0b0c";
     ctx.fillRect(0, 0, width, height);
@@ -211,7 +285,9 @@ Page({
       ctx.beginPath(); ctx.moveTo(offset, 20); ctx.lineTo(offset + height, height - 20); ctx.stroke();
     }
     ctx.globalAlpha = 1;
-    ctx.beginPath(); ctx.arc(126, 135, 76, 0, Math.PI * 2); ctx.stroke();
+    if (avatar) drawCircularAvatar(ctx, avatar, 126, 135, 76);
+    else drawAvatarPlaceholder(ctx, values.player, 126, 135, 76);
+    drawAvatarFrame(ctx, 126, 135, 76);
     drawText(ctx, values.player.name || values.player.display_name || this.playerId, 235, 116, { size: 46, weight: 700 });
     if (values.player.is_star_player) drawStarBadge(ctx, 235, 134, true);
     drawText(ctx, values.player.team_name || "未绑定战队", 235, values.player.is_star_player ? 202 : 162, { size: 25, color: "#d4af37" });
@@ -225,7 +301,10 @@ Page({
     });
     this.drawAchievements(ctx, 55, 523, 560);
     try {
-      const qrPath = await download(`${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?player_id=${encodeURIComponent(this.playerId)}`);
+      const qrPath = await downloadImage(
+        `${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?player_id=${encodeURIComponent(this.playerId)}`,
+        "小程序码"
+      );
       const qr = await loadImage(canvas, qrPath);
       ctx.fillStyle = "#ffffff"; ctx.fillRect(820, 470, 164, 164);
       ctx.drawImage(qr, 832, 482, 140, 140);

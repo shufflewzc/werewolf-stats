@@ -76,7 +76,6 @@
           <text>{{insights.points_per_match || "--"}}</text>
         </view>
         <view class="bar"><view class="bar-fill alt" style="width: {{insights.points_width || 0}}%;"></view></view>
-        <text class="insight-note">{{insights.stage_summary || "暂无赛段信息"}}</text>
       </view>
     </view>
 

@@ -167,6 +167,13 @@ class SeasonGroupingTests(unittest.TestCase):
         self.assertEqual(boards["F"][1]["progress_status"], "晋级")
         self.assertEqual(boards["F"][7]["progress_status"], "晋级")
         self.assertEqual(boards["F"][8]["progress_status"], "淘汰")
+        self.assertTrue(
+            all(
+                all(badge["kind"] != "group" for badge in row["badges"])
+                for rows in boards.values()
+                for row in rows
+            )
+        )
 
     def test_progress_status_boundaries(self):
         self.assertEqual(progress_status("S", 2), "直通")
@@ -192,6 +199,12 @@ class SeasonGroupingTests(unittest.TestCase):
             TARGET_SEASON_NAME,
         )
         self.assertTrue(all(row.get("regular_season_group") for row in leaderboards["teams"]))
+        self.assertTrue(
+            all(
+                [badge["kind"] for badge in row.get("badges", [])] == ["group"]
+                for row in leaderboards["teams"]
+            )
+        )
         for board_name in ("players", "mvp", "svp"):
             self.assertTrue(
                 all("regular_season_group" not in row for row in leaderboards[board_name])

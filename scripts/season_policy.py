@@ -127,7 +127,7 @@ def build_tiered_league_policy(
 
 
 def legacy_target_season_policy() -> dict[str, Any]:
-    return build_tiered_league_policy(
+    policy = build_tiered_league_policy(
         group_labels=["S1", "S2", "S3", "S4", "F1", "F2", "F3", "F4"],
         group_size=4,
         sections=[
@@ -157,6 +157,8 @@ def legacy_target_season_policy() -> dict[str, Any]:
             ],
         },
     )
+    policy["stages"]["regular_season"]["display"]["show_team_group"] = False
+    return policy
 
 
 def legacy_policy_for_scope(

@@ -68,7 +68,7 @@ function decorateLeaderboardRows(key, rows) {
           kind: "progress"
         });
       }
-      const badges = (Array.isArray(row.badges) && row.badges.length ? row.badges : fallbackBadges)
+      const badges = (Array.isArray(row.badges) ? row.badges : fallbackBadges)
         .map((badge) => ({
           ...badge,
           className: `is-${badge.style || "gray"}`

@@ -8474,7 +8474,7 @@ def _serialize_dashboard_team_row(row: dict[str, Any]) -> dict[str, Any]:
         payload["group_label"] = group_label
     if progress_status:
         payload["progress_status"] = progress_status
-    if badges:
+    if "badges" in row:
         payload["badges"] = badges
     return payload
 

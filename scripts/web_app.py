@@ -44,6 +44,11 @@ from generate_stats import (
     list_seasons as stats_list_seasons,
     safe_rate,
 )
+from season_grouping import (
+    build_regular_season_team_leaderboards,
+    build_team_group_map,
+    is_target_scope as is_grouping_target_scope,
+)
 from competition_meta import (
     MAX_SCORING_RULE_COMPONENTS,
     PARTICIPATION_MODE_INDIVIDUAL,
@@ -8420,7 +8425,7 @@ def build_dashboard_frontend_page(ctx: RequestContext) -> str:
 
 
 def _serialize_dashboard_team_row(row: dict[str, Any]) -> dict[str, Any]:
-    return {
+    payload = {
         "rank": int(row["rank"]),
         "team_id": row["team_id"],
         "name": row["name"],
@@ -8432,6 +8437,13 @@ def _serialize_dashboard_team_row(row: dict[str, Any]) -> dict[str, Any]:
         "stance_rate": format_pct(float(row["stance_rate"])),
         "href": f'/teams/{quote(row["team_id"])}',
     }
+    regular_season_group = str(row.get("regular_season_group") or "").strip()
+    progress_status = str(row.get("progress_status") or "").strip()
+    if regular_season_group:
+        payload["regular_season_group"] = regular_season_group
+    if progress_status:
+        payload["progress_status"] = progress_status
+    return payload
 
 
 def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -8543,6 +8555,10 @@ def build_dashboard_leaderboards(
     team_rows = build_team_rows(scoped_data, selected_competition, selected_season)
     displayed_player_rows = [row for row in player_rows if row["games_played"] > 0]
     displayed_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
+    if is_grouping_target_scope(selected_competition, selected_season):
+        team_group_map = build_team_group_map(data)
+        for row in displayed_team_rows:
+            row["regular_season_group"] = team_group_map.get(str(row.get("team_id") or ""), "")
     mvp_rows = build_dashboard_award_rows(data, matches, "mvp_player_id")
     svp_rows = build_dashboard_award_rows(data, matches, "svp_player_id")
     return {
@@ -8810,6 +8826,10 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     visible_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
     displayed_player_rows = visible_player_rows or player_rows
     displayed_team_rows = visible_team_rows or team_rows
+    if is_grouping_target_scope(selected_competition, selected_season):
+        team_group_map = build_team_group_map(data)
+        for row in displayed_team_rows:
+            row["regular_season_group"] = team_group_map.get(str(row.get("team_id") or ""), "")
     scope_label = " / ".join(
         item
         for item in [
@@ -8926,6 +8946,15 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         selected_region,
         selected_series_slug,
     )
+    regular_season_team_leaderboards = None
+    if is_grouping_target_scope(selected_competition, selected_season):
+        regular_season_team_leaderboards = {
+            tier: [
+                _serialize_dashboard_team_row(row)
+                for row in rows
+            ]
+            for tier, rows in build_regular_season_team_leaderboards(data).items()
+        }
     mvp_rows = build_dashboard_award_rows(data, scoped_played_matches, "mvp_player_id")
     svp_rows = build_dashboard_award_rows(data, scoped_played_matches, "svp_player_id")
     stage_keys = list(dict.fromkeys(
@@ -9219,6 +9248,11 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
             ],
         ],
         "leaderboards_by_stage": leaderboards_by_stage,
+        **(
+            {"regular_season_team_leaderboards": regular_season_team_leaderboards}
+            if regular_season_team_leaderboards is not None
+            else {}
+        ),
         "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
         "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
         "match_days": match_days,
@@ -9484,6 +9518,15 @@ def build_dashboard_promotion_context(
         for row in regular_f_rows
         if 2 <= int(row.get("rank") or 0) <= 6
     ]
+    target_regular_status_is_display_only = is_grouping_target_scope(
+        selected_competition,
+        selected_season,
+    )
+    if target_regular_status_is_display_only:
+        # 京城 S2 的直通/晋级/淘汰仅随当前常规赛榜名次展示，
+        # 不复用历史规则自动生成季后赛或总决赛名单。
+        direct_rows = []
+        playoff_rows = []
     playoff_stage_matches = [
         match
         for match in scoped_played_matches
@@ -9609,12 +9652,17 @@ def build_dashboard_promotion_context(
         )
         for group_label, row in playoff_rows
     ]
-    return {
-        "rules": [
+    rules = (
+        ["京城大师赛 S2 的直通、晋级、淘汰仅用于常规赛战队榜展示，不自动生成季后赛名单。"]
+        if target_regular_status_is_display_only
+        else [
             "决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成。",
             "常规赛直通队伍：S组第1-2名、F组第1名。",
             "季后赛区：常规赛 S组第3-9名、F组第2-6名。",
-        ],
+        ]
+    )
+    return {
+        "rules": rules,
         "final_rows": final_rows,
         "playoff_rows": playoff_promotion_rows,
         "regular_s_rows": regular_s_rows,

@@ -42,6 +42,23 @@
   font-weight: 800;
 }
 
+.match-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+
+.match-group {
+  padding: 6rpx 12rpx;
+  border: 1rpx solid #cbd5e1;
+  border-radius: 999rpx;
+  font-size: 19rpx;
+  font-weight: 900;
+  color: #334155;
+  background: #f1f5f9;
+}
+
 .participant-row {
   display: flex;
   justify-content: space-between;

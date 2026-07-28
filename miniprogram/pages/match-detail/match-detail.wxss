@@ -4,6 +4,44 @@
   gap: 16rpx;
 }
 
+.hero-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 18rpx;
+}
+
+.hero-group {
+  padding: 8rpx 14rpx;
+  border: 1rpx solid rgba(255, 255, 255, 0.35);
+  border-radius: 999rpx;
+  font-size: 20rpx;
+  font-weight: 900;
+  color: #ffffff;
+  background: rgba(15, 23, 42, 0.32);
+}
+
+.group-badge {
+  flex: 0 0 auto;
+  padding: 6rpx 12rpx;
+  border-radius: 999rpx;
+  font-size: 19rpx;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.group-badge.is-s {
+  color: #92400e;
+  background: #fef3c7;
+  border: 1rpx solid #fbbf24;
+}
+
+.group-badge.is-f {
+  color: #1e40af;
+  background: #dbeafe;
+  border: 1rpx solid #93c5fd;
+}
+
 .award-card,
 .participant-card,
 .detail-card {
@@ -134,6 +172,13 @@
   font-size: 21rpx;
   color: #64748b;
   background: #f8fafc;
+}
+
+.team-link-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  min-width: 0;
 }
 
 .team-link {

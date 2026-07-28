@@ -197,6 +197,16 @@
           <text class="leaderboard-tab-text">{{item.label}}</text>
         </view>
       </view>
+      <view class="regular-tier-tabs" wx:if="{{targetGroupingEnabled && activeLeaderboardStage === 'regular_season' && activeLeaderboard === 'teams'}}">
+        <view
+          class="regular-tier-tab {{activeRegularSeasonTier === item.key ? 'is-active' : ''}}"
+          wx:for="{{regularSeasonTiers}}"
+          wx:key="key"
+          data-tier="{{item.key}}"
+          hover-class="tap-chip-hover"
+          bindtap="changeRegularSeasonTier"
+        >{{item.label}}常规赛榜</view>
+      </view>
       <view class="stack leaderboard-list" wx:if="{{leaderboardRows.length}}">
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>
@@ -204,6 +214,8 @@
             <view class="player-name-line">
               <text class="list-title">{{item.title}}</text>
               <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+              <text class="group-badge {{item.groupClass}}" wx:if="{{item.type === 'team' && item.regularSeasonGroup && (activeLeaderboardStage === 'placement' || activeLeaderboardStage === 'regular_season')}}">{{item.regularSeasonGroup}}</text>
+              <text class="progress-badge {{item.progressClass}}" wx:if="{{item.type === 'team' && activeLeaderboardStage === 'regular_season' && item.progressStatus}}">{{item.progressStatus}}</text>
             </view>
             <text class="list-meta">{{item.meta}}</text>
           </view>

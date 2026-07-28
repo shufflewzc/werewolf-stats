@@ -3,6 +3,9 @@
     <text class="eyebrow">{{match.competition || selectedScope.competition || "比赛详情"}}{{match.season ? " · " + match.season : ""}}</text>
     <text class="title">{{match.played_on || "单场比赛"}} · 第{{match.round || "--"}}轮第{{match.game_no || "--"}}局</text>
     <text class="copy">{{match.stage || "赛程"}} · {{match.winning_camp || "胜负待定"}}{{match.table_label ? " · " + match.table_label : ""}}</text>
+    <view class="hero-groups" wx:if="{{groupLabels.length}}">
+      <text class="hero-group" wx:for="{{groupLabels}}" wx:key="*this">{{item}}</text>
+    </view>
   </view>
 
   <view wx:if="{{loading}}" class="section">
@@ -56,7 +59,10 @@
       <view class="stack">
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{teamScores}}" wx:key="team_id" data-team-id="{{item.team_id}}" bindtap="openTeam">
           <view class="list-main">
-            <text class="list-title">{{item.team_name}}</text>
+            <view class="player-name-line">
+              <text class="list-title">{{item.team_name}}</text>
+              <text class="group-badge {{item.groupClass}}" wx:if="{{item.regular_season_group}}">{{item.regular_season_group}}</text>
+            </view>
             <text class="list-meta">点击查看战队详情</text>
           </view>
           <view class="list-score">
@@ -92,7 +98,10 @@
             </view>
           </view>
           <view class="participant-meta">
-            <text class="team-link" hover-class="tap-chip-hover" data-team-id="{{item.team_id}}" bindtap="openTeam">{{item.team_name || "未绑定战队"}} ›</text>
+            <view class="team-link-wrap">
+              <text class="team-link" hover-class="tap-chip-hover" data-team-id="{{item.team_id}}" bindtap="openTeam">{{item.team_name || "未绑定战队"}} ›</text>
+              <text class="group-badge {{item.groupClass}}" wx:if="{{item.regular_season_group}}">{{item.regular_season_group}}</text>
+            </view>
             <text wx:if="{{item.stance}}">站边：{{item.stance}}</text>
           </view>
           <view class="breakdown" wx:if="{{item.breakdownEntries.length}}">
@@ -113,7 +122,7 @@
       <view class="detail-card">
         <view class="detail-row"><text>板型</text><text>{{match.format || "未记录"}}</text></view>
         <view class="detail-row"><text>计分规则</text><text>{{match.score_model || "未记录"}} · V{{match.score_rule_version || 1}}</text></view>
-        <view class="detail-row"><text>比赛分组</text><text>{{match.group_label || "未设置"}}</text></view>
+        <view class="detail-row"><text>比赛分组</text><text>{{groupLabelsText || match.group_label || "未设置"}}</text></view>
         <view class="notes-row"><text class="notes-label">备注</text><text class="notes-copy">{{match.notes || "暂无备注。"}}</text></view>
       </view>
     </view>

@@ -3,6 +3,13 @@ from __future__ import annotations
 import json
 
 import web_app as legacy
+from season_grouping import (
+    TARGET_COMPETITION_NAME,
+    TARGET_SEASON_NAME,
+    apply_placement_assignments,
+    build_placement_assignment_preview,
+    is_target_scope,
+)
 
 RequestContext = legacy.RequestContext
 DEFAULT_REGION_NAME = legacy.DEFAULT_REGION_NAME
@@ -112,6 +119,75 @@ RESERVED_EXCEL_SCORE_LABELS = {
     "scapegoat_player_name",
     "notes",
 }
+
+
+def render_target_grouping_panel(
+    data: dict[str, object],
+    can_manage: bool,
+) -> str:
+    preview = build_placement_assignment_preview(data)
+    rows_html = "".join(
+        f"""
+        <tr>
+          <td>{int(row['rank'])}</td>
+          <td>{escape(str(row['team_name']))}</td>
+          <td>{float(row['points_total']):.2f}</td>
+          <td>{escape(str(row['current_group']) or '未确认')}</td>
+          <td><span class="chip">{escape(str(row['proposed_group']))}</span></td>
+        </tr>
+        """
+        for row in preview["rows"]
+    )
+    readiness_html = (
+        f'<div class="alert alert-success">已识别 {preview["team_count"]} 支有效定级赛战队，可以确认分组。</div>'
+        if preview["ready"]
+        else (
+            '<div class="alert alert-warning">'
+            f'必须恰好识别 {preview["expected_team_count"]} 支有效定级赛战队，'
+            f'当前为 {preview["team_count"]} 支，暂不能确认。'
+            '</div>'
+        )
+    )
+    confirm_form = ""
+    if can_manage and preview["ready"]:
+        confirm_form = f"""
+        <form method="post" action="/series-manage" class="mt-3">
+          <input type="hidden" name="action" value="apply_target_season_groups">
+          <input type="hidden" name="competition_name" value="{escape(TARGET_COMPETITION_NAME)}">
+          <input type="hidden" name="season_name" value="{escape(TARGET_SEASON_NAME)}">
+          <input type="hidden" name="assignment_revision" value="{escape(str(preview['revision']))}">
+          <div class="form-check mb-3">
+            <input class="form-check-input" type="checkbox" name="confirm_grouping" value="yes" id="confirm-target-season-groups" required>
+            <label class="form-check-label" for="confirm-target-season-groups">
+              我已核对32队排名，同意固定写入本赛季常规赛分组
+            </label>
+          </div>
+          <button type="submit" class="btn btn-dark" onclick="return confirm('确认按当前定级赛排名写入S1-S4、F1-F4分组吗？')">
+            确认并固定分组
+          </button>
+        </form>
+        """
+    elif not can_manage:
+        confirm_form = '<div class="small text-secondary mt-3">你可以查看分组预览，但没有确认写入权限。</div>'
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+        <div>
+          <div class="eyebrow mb-2">S2 Placement Groups</div>
+          <h2 class="section-title mb-2">定级赛分组预览</h2>
+          <p class="section-copy mb-0">按当前战队积分榜连续分组，每4队一组；确认后固定保存，只有再次确认才会覆盖。</p>
+        </div>
+      </div>
+      {readiness_html}
+      <div class="table-responsive">
+        <table class="table align-middle mb-0">
+          <thead><tr><th>排名</th><th>战队</th><th>定级赛积分</th><th>当前分组</th><th>建议分组</th></tr></thead>
+          <tbody>{rows_html or '<tr><td colspan="5" class="text-secondary">暂无定级赛战队数据。</td></tr>'}</tbody>
+        </table>
+      </div>
+      {confirm_form}
+    </section>
+    """
 
 
 def build_stage_window_form_values(entry: dict[str, str] | None = None) -> dict[str, str]:
@@ -876,6 +952,13 @@ def get_series_manage_page(
         </section>
         """
 
+    target_grouping_html = ""
+    if (
+        selected_season_entry
+        and is_target_scope(selected_competition_name, selected_season_entry["season_name"])
+    ):
+        target_grouping_html = render_target_grouping_panel(data, can_manage_selected_seasons)
+
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     season_cards = []
     for season_entry in competition_season_entries:
@@ -906,7 +989,7 @@ def get_series_manage_page(
 
     season_section_html = ""
     if selected_entry:
-        season_section_html = selected_season_overview_html + f"""
+        season_section_html = selected_season_overview_html + target_grouping_html + f"""
         <section class="panel shadow-sm p-3 p-lg-4 mb-4">
           <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
             <div>
@@ -1192,6 +1275,79 @@ def handle_series_manage(ctx: RequestContext, start_response):
     catalog = load_series_catalog(data)
     season_catalog = load_season_catalog(data)
     action = form_value(ctx.form, "action").strip() or "save_catalog"
+    if action == "apply_target_season_groups":
+        competition_name = form_value(ctx.form, "competition_name").strip()
+        season_name = form_value(ctx.form, "season_name").strip()
+        if not is_target_scope(competition_name, season_name):
+            return start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_series_manage_page(ctx, alert="定级赛自动分组只允许用于京城大师赛广州公开赛S2。"),
+            )
+        permission_guard = require_competition_season_manager(
+            ctx,
+            start_response,
+            data,
+            competition_name,
+            "你没有权限确认该赛季的定级赛分组。",
+        )
+        if permission_guard is not None:
+            return permission_guard
+        query = {
+            "competition_name": [competition_name],
+            "season_name": [season_name],
+        }
+        page_ctx = RequestContext(
+            method="GET",
+            path=ctx.path,
+            query=query,
+            form={},
+            files={},
+            current_user=ctx.current_user,
+            now_label=ctx.now_label,
+        )
+        if form_value(ctx.form, "confirm_grouping").strip() != "yes":
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_series_manage_page(page_ctx, alert="请先勾选确认分组。"),
+            )
+        try:
+            updated_count, revision = apply_placement_assignments(
+                data,
+                form_value(ctx.form, "assignment_revision").strip(),
+            )
+        except ValueError as exc:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_series_manage_page(page_ctx, alert=str(exc)),
+            )
+        errors = save_repository_state(data, load_users())
+        if errors:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_series_manage_page(page_ctx, alert="分组保存失败：" + "；".join(errors[:3])),
+            )
+        audit_action(
+            ctx,
+            "season.regular_groups_apply",
+            target_type="competition",
+            target_id=competition_name,
+            summary=f"固定写入 {competition_name} / {season_name} 定级赛分组",
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "updated_team_count": updated_count,
+                "assignment_revision": revision,
+            },
+        )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_series_manage_page(page_ctx, alert=f"定级赛分组已固定写入，共更新 {updated_count} 支战队。"),
+        )
     if action == "save_season":
         edit_mode = form_value(ctx.form, "edit_mode").strip() or "season"
         competition_name = form_value(ctx.form, "competition_name").strip()

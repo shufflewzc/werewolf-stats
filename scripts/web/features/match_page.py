@@ -3,6 +3,11 @@ from __future__ import annotations
 import json
 
 import web_app as legacy
+from season_grouping import (
+    build_team_group_map,
+    is_target_scope as is_grouping_target_scope,
+    match_group_labels,
+)
 
 Any = legacy.Any
 account_role_label = legacy.account_role_label
@@ -1546,6 +1551,12 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
     player_lookup = {player["player_id"]: player for player in data["players"]}
     competition_name = get_match_competition_name(match)
     season_name = str(match.get("season") or "").strip()
+    target_regular_season = (
+        is_grouping_target_scope(competition_name, season_name)
+        and str(match.get("stage") or "").strip() == "regular_season"
+    )
+    team_group_map = build_team_group_map(data) if target_regular_season else {}
+    regular_season_group_labels = match_group_labels(data, match)
     selected_region = form_value(ctx.query, "region").strip() or None
     selected_series_slug = form_value(ctx.query, "series").strip() or None
     next_path = form_value(ctx.query, "next").strip() or build_match_next_path(match)
@@ -1572,8 +1583,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         team_scores[team_id] = team_scores.get(team_id, 0.0) + float(participant.get("points_earned") or 0)
         participant_by_id[player_id] = participant
         breakdown = normalize_score_breakdown(participant) if show_score_breakdown else {}
-        participants.append(
-            {
+        participant_payload = {
                 "seat": participant.get("seat") or 0,
                 "player_id": player_id,
                 "player_name": player.get("display_name") or player_id,
@@ -1589,8 +1599,10 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
                 "points": round(float(participant.get("points_earned") or 0), 2),
                 "notes": participant.get("notes") or "",
                 "breakdown": {label: round(float(breakdown.get(field, 0.0)), 2) for field, label in score_component_fields} if show_score_breakdown else {},
-            }
-        )
+        }
+        if target_regular_season:
+            participant_payload["regular_season_group"] = team_group_map.get(team_id, "")
+        participants.append(participant_payload)
 
     def award_payload(label: str, player_id: str, empty_label: str) -> dict[str, Any]:
         player_id = str(player_id or "").strip()
@@ -1615,15 +1627,17 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         if winning_camp == "villagers"
         else award_payload("背锅", str(match.get("scapegoat_player_id") or ""), "暂未设置背锅选手"),
     ]
-    scores = [
-        {
+    scores = []
+    for team_id, score in sorted(team_scores.items(), key=lambda item: (-item[1], team_lookup.get(item[0], {}).get("name", item[0]))):
+        score_payload = {
             "team_id": team_id,
             "team_name": team_lookup.get(team_id, {}).get("name") or team_id,
             "href": build_scoped_path(f"/teams/{team_id}", competition_name, season_name, selected_region, selected_series_slug),
             "points": round(score, 2),
         }
-        for team_id, score in sorted(team_scores.items(), key=lambda item: (-item[1], team_lookup.get(item[0], {}).get("name", item[0])))
-    ]
+        if target_regular_season:
+            score_payload["regular_season_group"] = team_group_map.get(team_id, "")
+        scores.append(score_payload)
     edit_href = ""
     if can_manage_matches(ctx.current_user, data, competition_name):
         edit_href = f"/matches/{quote(match_id)}/edit?next={quote(build_scoped_path('/matches/' + match_id, competition_name, season_name))}"
@@ -1636,29 +1650,33 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         selected_series_slug,
     )
 
+    match_payload = {
+        "match_id": match_id,
+        "competition": competition_name,
+        "season": season_name,
+        "stage": STAGE_OPTIONS.get(match.get("stage"), match.get("stage") or ""),
+        "round": match.get("round") or 0,
+        "game_no": match.get("game_no") or 0,
+        "played_on": match.get("played_on") or "",
+        "day_href": build_match_day_path(match.get("played_on") or "", build_scoped_path('/matches/' + match_id, competition_name, season_name)),
+        "table_label": match.get("table_label") or "",
+        "format": match.get("format") or "",
+        "duration_minutes": match.get("duration_minutes") or 0,
+        "winning_camp": to_chinese_camp(match.get("winning_camp") or ""),
+        "group_label": match.get("group_label") or "未设置",
+        "score_model": score_model_label,
+        "score_rule_version": scoring_rule_version,
+        "notes": match.get("notes") or "暂无备注。",
+        "show_score_breakdown": show_score_breakdown,
+    }
+    if target_regular_season:
+        match_payload["group_labels"] = regular_season_group_labels
+
     return {
         "title": f"{match_id} 详情",
         "alert": form_value(ctx.query, "alert").strip(),
         "legacy_href": legacy_href,
-        "match": {
-            "match_id": match_id,
-            "competition": competition_name,
-            "season": season_name,
-            "stage": STAGE_OPTIONS.get(match.get("stage"), match.get("stage") or ""),
-            "round": match.get("round") or 0,
-            "game_no": match.get("game_no") or 0,
-            "played_on": match.get("played_on") or "",
-            "day_href": build_match_day_path(match.get("played_on") or "", build_scoped_path('/matches/' + match_id, competition_name, season_name)),
-            "table_label": match.get("table_label") or "",
-            "format": match.get("format") or "",
-            "duration_minutes": match.get("duration_minutes") or 0,
-            "winning_camp": to_chinese_camp(match.get("winning_camp") or ""),
-            "group_label": match.get("group_label") or "未设置",
-            "score_model": score_model_label,
-            "score_rule_version": scoring_rule_version,
-            "notes": match.get("notes") or "暂无备注。",
-            "show_score_breakdown": show_score_breakdown,
-        },
+        "match": match_payload,
         "actions": {
             "next_href": next_path,
             "edit_href": edit_href,
@@ -1670,7 +1688,11 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
             {"label": "房间", "value": match.get("table_label") or "-", "copy": match.get("format") or "未记录板型"},
             {"label": "时长", "value": f"{match.get('duration_minutes') or 0} 分钟", "copy": "完整比赛耗时"},
             {"label": "胜利阵营", "value": to_chinese_camp(match.get("winning_camp") or ""), "copy": "本局最终结果"},
-            {"label": "参赛分组", "value": match.get("group_label") or "未设置", "copy": "本场所属分组"},
+            {
+                "label": "参赛分组",
+                "value": " / ".join(regular_season_group_labels) if regular_season_group_labels else (match.get("group_label") or "未设置"),
+                "copy": "本场参赛战队分组" if regular_season_group_labels else "本场所属分组",
+            },
         ],
         "awards": awards,
         "team_scores": scores,

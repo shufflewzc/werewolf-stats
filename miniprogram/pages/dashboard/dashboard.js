@@ -47,9 +47,15 @@ const LEADERBOARD_TABS = [
   { key: "svp", label: "个人SVP" }
 ];
 
+const REGULAR_SEASON_TIERS = [
+  { key: "S", label: "S组" },
+  { key: "F", label: "F组" }
+];
+
 function decorateLeaderboardRows(key, rows) {
   return (rows || []).map((row) => {
     if (key === "teams") {
+      const progressStatus = row.progress_status || "";
       return {
         key: `team:${row.team_id}`,
         type: "team",
@@ -58,7 +64,13 @@ function decorateLeaderboardRows(key, rows) {
         title: row.short_name || row.name,
         meta: `胜率 ${row.win_rate} · 出赛 ${row.matches_represented} 场`,
         value: row.points_total,
-        valueLabel: "积分"
+        valueLabel: "积分",
+        regularSeasonGroup: row.regular_season_group || "",
+        groupClass: String(row.regular_season_group || "").indexOf("S") === 0 ? "is-s" : "is-f",
+        progressStatus,
+        progressClass: progressStatus === "直通"
+          ? "is-direct"
+          : (progressStatus === "晋级" ? "is-promoted" : (progressStatus === "淘汰" ? "is-eliminated" : ""))
       };
     }
     if (key === "players") {
@@ -86,6 +98,19 @@ function decorateLeaderboardRows(key, rows) {
       valueLabel: row.award_label || (key === "mvp" ? "MVP" : "SVP")
     };
   });
+}
+
+function selectedLeaderboardRows(key, stage, leaderboards, leaderboardsByStage, regularSeasonBoards, tier) {
+  const hasRegularSeasonTierBoards = regularSeasonBoards
+    && Object.prototype.hasOwnProperty.call(regularSeasonBoards, "S")
+    && Object.prototype.hasOwnProperty.call(regularSeasonBoards, "F");
+  if (key === "teams" && stage === "regular_season" && hasRegularSeasonTierBoards) {
+    return (regularSeasonBoards && regularSeasonBoards[tier]) || [];
+  }
+  const boards = stage === "all"
+    ? (leaderboards || {})
+    : ((leaderboardsByStage || {})[stage] || {});
+  return boards[key] || [];
 }
 
 async function hydrateFollowedPlayers(items, scope, options) {
@@ -139,11 +164,15 @@ Page({
     searchSearched: false,
     searchResults: [],
     leaderboardTabs: LEADERBOARD_TABS,
+    regularSeasonTiers: REGULAR_SEASON_TIERS,
     activeLeaderboard: "teams",
     leaderboardStages: [{ key: "all", label: "全部" }],
     activeLeaderboardStage: "all",
+    activeRegularSeasonTier: "S",
     leaderboards: {},
     leaderboardsByStage: {},
+    regularSeasonTeamLeaderboards: {},
+    targetGroupingEnabled: false,
     leaderboardRows: []
   },
 
@@ -192,9 +221,14 @@ Page({
           metrics: take(competitions.metrics, 4),
           competitions: (competitions.cards || []).map(decorateCompetitionChoice),
           topTeams: [],
-        topPlayers: [],
+          topPlayers: [],
           matchDays: [],
-          followedPlayers: []
+          followedPlayers: [],
+          leaderboards: {},
+          leaderboardsByStage: {},
+          regularSeasonTeamLeaderboards: {},
+          targetGroupingEnabled: false,
+          leaderboardRows: []
         });
         return;
       }
@@ -210,14 +244,17 @@ Page({
       const leaderboards = payload.leaderboards || {};
       const leaderboardStages = payload.leaderboard_stages || [{ key: "all", label: "全部" }];
       const leaderboardsByStage = payload.leaderboards_by_stage || {};
+      const regularSeasonTeamLeaderboards = payload.regular_season_team_leaderboards || {};
+      const targetGroupingEnabled = Object.prototype.hasOwnProperty.call(
+        payload,
+        "regular_season_team_leaderboards"
+      );
       const activeLeaderboard = this.data.activeLeaderboard || "teams";
       const currentStage = this.data.activeLeaderboardStage || "all";
+      const activeRegularSeasonTier = this.data.activeRegularSeasonTier === "F" ? "F" : "S";
       const activeLeaderboardStage = leaderboardStages.some((item) => item.key === currentStage)
         ? currentStage
         : "all";
-      const activeLeaderboards = activeLeaderboardStage === "all"
-        ? leaderboards
-        : (leaderboardsByStage[activeLeaderboardStage] || {});
       const matchDays = take(payload.match_days, 4);
       const latestDay = matchDays[0] || null;
       const currentUser = getCurrentUser();
@@ -285,8 +322,21 @@ Page({
         leaderboards,
         leaderboardStages,
         activeLeaderboardStage,
+        activeRegularSeasonTier,
         leaderboardsByStage,
-        leaderboardRows: decorateLeaderboardRows(activeLeaderboard, activeLeaderboards[activeLeaderboard]),
+        regularSeasonTeamLeaderboards,
+        targetGroupingEnabled,
+        leaderboardRows: decorateLeaderboardRows(
+          activeLeaderboard,
+          selectedLeaderboardRows(
+            activeLeaderboard,
+            activeLeaderboardStage,
+            leaderboards,
+            leaderboardsByStage,
+            regularSeasonTeamLeaderboards,
+            activeRegularSeasonTier
+          )
+        ),
         matchDays,
         latestDay,
         currentUser,
@@ -495,23 +545,55 @@ Page({
   changeLeaderboard(event) {
     const key = event.currentTarget.dataset.key;
     const stage = this.data.activeLeaderboardStage;
-    const leaderboards = stage === "all"
-      ? (this.data.leaderboards || {})
-      : ((this.data.leaderboardsByStage || {})[stage] || {});
     this.setData({
       activeLeaderboard: key,
-      leaderboardRows: decorateLeaderboardRows(key, leaderboards[key])
+      leaderboardRows: decorateLeaderboardRows(
+        key,
+        selectedLeaderboardRows(
+          key,
+          stage,
+          this.data.leaderboards,
+          this.data.leaderboardsByStage,
+          this.data.regularSeasonTeamLeaderboards,
+          this.data.activeRegularSeasonTier
+        )
+      )
     });
   },
 
   changeLeaderboardStage(event) {
     const stage = event.currentTarget.dataset.stage;
-    const leaderboards = stage === "all"
-      ? (this.data.leaderboards || {})
-      : ((this.data.leaderboardsByStage || {})[stage] || {});
     this.setData({
       activeLeaderboardStage: stage,
-      leaderboardRows: decorateLeaderboardRows(this.data.activeLeaderboard, leaderboards[this.data.activeLeaderboard])
+      leaderboardRows: decorateLeaderboardRows(
+        this.data.activeLeaderboard,
+        selectedLeaderboardRows(
+          this.data.activeLeaderboard,
+          stage,
+          this.data.leaderboards,
+          this.data.leaderboardsByStage,
+          this.data.regularSeasonTeamLeaderboards,
+          this.data.activeRegularSeasonTier
+        )
+      )
+    });
+  },
+
+  changeRegularSeasonTier(event) {
+    const tier = event.currentTarget.dataset.tier === "F" ? "F" : "S";
+    this.setData({
+      activeRegularSeasonTier: tier,
+      leaderboardRows: decorateLeaderboardRows(
+        "teams",
+        selectedLeaderboardRows(
+          "teams",
+          "regular_season",
+          this.data.leaderboards,
+          this.data.leaderboardsByStage,
+          this.data.regularSeasonTeamLeaderboards,
+          tier
+        )
+      )
     });
   },
 

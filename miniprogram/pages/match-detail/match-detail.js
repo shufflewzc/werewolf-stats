@@ -7,6 +7,7 @@ function decorateParticipant(item) {
   return {
     ...item,
     resultClass: result === "胜" ? "is-win" : (result === "负" ? "is-loss" : ""),
+    groupClass: String(item.regular_season_group || "").indexOf("S") === 0 ? "is-s" : "is-f",
     breakdownEntries: Object.keys(breakdown).map((label) => ({
       label,
       value: breakdown[label]
@@ -25,7 +26,9 @@ Page({
     awards: [],
     teamScores: [],
     participants: [],
-    scoreFields: []
+    scoreFields: [],
+    groupLabels: [],
+    groupLabelsText: ""
   },
 
   onLoad(options) {
@@ -83,9 +86,14 @@ Page({
           ...item,
           available: Boolean(item.player_id)
         })),
-        teamScores: payload.team_scores || [],
+        teamScores: (payload.team_scores || []).map((item) => ({
+          ...item,
+          groupClass: String(item.regular_season_group || "").indexOf("S") === 0 ? "is-s" : "is-f"
+        })),
         participants: (payload.participants || []).map(decorateParticipant),
-        scoreFields: payload.score_fields || []
+        scoreFields: payload.score_fields || [],
+        groupLabels: match.group_labels || [],
+        groupLabelsText: (match.group_labels || []).join(" / ")
       });
     } catch (error) {
       this.setData({

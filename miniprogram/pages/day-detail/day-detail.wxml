@@ -133,6 +133,9 @@
           <view class="match-card" wx:for="{{item.matches}}" wx:for-item="match" wx:key="match_id">
             <text class="match-title">{{match.stage_label}} · 第{{match.round}}轮第{{match.game_no}}局</text>
             <text class="match-meta">{{match.meta_text || "待补录"}}</text>
+            <view class="match-groups" wx:if="{{match.group_labels && match.group_labels.length}}">
+              <text class="match-group" wx:for="{{match.group_labels}}" wx:for-item="group" wx:key="*this">{{group}}</text>
+            </view>
             <view class="participant-row" wx:for="{{match.participants}}" wx:for-item="player" wx:key="seat">
               <view class="player-name-line">
                 <text>{{player.seat}}号 {{player.player_name}}</text>

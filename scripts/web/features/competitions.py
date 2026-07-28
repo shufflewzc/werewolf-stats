@@ -5,6 +5,10 @@ import json
 from datetime import datetime, date
 
 import web_app as legacy
+from season_grouping import (
+    is_target_scope as is_grouping_target_scope,
+    match_group_labels,
+)
 from ai.workflows import run_match_day_report_workflow
 from power_rating import (
     POWER_RATING_OVERRIDES_KEY,
@@ -2948,6 +2952,14 @@ def _serialize_day_match_competition_section(
         ),
     ):
         season_name = (match.get("season") or "").strip()
+        target_regular_season = (
+            is_grouping_target_scope(competition_name, season_name)
+            and str(match.get("stage") or "").strip() == "regular_season"
+        )
+        regular_season_groups = match_group_labels(
+            {"teams": list(team_lookup.values())},
+            match,
+        ) if target_regular_season else []
         detail_path = build_match_day_path(
             played_on,
             competition_name=competition_name,
@@ -3008,6 +3020,7 @@ def _serialize_day_match_competition_section(
                 "round": int(match["round"]),
                 "game_no": int(match["game_no"]),
                 "meta_text": " · ".join(meta_parts),
+                **({"group_labels": regular_season_groups} if target_regular_season else {}),
                 "detail_href": f"/matches/{match['match_id']}?next={quote(detail_path)}",
                 "participants": participants,
             }

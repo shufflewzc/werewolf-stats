@@ -202,6 +202,19 @@ Page({
     wx.navigateTo({ url: `/pages/compare/compare?type=player&left_id=${encodeURIComponent(this.data.playerId)}` });
   },
 
+  openMatch(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    if (!matchId) {
+      return;
+    }
+    wx.navigateTo({
+      url: appendScopeToPath(
+        `/pages/match-detail/match-detail?match_id=${encodeURIComponent(matchId)}`,
+        this.data.selectedScope
+      )
+    });
+  },
+
   changeCompetition() {
     goCompetitions();
   },

@@ -127,7 +127,7 @@
         <text class="section-title">最近比赛</text>
       </view>
       <view class="stack">
-        <view class="list-card match-card {{item.resultClass}}" wx:for="{{matches}}" wx:key="match_id">
+        <view class="list-card match-card tap-card {{item.resultClass}}" hover-class="tap-card-hover" wx:for="{{matches}}" wx:key="match_id" data-match-id="{{item.match_id}}" bindtap="openMatch">
           <view class="list-main">
             <text class="list-title">{{item.played_on}} · 第{{item.round}}轮第{{item.game_no}}局</text>
             <text class="list-meta">{{item.stage_label}} · {{item.result}} · {{item.identitySummaryText}}</text>
@@ -136,6 +136,7 @@
             <text class="score-value">{{item.points}}</text>
             <text class="score-label">战队分</text>
           </view>
+          <text class="tap-cue">›</text>
         </view>
       </view>
     </view>

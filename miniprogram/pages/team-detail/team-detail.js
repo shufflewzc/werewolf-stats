@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 function decorateMatch(item) {
   const isWin = item.result === "胜" || item.result === "win";
@@ -126,7 +126,25 @@ Page({
     if (!playerId) {
       return;
     }
-    wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
+    wx.navigateTo({
+      url: appendScopeToPath(
+        `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}`,
+        this.data.selectedScope
+      )
+    });
+  },
+
+  openMatch(event) {
+    const matchId = event.currentTarget.dataset.matchId;
+    if (!matchId) {
+      return;
+    }
+    wx.navigateTo({
+      url: appendScopeToPath(
+        `/pages/match-detail/match-detail?match_id=${encodeURIComponent(matchId)}`,
+        this.data.selectedScope
+      )
+    });
   },
 
   onTeamImageError() {

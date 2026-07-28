@@ -1,0 +1,229 @@
+.award-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16rpx;
+}
+
+.award-card,
+.participant-card,
+.detail-card {
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.award-card {
+  min-height: 148rpx;
+  padding: 22rpx;
+  box-sizing: border-box;
+}
+
+.award-card.is-empty {
+  background: #f8fafc;
+}
+
+.award-label,
+.award-name,
+.award-meta {
+  display: block;
+}
+
+.award-label {
+  font-size: 21rpx;
+  font-weight: 800;
+  color: #b45309;
+}
+
+.award-name {
+  margin-top: 10rpx;
+  font-size: 27rpx;
+  font-weight: 800;
+  line-height: 1.35;
+}
+
+.player-name-line .award-name {
+  margin-top: 0;
+}
+
+.award-card .player-name-line {
+  margin-top: 10rpx;
+}
+
+.award-meta {
+  margin-top: 7rpx;
+  font-size: 20rpx;
+  line-height: 1.4;
+  color: #64748b;
+}
+
+.participant-card {
+  overflow: hidden;
+  border-left: 6rpx solid #94a3b8;
+}
+
+.participant-card.is-win {
+  border-left-color: #16a34a;
+}
+
+.participant-card.is-loss {
+  border-left-color: #dc2626;
+}
+
+.participant-head {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 22rpx;
+}
+
+.participant-player {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 18rpx;
+  min-width: 0;
+  border-radius: 10rpx;
+}
+
+.seat {
+  display: flex;
+  flex: 0 0 62rpx;
+  align-items: center;
+  justify-content: center;
+  width: 62rpx;
+  height: 62rpx;
+  border-radius: 50%;
+  font-size: 22rpx;
+  font-weight: 800;
+  color: #ffffff;
+  background: #111827;
+}
+
+.participant-name-wrap {
+  flex: 1;
+  min-width: 0;
+}
+
+.participant-name {
+  font-size: 28rpx;
+  font-weight: 800;
+}
+
+.participant-role,
+.participant-notes {
+  display: block;
+  margin-top: 7rpx;
+  font-size: 21rpx;
+  line-height: 1.45;
+  color: #64748b;
+}
+
+.participant-score {
+  flex: 0 0 92rpx;
+  text-align: right;
+}
+
+.participant-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 14rpx 22rpx;
+  border-top: 1rpx solid #e2e8f0;
+  font-size: 21rpx;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.team-link {
+  max-width: 60%;
+  overflow: hidden;
+  padding: 7rpx 12rpx;
+  border-radius: 999rpx;
+  font-weight: 700;
+  color: #1d4ed8;
+  background: #dbeafe;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breakdown {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12rpx;
+  padding: 18rpx 22rpx;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.breakdown-item {
+  padding: 12rpx 8rpx;
+  border-radius: 10rpx;
+  text-align: center;
+  background: #f8fafc;
+}
+
+.breakdown-label,
+.breakdown-value {
+  display: block;
+}
+
+.breakdown-label {
+  overflow: hidden;
+  font-size: 19rpx;
+  color: #64748b;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.breakdown-value {
+  margin-top: 6rpx;
+  font-size: 24rpx;
+  font-weight: 800;
+}
+
+.participant-notes {
+  margin: 0;
+  padding: 0 22rpx 18rpx;
+}
+
+.detail-card {
+  padding: 4rpx 24rpx;
+}
+
+.detail-row,
+.notes-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 24rpx;
+  padding: 20rpx 0;
+  border-bottom: 1rpx solid #e2e8f0;
+  font-size: 23rpx;
+  color: #64748b;
+}
+
+.detail-row text:last-child {
+  text-align: right;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.notes-row {
+  display: block;
+  border-bottom: 0;
+}
+
+.notes-label,
+.notes-copy {
+  display: block;
+}
+
+.notes-label {
+  font-weight: 700;
+}
+
+.notes-copy {
+  margin-top: 10rpx;
+  line-height: 1.55;
+  color: #334155;
+}

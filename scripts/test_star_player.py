@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import web_app
 from generate_stats import build_player_rows
+from web.features import match_page
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +96,7 @@ class StarPlayerTests(unittest.TestCase):
         pages = [
             "players/players.wxml",
             "player-detail/player-detail.wxml",
+            "match-detail/match-detail.wxml",
             "dashboard/dashboard.wxml",
             "predictions/predictions.wxml",
             "day-detail/day-detail.wxml",
@@ -106,6 +108,72 @@ class StarPlayerTests(unittest.TestCase):
         for page in pages:
             content = (ROOT / "miniprogram/pages" / page).read_text(encoding="utf-8")
             self.assertIn("star-player-badge", content, page)
+
+    def test_match_detail_payload_marks_star_participants_and_awards(self):
+        data = sample_data()
+        data["matches"] = [
+            {
+                "match_id": "match-1",
+                "competition": "测试赛事",
+                "season": "S1",
+                "stage": "regular",
+                "round": 1,
+                "game_no": 1,
+                "played_on": "2026-01-01",
+                "winning_camp": "werewolves",
+                "mvp_player_id": "star",
+                "svp_player_id": "regular",
+                "players": [
+                    {
+                        "seat": 1,
+                        "player_id": "star",
+                        "team_id": "team",
+                        "role": "狼人",
+                        "camp": "werewolves",
+                        "result": "win",
+                        "points_earned": 10,
+                    },
+                    {
+                        "seat": 2,
+                        "player_id": "regular",
+                        "team_id": "team",
+                        "role": "预言家",
+                        "camp": "villagers",
+                        "result": "loss",
+                        "points_earned": 3,
+                    },
+                ],
+            }
+        ]
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/matches/match-1",
+            query={},
+            form={},
+            files={},
+            current_user=None,
+            now_label="now",
+        )
+        with (
+            patch.object(match_page, "load_validated_data", return_value=data),
+            patch.object(match_page, "build_match_score_predictions", return_value=[]),
+        ):
+            payload = match_page.build_match_api_payload(ctx, "match-1")
+
+        self.assertEqual(
+            {item["player_id"]: item["is_star_player"] for item in payload["participants"]},
+            {"star": True, "regular": False},
+        )
+        self.assertIs(payload["awards"][0]["is_star_player"], True)
+        self.assertIs(payload["awards"][1]["is_star_player"], False)
+
+    def test_recent_match_cards_open_the_match_detail_page(self):
+        for page in ["player-detail", "team-detail"]:
+            wxml = (ROOT / "miniprogram/pages" / page / f"{page}.wxml").read_text(encoding="utf-8")
+            javascript = (ROOT / "miniprogram/pages" / page / f"{page}.js").read_text(encoding="utf-8")
+            self.assertIn('bindtap="openMatch"', wxml, page)
+            self.assertIn('data-match-id="{{item.match_id}}"', wxml, page)
+            self.assertIn("/pages/match-detail/match-detail?match_id=", javascript, page)
 
 
 if __name__ == "__main__":

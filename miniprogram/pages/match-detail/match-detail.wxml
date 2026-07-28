@@ -1,0 +1,121 @@
+<view class="page">
+  <view class="hero">
+    <text class="eyebrow">{{match.competition || selectedScope.competition || "比赛详情"}}{{match.season ? " · " + match.season : ""}}</text>
+    <text class="title">{{match.played_on || "单场比赛"}} · 第{{match.round || "--"}}轮第{{match.game_no || "--"}}局</text>
+    <text class="copy">{{match.stage || "赛程"}} · {{match.winning_camp || "胜负待定"}}{{match.table_label ? " · " + match.table_label : ""}}</text>
+  </view>
+
+  <view wx:if="{{loading}}" class="section">
+    <view class="empty-card">
+      <text class="empty-title">正在加载</text>
+      <text class="empty-copy">正在读取本场比赛详情。</text>
+    </view>
+  </view>
+
+  <view wx:elif="{{error}}" class="section">
+    <view class="error-card">
+      <text>{{error}}</text>
+      <view class="button-row">
+        <button class="ghost-button" hover-class="tap-button-hover" bindtap="loadData">重新加载</button>
+      </view>
+    </view>
+  </view>
+
+  <block wx:else>
+    <view class="section" wx:if="{{metrics.length}}">
+      <view class="metrics">
+        <view class="metric-card" wx:for="{{metrics}}" wx:key="label">
+          <text class="metric-label">{{item.label}}</text>
+          <text class="metric-value">{{item.value}}</text>
+          <text class="metric-copy">{{item.copy}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section" wx:if="{{awards.length}}">
+      <view class="section-head">
+        <text class="section-title">本场奖项</text>
+      </view>
+      <view class="award-grid">
+        <view class="award-card {{item.available ? 'tap-card' : 'is-empty'}}" hover-class="{{item.available ? 'tap-card-hover' : ''}}" wx:for="{{awards}}" wx:key="label" data-player-id="{{item.player_id}}" bindtap="openPlayer">
+          <text class="award-label">{{item.label}}</text>
+          <view class="player-name-line" wx:if="{{item.available}}">
+            <text class="award-name">{{item.player_name}}</text>
+            <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+          </view>
+          <text class="award-name" wx:else>{{item.empty_label}}</text>
+          <text class="award-meta" wx:if="{{item.meta}}">{{item.meta}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section" wx:if="{{teamScores.length}}">
+      <view class="section-head">
+        <text class="section-title">战队得分</text>
+      </view>
+      <view class="stack">
+        <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{teamScores}}" wx:key="team_id" data-team-id="{{item.team_id}}" bindtap="openTeam">
+          <view class="list-main">
+            <text class="list-title">{{item.team_name}}</text>
+            <text class="list-meta">点击查看战队详情</text>
+          </view>
+          <view class="list-score">
+            <text class="score-value">{{item.points}}</text>
+            <text class="score-label">本场积分</text>
+          </view>
+          <text class="tap-cue">›</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section" wx:if="{{participants.length}}">
+      <view class="section-head">
+        <text class="section-title">参赛选手</text>
+        <text class="section-note">{{participants.length}} 人</text>
+      </view>
+      <view class="stack">
+        <view class="participant-card {{item.resultClass}}" wx:for="{{participants}}" wx:key="seat">
+          <view class="participant-head">
+            <view class="participant-player" hover-class="tap-card-hover" data-player-id="{{item.player_id}}" bindtap="openPlayer">
+              <text class="seat">{{item.seat}}号</text>
+              <view class="participant-name-wrap">
+                <view class="player-name-line">
+                  <text class="participant-name">{{item.player_name}}</text>
+                  <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
+                </view>
+                <text class="participant-role">{{item.role || "身份待补录"}} · {{item.camp || "阵营待补录"}} · {{item.result || "结果待补录"}}</text>
+              </view>
+            </view>
+            <view class="participant-score">
+              <text class="score-value">{{item.points}}</text>
+              <text class="score-label">得分</text>
+            </view>
+          </view>
+          <view class="participant-meta">
+            <text class="team-link" hover-class="tap-chip-hover" data-team-id="{{item.team_id}}" bindtap="openTeam">{{item.team_name || "未绑定战队"}} ›</text>
+            <text wx:if="{{item.stance}}">站边：{{item.stance}}</text>
+          </view>
+          <view class="breakdown" wx:if="{{item.breakdownEntries.length}}">
+            <view class="breakdown-item" wx:for="{{item.breakdownEntries}}" wx:for-item="score" wx:key="label">
+              <text class="breakdown-label">{{score.label}}</text>
+              <text class="breakdown-value">{{score.value}}</text>
+            </view>
+          </view>
+          <text class="participant-notes" wx:if="{{item.notes}}">{{item.notes}}</text>
+        </view>
+      </view>
+    </view>
+
+    <view class="section">
+      <view class="section-head">
+        <text class="section-title">比赛信息</text>
+      </view>
+      <view class="detail-card">
+        <view class="detail-row"><text>板型</text><text>{{match.format || "未记录"}}</text></view>
+        <view class="detail-row"><text>计分规则</text><text>{{match.score_model || "未记录"}} · V{{match.score_rule_version || 1}}</text></view>
+        <view class="detail-row"><text>比赛分组</text><text>{{match.group_label || "未设置"}}</text></view>
+        <view class="notes-row"><text class="notes-label">备注</text><text class="notes-copy">{{match.notes || "暂无备注。"}}</text></view>
+      </view>
+    </view>
+  </block>
+</view>

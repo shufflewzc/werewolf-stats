@@ -1577,6 +1577,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
                 "seat": participant.get("seat") or 0,
                 "player_id": player_id,
                 "player_name": player.get("display_name") or player_id,
+                "is_star_player": bool(player.get("is_star_player")),
                 "player_href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug) if has_player_profile else "",
                 "team_id": team_id,
                 "team_name": team.get("name") or team_id,
@@ -1601,6 +1602,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
             "empty_label": empty_label,
             "player_id": player_id,
             "player_name": player.get("display_name") or (player_id if player_id else ""),
+            "is_star_player": bool(player.get("is_star_player")),
             "href": build_scoped_path(f"/players/{player_id}", competition_name, season_name, selected_region, selected_series_slug) if player_id and player else "",
             "meta": " · ".join(str(part) for part in [participant.get("seat") and f"{participant.get('seat')}号", participant.get("role"), team.get("name")] if part),
         }
@@ -1609,7 +1611,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
     awards = [
         award_payload("MVP", str(match.get("mvp_player_id") or ""), "暂未设置 MVP"),
         award_payload("SVP", str(match.get("svp_player_id") or ""), "暂未设置 SVP"),
-        {"label": "背锅", "empty_label": "好人胜利局不设背锅。", "player_id": "", "player_name": "", "href": "", "meta": ""}
+        {"label": "背锅", "empty_label": "好人胜利局不设背锅。", "player_id": "", "player_name": "", "is_star_player": False, "href": "", "meta": ""}
         if winning_camp == "villagers"
         else award_payload("背锅", str(match.get("scapegoat_player_id") or ""), "暂未设置背锅选手"),
     ]

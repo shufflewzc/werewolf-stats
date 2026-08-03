@@ -1,0 +1,759 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		10499185F9027D7CDAD59E4D /* APIClientTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6EB1929FC46C5338810A138F /* APIClientTests.swift */; };
+		10C66FDFFB17DFC7DCA9CBB4 /* CacheAndURLTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 276D312DFFBF4B9EBAFF388F /* CacheAndURLTests.swift */; };
+		1471E46D750E5B121A1EDF96 /* Brand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 799C97C1B7CC2B671EB0FE12 /* Brand.swift */; };
+		1C43D3110F7DA415E8C05E2B /* GuildsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = FDE062F0313B802DD16CF180 /* GuildsView.swift */; };
+		26E2AD35D1EA35A5076A78DA /* GuildDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E890BDA312BC90DD677B3F6 /* GuildDetailView.swift */; };
+		29F0111DB630A1A65000E113 /* WerewolfStatsApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = CB0A3AF2EACD6D997544034F /* WerewolfStatsApp.swift */; };
+		2A164E4D786E874CA02AE73B /* MatchDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7498FD93F4CB83CD17AE574B /* MatchDetailView.swift */; };
+		2D693230D565426C057B32D6 /* LoopbackHTTPFixtureServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8C79E95F1AFA0E77E5F0E38E /* LoopbackHTTPFixtureServer.swift */; };
+		318902F7FCA200D69D8DB7F4 /* DayDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 969838A982AEDBCC430779AB /* DayDetailView.swift */; };
+		35C72FD2D1D5EC2303E515CA /* PlayersView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF88C3B7A0BDE924940B99E1 /* PlayersView.swift */; };
+		3A87A53A6C44A83A2D64690A /* DashboardLeaderboardTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DCF8AF414D241176E7778404 /* DashboardLeaderboardTests.swift */; };
+		3CB4762C7EF9ED585F6FEF39 /* HomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8489F850B1D4FF0DAA9D0C80 /* HomeView.swift */; };
+		54AE3FB34A708EF038F8DE9D /* TeamDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 534870DC8D1F7F3E672DA45B /* TeamDetailView.swift */; };
+		57F22CEC427E212F12907A0F /* Navigation.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1A3EB43FE29B7D3AFF783B4 /* Navigation.swift */; };
+		5B5B333195D6EFD4E1EC0354 /* CompareView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FF9E990DADD58E41CF1E945 /* CompareView.swift */; };
+		632A62074B03306B2087D73B /* APIClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62E4679597923DA974CD84BB /* APIClient.swift */; };
+		63F3EA01934D68C72B8439F6 /* CompetitionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BDD9E55502D6E2A1FFA46C6 /* CompetitionsView.swift */; };
+		6C407ACB502AC63F18836106 /* ModelAndRoutingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3368F4F6520BBD4C3801432E /* ModelAndRoutingTests.swift */; };
+		851E7610C22E7249AD3799CF /* APIModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57D9D8883D67A43893D52934 /* APIModels.swift */; };
+		8BF988FD1C40B10A60F83D56 /* PredictionsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E679451C5D060458BCB7758 /* PredictionsView.swift */; };
+		92B0EA2DA33FCC8B84DFA82F /* ResponseCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = A14901AD7A4263EAA72DF027 /* ResponseCache.swift */; };
+		9C458D9A7D2CB3237670CC21 /* HomeLeaderboardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E2EA3E3597E88AC8802F127 /* HomeLeaderboardView.swift */; };
+		A2964CF378B193D1527A8C75 /* PlayerDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5112B6522795562CA09B19F6 /* PlayerDetailView.swift */; };
+		A5C088DE27AD408E765E7519 /* HomeLeaderboardModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2F6C8B5196C8670D8F1C6621 /* HomeLeaderboardModel.swift */; };
+		CA5CB4378A91AF5861D8B746 /* WerewolfStatsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6C16500823FFD8CDD1600B17 /* WerewolfStatsUITests.swift */; };
+		D06EB2720A822612086F2E1F /* CommonViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9902FAE52AC139C0A3C82D2D /* CommonViews.swift */; };
+		D3FA76A4BDEA571C78C828CE /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = D8A25BEAD2603C8F28769FFE /* PrivacyInfo.xcprivacy */; };
+		D4AD15979AE80C450F07D1BF /* ShareCardView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40F6F0B029C5CCE030FC78CE /* ShareCardView.swift */; };
+		DDC9FCB326C4B4601D2CE4D1 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9A6A5E189C62629BB7FF56C7 /* AppState.swift */; };
+		F864182BAACB58F128E35334 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 3D4490C63BB692041A26247B /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		5EC8880E8727CF4FBD287A73 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 081A5FCEDAE99931D645A420 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1B78720D0BB25786661BA729;
+			remoteInfo = WerewolfStats;
+		};
+		E27BDFECA3520068368A73E8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 081A5FCEDAE99931D645A420 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 1B78720D0BB25786661BA729;
+			remoteInfo = WerewolfStats;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		0E890BDA312BC90DD677B3F6 /* GuildDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuildDetailView.swift; sourceTree = "<group>"; };
+		0FF9E990DADD58E41CF1E945 /* CompareView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompareView.swift; sourceTree = "<group>"; };
+		1BDD9E55502D6E2A1FFA46C6 /* CompetitionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CompetitionsView.swift; sourceTree = "<group>"; };
+		276D312DFFBF4B9EBAFF388F /* CacheAndURLTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheAndURLTests.swift; sourceTree = "<group>"; };
+		2E2EA3E3597E88AC8802F127 /* HomeLeaderboardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLeaderboardView.swift; sourceTree = "<group>"; };
+		2F6C8B5196C8670D8F1C6621 /* HomeLeaderboardModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeLeaderboardModel.swift; sourceTree = "<group>"; };
+		3368F4F6520BBD4C3801432E /* ModelAndRoutingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModelAndRoutingTests.swift; sourceTree = "<group>"; };
+		3D4490C63BB692041A26247B /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		40F6F0B029C5CCE030FC78CE /* ShareCardView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareCardView.swift; sourceTree = "<group>"; };
+		5112B6522795562CA09B19F6 /* PlayerDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayerDetailView.swift; sourceTree = "<group>"; };
+		534870DC8D1F7F3E672DA45B /* TeamDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TeamDetailView.swift; sourceTree = "<group>"; };
+		5654348F31930CDB1F4496A6 /* WerewolfStatsUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WerewolfStatsUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		57D9D8883D67A43893D52934 /* APIModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIModels.swift; sourceTree = "<group>"; };
+		62E4679597923DA974CD84BB /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
+		6C16500823FFD8CDD1600B17 /* WerewolfStatsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WerewolfStatsUITests.swift; sourceTree = "<group>"; };
+		6E679451C5D060458BCB7758 /* PredictionsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PredictionsView.swift; sourceTree = "<group>"; };
+		6EB1929FC46C5338810A138F /* APIClientTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClientTests.swift; sourceTree = "<group>"; };
+		7498FD93F4CB83CD17AE574B /* MatchDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MatchDetailView.swift; sourceTree = "<group>"; };
+		799C97C1B7CC2B671EB0FE12 /* Brand.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Brand.swift; sourceTree = "<group>"; };
+		80531C3AFC508DDB34517255 /* WerewolfStatsTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = WerewolfStatsTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		8489F850B1D4FF0DAA9D0C80 /* HomeView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HomeView.swift; sourceTree = "<group>"; };
+		8C79E95F1AFA0E77E5F0E38E /* LoopbackHTTPFixtureServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoopbackHTTPFixtureServer.swift; sourceTree = "<group>"; };
+		969838A982AEDBCC430779AB /* DayDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DayDetailView.swift; sourceTree = "<group>"; };
+		9902FAE52AC139C0A3C82D2D /* CommonViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommonViews.swift; sourceTree = "<group>"; };
+		9A6A5E189C62629BB7FF56C7 /* AppState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppState.swift; sourceTree = "<group>"; };
+		A14901AD7A4263EAA72DF027 /* ResponseCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResponseCache.swift; sourceTree = "<group>"; };
+		B1A3EB43FE29B7D3AFF783B4 /* Navigation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Navigation.swift; sourceTree = "<group>"; };
+		BF88C3B7A0BDE924940B99E1 /* PlayersView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlayersView.swift; sourceTree = "<group>"; };
+		CB0A3AF2EACD6D997544034F /* WerewolfStatsApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WerewolfStatsApp.swift; sourceTree = "<group>"; };
+		D8A25BEAD2603C8F28769FFE /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		DCF8AF414D241176E7778404 /* DashboardLeaderboardTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardLeaderboardTests.swift; sourceTree = "<group>"; };
+		F2A5ABFA24291A6EA233E5E2 /* WerewolfStats.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = WerewolfStats.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		FDE062F0313B802DD16CF180 /* GuildsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GuildsView.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		0174DB7C855134CD9D5484D8 /* Share */ = {
+			isa = PBXGroup;
+			children = (
+				40F6F0B029C5CCE030FC78CE /* ShareCardView.swift */,
+			);
+			path = Share;
+			sourceTree = "<group>";
+		};
+		07ADE00B24A2FF0F2CB4B554 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				9902FAE52AC139C0A3C82D2D /* CommonViews.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		09C48BD505C40065CBC4A546 /* Details */ = {
+			isa = PBXGroup;
+			children = (
+				969838A982AEDBCC430779AB /* DayDetailView.swift */,
+				0E890BDA312BC90DD677B3F6 /* GuildDetailView.swift */,
+				7498FD93F4CB83CD17AE574B /* MatchDetailView.swift */,
+				5112B6522795562CA09B19F6 /* PlayerDetailView.swift */,
+				534870DC8D1F7F3E672DA45B /* TeamDetailView.swift */,
+			);
+			path = Details;
+			sourceTree = "<group>";
+		};
+		15EC7D4DA7E14CA7804E2928 /* Compare */ = {
+			isa = PBXGroup;
+			children = (
+				0FF9E990DADD58E41CF1E945 /* CompareView.swift */,
+			);
+			path = Compare;
+			sourceTree = "<group>";
+		};
+		18D0A7511C97B9692463C1BA /* Players */ = {
+			isa = PBXGroup;
+			children = (
+				BF88C3B7A0BDE924940B99E1 /* PlayersView.swift */,
+			);
+			path = Players;
+			sourceTree = "<group>";
+		};
+		2E7EADDA4A05FC78549E58FD /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				799C97C1B7CC2B671EB0FE12 /* Brand.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		3EDA182F23E4F7474D58F637 /* Networking */ = {
+			isa = PBXGroup;
+			children = (
+				62E4679597923DA974CD84BB /* APIClient.swift */,
+				A14901AD7A4263EAA72DF027 /* ResponseCache.swift */,
+			);
+			path = Networking;
+			sourceTree = "<group>";
+		};
+		5579529D90E19F9D00B606C4 /* Competitions */ = {
+			isa = PBXGroup;
+			children = (
+				1BDD9E55502D6E2A1FFA46C6 /* CompetitionsView.swift */,
+			);
+			path = Competitions;
+			sourceTree = "<group>";
+		};
+		5A45D9E92D530D38CE9C5E35 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				F2A5ABFA24291A6EA233E5E2 /* WerewolfStats.app */,
+				80531C3AFC508DDB34517255 /* WerewolfStatsTests.xctest */,
+				5654348F31930CDB1F4496A6 /* WerewolfStatsUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		607065C618AEF4C07389F607 /* App */ = {
+			isa = PBXGroup;
+			children = (
+				9A6A5E189C62629BB7FF56C7 /* AppState.swift */,
+				B1A3EB43FE29B7D3AFF783B4 /* Navigation.swift */,
+				CB0A3AF2EACD6D997544034F /* WerewolfStatsApp.swift */,
+			);
+			path = App;
+			sourceTree = "<group>";
+		};
+		8785ACA04E0A47F6B42D74AE /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				57D9D8883D67A43893D52934 /* APIModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		9A34D5C60337D70BC8F475FE /* WerewolfStatsUITests */ = {
+			isa = PBXGroup;
+			children = (
+				8C79E95F1AFA0E77E5F0E38E /* LoopbackHTTPFixtureServer.swift */,
+				6C16500823FFD8CDD1600B17 /* WerewolfStatsUITests.swift */,
+			);
+			path = WerewolfStatsUITests;
+			sourceTree = "<group>";
+		};
+		B973E549AE97EC781C2620F7 /* WerewolfStats */ = {
+			isa = PBXGroup;
+			children = (
+				607065C618AEF4C07389F607 /* App */,
+				07ADE00B24A2FF0F2CB4B554 /* Components */,
+				2E7EADDA4A05FC78549E58FD /* Design */,
+				E84389A752BD0B0F3CB8B61D /* Features */,
+				8785ACA04E0A47F6B42D74AE /* Models */,
+				3EDA182F23E4F7474D58F637 /* Networking */,
+			);
+			path = WerewolfStats;
+			sourceTree = "<group>";
+		};
+		BCAACA07910E2BF905B56FB6 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				3D4490C63BB692041A26247B /* Assets.xcassets */,
+				D8A25BEAD2603C8F28769FFE /* PrivacyInfo.xcprivacy */,
+			);
+			name = Resources;
+			path = WerewolfStats/Resources;
+			sourceTree = "<group>";
+		};
+		CCB342EFD89721486373E3E3 = {
+			isa = PBXGroup;
+			children = (
+				BCAACA07910E2BF905B56FB6 /* Resources */,
+				B973E549AE97EC781C2620F7 /* WerewolfStats */,
+				F925B05F00D31B56498624CC /* WerewolfStatsTests */,
+				9A34D5C60337D70BC8F475FE /* WerewolfStatsUITests */,
+				5A45D9E92D530D38CE9C5E35 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		DCB7B3EEB7CD7F6C1F5B583E /* Guilds */ = {
+			isa = PBXGroup;
+			children = (
+				FDE062F0313B802DD16CF180 /* GuildsView.swift */,
+			);
+			path = Guilds;
+			sourceTree = "<group>";
+		};
+		E84389A752BD0B0F3CB8B61D /* Features */ = {
+			isa = PBXGroup;
+			children = (
+				15EC7D4DA7E14CA7804E2928 /* Compare */,
+				5579529D90E19F9D00B606C4 /* Competitions */,
+				09C48BD505C40065CBC4A546 /* Details */,
+				DCB7B3EEB7CD7F6C1F5B583E /* Guilds */,
+				F5FF52909FF938C5A914F116 /* Home */,
+				18D0A7511C97B9692463C1BA /* Players */,
+				F21D570277900BA4E7FD8BA4 /* Predictions */,
+				0174DB7C855134CD9D5484D8 /* Share */,
+			);
+			path = Features;
+			sourceTree = "<group>";
+		};
+		F21D570277900BA4E7FD8BA4 /* Predictions */ = {
+			isa = PBXGroup;
+			children = (
+				6E679451C5D060458BCB7758 /* PredictionsView.swift */,
+			);
+			path = Predictions;
+			sourceTree = "<group>";
+		};
+		F5FF52909FF938C5A914F116 /* Home */ = {
+			isa = PBXGroup;
+			children = (
+				2F6C8B5196C8670D8F1C6621 /* HomeLeaderboardModel.swift */,
+				2E2EA3E3597E88AC8802F127 /* HomeLeaderboardView.swift */,
+				8489F850B1D4FF0DAA9D0C80 /* HomeView.swift */,
+			);
+			path = Home;
+			sourceTree = "<group>";
+		};
+		F925B05F00D31B56498624CC /* WerewolfStatsTests */ = {
+			isa = PBXGroup;
+			children = (
+				6EB1929FC46C5338810A138F /* APIClientTests.swift */,
+				276D312DFFBF4B9EBAFF388F /* CacheAndURLTests.swift */,
+				DCF8AF414D241176E7778404 /* DashboardLeaderboardTests.swift */,
+				3368F4F6520BBD4C3801432E /* ModelAndRoutingTests.swift */,
+			);
+			path = WerewolfStatsTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1123C015450BBDDAADAB5A22 /* WerewolfStatsUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 909CCA032E41B4818DCBA0FF /* Build configuration list for PBXNativeTarget "WerewolfStatsUITests" */;
+			buildPhases = (
+				7DFC66B6326C60DA3366AF6F /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8709AF940F029C69DEF2A637 /* PBXTargetDependency */,
+			);
+			name = WerewolfStatsUITests;
+			packageProductDependencies = (
+			);
+			productName = WerewolfStatsUITests;
+			productReference = 5654348F31930CDB1F4496A6 /* WerewolfStatsUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		1B78720D0BB25786661BA729 /* WerewolfStats */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F44C8E1A3799B7E6F524589D /* Build configuration list for PBXNativeTarget "WerewolfStats" */;
+			buildPhases = (
+				3E637C64D16862857A40C17F /* Sources */,
+				C2B5172CD61AB45B645466ED /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = WerewolfStats;
+			packageProductDependencies = (
+			);
+			productName = WerewolfStats;
+			productReference = F2A5ABFA24291A6EA233E5E2 /* WerewolfStats.app */;
+			productType = "com.apple.product-type.application";
+		};
+		62C7611C8C2EBB26EF9D0013 /* WerewolfStatsTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4B6087458F78646649B65DD4 /* Build configuration list for PBXNativeTarget "WerewolfStatsTests" */;
+			buildPhases = (
+				F282C966D0419A8EF1C25186 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				892BAA877DC7979389ABBA66 /* PBXTargetDependency */,
+			);
+			name = WerewolfStatsTests;
+			packageProductDependencies = (
+			);
+			productName = WerewolfStatsTests;
+			productReference = 80531C3AFC508DDB34517255 /* WerewolfStatsTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		081A5FCEDAE99931D645A420 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					1123C015450BBDDAADAB5A22 = {
+						DevelopmentTeam = 7DSUH6B44P;
+						ProvisioningStyle = Automatic;
+						TestTargetID = 1B78720D0BB25786661BA729;
+					};
+					1B78720D0BB25786661BA729 = {
+						DevelopmentTeam = 7DSUH6B44P;
+						ProvisioningStyle = Automatic;
+					};
+					62C7611C8C2EBB26EF9D0013 = {
+						DevelopmentTeam = 7DSUH6B44P;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = 89252F58F63B9EC0C62CBDD7 /* Build configuration list for PBXProject "WerewolfStats" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = CCB342EFD89721486373E3E3;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 5A45D9E92D530D38CE9C5E35 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1B78720D0BB25786661BA729 /* WerewolfStats */,
+				62C7611C8C2EBB26EF9D0013 /* WerewolfStatsTests */,
+				1123C015450BBDDAADAB5A22 /* WerewolfStatsUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		C2B5172CD61AB45B645466ED /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F864182BAACB58F128E35334 /* Assets.xcassets in Resources */,
+				D3FA76A4BDEA571C78C828CE /* PrivacyInfo.xcprivacy in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		3E637C64D16862857A40C17F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				632A62074B03306B2087D73B /* APIClient.swift in Sources */,
+				851E7610C22E7249AD3799CF /* APIModels.swift in Sources */,
+				DDC9FCB326C4B4601D2CE4D1 /* AppState.swift in Sources */,
+				1471E46D750E5B121A1EDF96 /* Brand.swift in Sources */,
+				D06EB2720A822612086F2E1F /* CommonViews.swift in Sources */,
+				5B5B333195D6EFD4E1EC0354 /* CompareView.swift in Sources */,
+				63F3EA01934D68C72B8439F6 /* CompetitionsView.swift in Sources */,
+				318902F7FCA200D69D8DB7F4 /* DayDetailView.swift in Sources */,
+				26E2AD35D1EA35A5076A78DA /* GuildDetailView.swift in Sources */,
+				1C43D3110F7DA415E8C05E2B /* GuildsView.swift in Sources */,
+				A5C088DE27AD408E765E7519 /* HomeLeaderboardModel.swift in Sources */,
+				9C458D9A7D2CB3237670CC21 /* HomeLeaderboardView.swift in Sources */,
+				3CB4762C7EF9ED585F6FEF39 /* HomeView.swift in Sources */,
+				2A164E4D786E874CA02AE73B /* MatchDetailView.swift in Sources */,
+				57F22CEC427E212F12907A0F /* Navigation.swift in Sources */,
+				A2964CF378B193D1527A8C75 /* PlayerDetailView.swift in Sources */,
+				35C72FD2D1D5EC2303E515CA /* PlayersView.swift in Sources */,
+				8BF988FD1C40B10A60F83D56 /* PredictionsView.swift in Sources */,
+				92B0EA2DA33FCC8B84DFA82F /* ResponseCache.swift in Sources */,
+				D4AD15979AE80C450F07D1BF /* ShareCardView.swift in Sources */,
+				54AE3FB34A708EF038F8DE9D /* TeamDetailView.swift in Sources */,
+				29F0111DB630A1A65000E113 /* WerewolfStatsApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		7DFC66B6326C60DA3366AF6F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				2D693230D565426C057B32D6 /* LoopbackHTTPFixtureServer.swift in Sources */,
+				CA5CB4378A91AF5861D8B746 /* WerewolfStatsUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F282C966D0419A8EF1C25186 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				10499185F9027D7CDAD59E4D /* APIClientTests.swift in Sources */,
+				10C66FDFFB17DFC7DCA9CBB4 /* CacheAndURLTests.swift in Sources */,
+				3A87A53A6C44A83A2D64690A /* DashboardLeaderboardTests.swift in Sources */,
+				6C407ACB502AC63F18836106 /* ModelAndRoutingTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		8709AF940F029C69DEF2A637 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1B78720D0BB25786661BA729 /* WerewolfStats */;
+			targetProxy = 5EC8880E8727CF4FBD287A73 /* PBXContainerItemProxy */;
+		};
+		892BAA877DC7979389ABBA66 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 1B78720D0BB25786661BA729 /* WerewolfStats */;
+			targetProxy = E27BDFECA3520068368A73E8 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1789EE82F03553768B465758 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = WerewolfStats/Resources/WerewolfStats.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WerewolfStats/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cn.metauniverse.werewolfstats;
+				PRODUCT_MODULE_NAME = WerewolfStats;
+				PRODUCT_NAME = WerewolfStats;
+				SDKROOT = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				TARGETED_DEVICE_FAMILY = 1;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		22BF7FD1C821B7D3FCD1AE2B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cn.metauniverse.werewolfstats.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = WerewolfStats;
+			};
+			name = Release;
+		};
+		55B4B878128A963C52D3D7C0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cn.metauniverse.werewolfstats.uitests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_TARGET_NAME = WerewolfStats;
+			};
+			name = Debug;
+		};
+		8616B1E304D798BC2683B0AA /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 7DSUH6B44P;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Release;
+		};
+		9D8E91C158580AF7FD1F5F64 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cn.metauniverse.werewolfstats.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WerewolfStats.app/WerewolfStats";
+			};
+			name = Release;
+		};
+		D8DCA4221E3A040AB985C1D5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = WerewolfStats/Resources/WerewolfStats.entitlements;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = WerewolfStats/Resources/Info.plist;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cn.metauniverse.werewolfstats;
+				PRODUCT_MODULE_NAME = WerewolfStats;
+				PRODUCT_NAME = WerewolfStats;
+				SDKROOT = iphoneos;
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SUPPORTS_XR_DESIGNED_FOR_IPHONE_IPAD = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		DA960BBBEE73206A530EF2A6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				CODE_SIGN_STYLE = Automatic;
+				COPY_PHASE_STRIP = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 7DSUH6B44P;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				MARKETING_VERSION = 1.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = 1;
+			};
+			name = Debug;
+		};
+		EF38793A51597F5C95E7000E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = cn.metauniverse.werewolfstats.tests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/WerewolfStats.app/WerewolfStats";
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		4B6087458F78646649B65DD4 /* Build configuration list for PBXNativeTarget "WerewolfStatsTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				EF38793A51597F5C95E7000E /* Debug */,
+				9D8E91C158580AF7FD1F5F64 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		89252F58F63B9EC0C62CBDD7 /* Build configuration list for PBXProject "WerewolfStats" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA960BBBEE73206A530EF2A6 /* Debug */,
+				8616B1E304D798BC2683B0AA /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		909CCA032E41B4818DCBA0FF /* Build configuration list for PBXNativeTarget "WerewolfStatsUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				55B4B878128A963C52D3D7C0 /* Debug */,
+				22BF7FD1C821B7D3FCD1AE2B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		F44C8E1A3799B7E6F524589D /* Build configuration list for PBXNativeTarget "WerewolfStats" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				D8DCA4221E3A040AB985C1D5 /* Debug */,
+				1789EE82F03553768B465758 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 081A5FCEDAE99931D645A420 /* Project object */;
+}

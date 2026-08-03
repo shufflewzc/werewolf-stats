@@ -2873,6 +2873,273 @@ def start_response_json(
     return [body]
 
 
+APPLE_APP_BUNDLE_ID = "cn.metauniverse.werewolfstats"
+APPLE_APP_LINK_PATHS = (
+    "/players/*",
+    "/teams/*",
+    "/matches/*",
+    "/days/*",
+    "/competitions*",
+    "/guilds*",
+)
+
+
+def get_privacy_policy_page() -> str:
+    """Return the public Simplified Chinese privacy policy for the iOS app."""
+    return """<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#0b1730">
+    <meta name="description" content="一颗小草赛事 iOS 应用隐私政策">
+    <title>隐私政策 - 一颗小草赛事</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #071226;
+        --surface: rgba(13, 29, 57, 0.94);
+        --surface-soft: rgba(22, 42, 75, 0.72);
+        --text: #f6f2e8;
+        --muted: #bac4d6;
+        --gold: #e6c56d;
+        --line: rgba(230, 197, 109, 0.24);
+      }
+      * { box-sizing: border-box; }
+      html { scroll-behavior: smooth; }
+      body {
+        min-height: 100vh;
+        margin: 0;
+        color: var(--text);
+        font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", sans-serif;
+        line-height: 1.75;
+        background:
+          radial-gradient(circle at 88% 0%, rgba(230, 197, 109, 0.16), transparent 28rem),
+          linear-gradient(180deg, #0b1730 0%, var(--bg) 100%);
+      }
+      main {
+        width: min(100% - 32px, 840px);
+        margin: 0 auto;
+        padding: 48px 0 72px;
+      }
+      .policy-header,
+      .policy-section {
+        border: 1px solid var(--line);
+        background: var(--surface);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.22);
+      }
+      .policy-header {
+        padding: clamp(28px, 7vw, 52px);
+        border-radius: 28px;
+      }
+      .eyebrow {
+        margin: 0 0 10px;
+        color: var(--gold);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+      }
+      h1 {
+        margin: 0;
+        font-size: clamp(2rem, 7vw, 3.5rem);
+        line-height: 1.15;
+        letter-spacing: -0.04em;
+      }
+      .updated {
+        margin: 18px 0 0;
+        color: var(--muted);
+        font-size: 0.92rem;
+      }
+      .policy-section {
+        margin-top: 18px;
+        padding: clamp(22px, 5vw, 34px);
+        border-radius: 22px;
+      }
+      h2 {
+        margin: 0 0 12px;
+        color: var(--gold);
+        font-size: 1.18rem;
+      }
+      p { margin: 0 0 12px; }
+      p:last-child { margin-bottom: 0; }
+      ul { margin: 8px 0 0; padding-left: 1.25rem; }
+      li + li { margin-top: 10px; }
+      strong { color: #fff8dd; }
+      a { color: var(--gold); text-underline-offset: 3px; }
+      .notice {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border-left: 3px solid var(--gold);
+        border-radius: 12px;
+        color: var(--muted);
+        background: var(--surface-soft);
+      }
+      .back-link {
+        display: inline-flex;
+        margin-top: 24px;
+        color: var(--gold);
+        font-weight: 700;
+      }
+      @media (prefers-color-scheme: light) {
+        :root {
+          --bg: #f2f5fa;
+          --surface: rgba(255, 255, 255, 0.94);
+          --surface-soft: rgba(245, 247, 251, 0.94);
+          --text: #17233b;
+          --muted: #5f6d82;
+          --gold: #8a6416;
+          --line: rgba(138, 100, 22, 0.2);
+        }
+        body {
+          background:
+            radial-gradient(circle at 88% 0%, rgba(214, 172, 72, 0.16), transparent 28rem),
+            linear-gradient(180deg, #f9fafc 0%, var(--bg) 100%);
+        }
+        strong { color: #17233b; }
+        .policy-header, .policy-section { box-shadow: 0 24px 70px rgba(25, 38, 63, 0.08); }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <header class="policy-header">
+        <p class="eyebrow">Privacy Policy</p>
+        <h1>一颗小草赛事隐私政策</h1>
+        <p class="updated">更新日期：2026 年 8 月 3 日<br>生效日期：2026 年 8 月 3 日</p>
+      </header>
+
+      <section class="policy-section">
+        <h2>引言</h2>
+        <p>本政策适用于“一颗小草赛事”iOS 应用（Bundle ID：cn.metauniverse.werewolfstats）及其为应用提供的赛事数据服务。我们重视你的隐私，并遵循数据最小化原则处理实现功能所必需的信息。</p>
+        <p>该应用无需注册或登录即可浏览赛事数据，不使用广告标识符，不进行跨应用或跨网站跟踪，也不接入第三方广告或行为分析 SDK。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>一、我们处理的信息</h2>
+        <ul>
+          <li><strong>赛事数据请求：</strong>当你浏览赛事、战队、选手、比赛、榜单、赛程、日报或胜率预测时，应用会向 wolf.metauniverse-cn.xyz 的公开接口请求相应内容。</li>
+          <li><strong>必要的运行日志：</strong>为保障服务安全、限制异常访问和排查故障，服务器可能自动记录 IP 地址、请求时间、请求路径、响应状态、User-Agent、耗时和请求编号。这些信息不用于广告投放、用户画像或跨服务跟踪。</li>
+          <li><strong>本地偏好与缓存：</strong>你选择的赛事和赛季、关注的选手以及最近成功获取的数据会保存在设备本地，用于恢复使用状态和提供短暂的离线浏览。我们不会将本地关注列表用于账号识别。</li>
+          <li><strong>战绩卡分享：</strong>当你主动生成分享卡时，应用会使用公开的选手与赛事数据，并可根据公开的选手 ID 请求微信小程序码。只有在你主动选择分享后，内容才会交由你选择的系统分享目标处理。</li>
+        </ul>
+      </section>
+
+      <section class="policy-section">
+        <h2>二、设备权限</h2>
+        <p>只有当你主动点击保存战绩卡时，应用才会请求“添加到照片”权限，将生成的图片写入系统照片图库。应用不会读取、浏览或上传你照片图库中的其他内容。你可以随时在 iOS“设置”中关闭该权限。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>三、信息的使用目的</h2>
+        <ul>
+          <li>提供赛事、赛季、门派、战队、选手、比赛和赛程的浏览功能；</li>
+          <li>提供数据对比、胜率预测、日报和战绩卡分享功能；</li>
+          <li>保存你主动选择的本地偏好，改善加载与离线体验；</li>
+          <li>维护接口稳定性、安全性，防止滥用并排查技术故障。</li>
+        </ul>
+      </section>
+
+      <section class="policy-section">
+        <h2>四、信息共享与第三方服务</h2>
+        <p>我们不会出售或出租你的个人信息。为提供网络托管、内容分发及安全防护，必要的技术信息可能由受约束的基础设施服务提供方代为处理；法律法规、司法或行政机关依法要求时除外。</p>
+        <p>当你主动通过系统分享面板将内容发送到微信或其他第三方应用时，后续处理适用相应第三方的隐私政策。应用不会在你未操作时自动向第三方社交平台发送内容。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>五、保存、删除与用户选择</h2>
+        <p>设备本地的赛事偏好、关注列表和缓存会保留至你在应用中更改相关选择、清理应用数据或卸载应用。服务器访问日志仅在保障运行安全和排查问题所需的期限内保存，通常不超过 90 天，之后会被删除或去标识化；法律要求或安全事件处理需要延长保存的情况除外。</p>
+        <p>你可以通过下方联系方式申请查询、更正或删除与本服务相关的信息。由于应用不提供用户账号，我们可能需要你提供请求时间和请求编号等必要线索，以便定位相关记录。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>六、未成年人保护</h2>
+        <p>本应用不以收集未成年人的个人信息为目的。若监护人认为未成年人的信息被不当处理，请联系我们，我们会在核实后及时采取删除或其他必要措施。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>七、数据安全</h2>
+        <p>我们使用 HTTPS 传输、访问控制、日志清理和其他合理的技术与管理措施保护信息。互联网传输和存储无法保证绝对安全；发生可能影响你权益的安全事件时，我们将按照适用法律法规采取处置措施。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>八、政策更新</h2>
+        <p>功能、数据处理方式或法律要求发生变化时，我们可能更新本政策，并在本页面标明新的更新日期。重大变化会通过适当方式提醒用户。</p>
+      </section>
+
+      <section class="policy-section">
+        <h2>九、联系我们</h2>
+        <p>如果你对本隐私政策或数据处理方式有疑问、意见或权利请求，请通过 Telegram 联系开发者：<a href="https://t.me/cvfaker" rel="noreferrer">@cvfaker</a>。</p>
+        <p class="notice">提出删除或查询请求时，请勿主动发送身份证件、密码或其他与处理请求无关的敏感信息。</p>
+        <a class="back-link" href="/dashboard">返回一颗小草赛事数据中心</a>
+      </section>
+    </main>
+  </body>
+</html>"""
+
+
+def handle_privacy_policy(ctx, start_response):
+    if ctx.method not in {"GET", "HEAD"}:
+        return start_response_html(
+            start_response,
+            "405 Method Not Allowed",
+            "<h1>请求方式不支持</h1>",
+            headers=[("Allow", "GET, HEAD")],
+        )
+    page = get_privacy_policy_page()
+    if ctx.method == "HEAD":
+        payload_length = len(page.encode("utf-8"))
+        start_response(
+            "200 OK",
+            [
+                ("Content-Type", "text/html; charset=utf-8"),
+                ("Content-Length", str(payload_length)),
+                ("Cache-Control", "public, max-age=3600"),
+            ],
+        )
+        return [b""]
+    return start_response_html(start_response, "200 OK", page)
+
+
+def handle_apple_app_site_association(ctx, start_response):
+    """Serve the unsigned Universal Links association document at a stable URL."""
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "apple app site association only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    team_id = str(os.getenv("APPLE_APP_TEAM_ID") or "").strip()
+    if not team_id:
+        return start_response_json(
+            start_response,
+            "503 Service Unavailable",
+            {"error": "APPLE_APP_TEAM_ID is not configured"},
+        )
+    payload = {
+        "applinks": {
+            "apps": [],
+            "details": [
+                {
+                    "appID": f"{team_id}.{APPLE_APP_BUNDLE_ID}",
+                    "paths": list(APPLE_APP_LINK_PATHS),
+                }
+            ],
+        }
+    }
+    body = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    start_response(
+        "200 OK",
+        [
+            ("Content-Type", "application/json"),
+            ("Content-Length", str(len(body))),
+            ("Cache-Control", "public, max-age=3600"),
+        ],
+    )
+    return [body]
+
+
 def redirect(
     start_response,
     location: str,
@@ -18278,6 +18545,10 @@ def app(environ, start_response):
 
         if path == "/":
             return redirect(start_response, "/dashboard")
+        if path in {"/privacy", "/privacy/"}:
+            return handle_privacy_policy(ctx, start_response)
+        if path in {"/.well-known/apple-app-site-association", "/apple-app-site-association"}:
+            return handle_apple_app_site_association(ctx, start_response)
         if path == "/healthz":
             return handle_healthz(ctx, start_response)
         if path == "/readyz":

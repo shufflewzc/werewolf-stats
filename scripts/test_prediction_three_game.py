@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import unittest
 from collections import Counter, defaultdict
@@ -342,6 +343,211 @@ class ThreeGamePredictionTests(unittest.TestCase):
             self.assertIn(field, item)
         self.assertEqual(len(item["game_win_probabilities"]), 3)
         self.assertEqual(len(item["market_probabilities"]), 6)
+
+    def test_prediction_day_share_scene_is_deterministic_and_compact(self) -> None:
+        first = web_app.build_prediction_day_share_scene(
+            SEED_COMPETITION, SEED_SEASON, "2026-08-04"
+        )
+        second = web_app.build_prediction_day_share_scene(
+            SEED_COMPETITION, SEED_SEASON, "2026-08-04"
+        )
+        self.assertEqual(first, second)
+        self.assertRegex(first, r"^d1:[0-9a-f]{24}$")
+        self.assertLessEqual(len(first), 32)
+        with self.assertRaises(ValueError):
+            web_app.build_prediction_day_share_scene(
+                SEED_COMPETITION, SEED_SEASON, "2026-02-30"
+            )
+
+    def test_prediction_day_schedule_requires_same_twelve_players_three_times(self) -> None:
+        matches = [
+            {
+                "players": [
+                    {"player_id": f"player-{index}"}
+                    for index in range(1, 13)
+                ]
+            }
+            for _ in range(3)
+        ]
+        self.assertTrue(web_app.prediction_day_schedule_is_complete(matches))
+        matches[2]["players"][-1]["player_id"] = "replacement"
+        self.assertFalse(web_app.prediction_day_schedule_is_complete(matches))
+
+    def test_prediction_day_share_target_supports_published_scenario(self) -> None:
+        played_on = "2026-08-04"
+        scenario = normalize_prediction_day_scenario(
+            {
+                "competition_name": SEED_COMPETITION,
+                "season_name": SEED_SEASON,
+                "played_on": played_on,
+                "published": True,
+                "roster": self.roster,
+            }
+        )
+        key = prediction_day_scenario_key(SEED_COMPETITION, SEED_SEASON, played_on)
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios",
+            return_value={key: scenario},
+        ):
+            targets = web_app.list_prediction_day_share_targets(self.data)
+            target = next(
+                item
+                for item in targets
+                if item["competition"] == SEED_COMPETITION
+                and item["season"] == SEED_SEASON
+                and item["played_on"] == played_on
+            )
+            resolved = web_app.resolve_prediction_day_share_scene(
+                target["scene"], self.data
+            )
+        self.assertEqual(resolved["competition"], SEED_COMPETITION)
+        self.assertEqual(resolved["played_on"], played_on)
+        self.assertTrue(resolved["series"])
+
+    def test_prediction_day_share_entry_returns_exact_scope_and_day(self) -> None:
+        scene = web_app.build_prediction_day_share_scene(
+            SEED_COMPETITION, SEED_SEASON, "2026-08-04"
+        )
+        target = {
+            "scene": scene,
+            "competition": SEED_COMPETITION,
+            "season": SEED_SEASON,
+            "played_on": "2026-08-04",
+            "region": "广州",
+            "series": "jcds",
+            "seriesName": "京城大师赛",
+        }
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/miniprogram/share-entry",
+            query={"scene": [scene]},
+            form={},
+            files={},
+            current_user=None,
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        statuses = []
+        with patch(
+            "web_app.resolve_prediction_day_share_scene", return_value=target
+        ):
+            body = b"".join(
+                web_app.handle_miniprogram_share_entry(
+                    ctx, lambda status, headers: statuses.append(status)
+                )
+            )
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(statuses, ["200 OK"])
+        self.assertEqual(payload["target"], "prediction_day")
+        self.assertEqual(payload["played_on"], "2026-08-04")
+        self.assertEqual(payload["scope"]["series"], "jcds")
+
+    def test_prediction_day_share_scene_rejects_digest_collision(self) -> None:
+        scene = web_app.build_prediction_day_share_scene(
+            SEED_COMPETITION, SEED_SEASON, "2026-08-04"
+        )
+        first = {"scene": scene, "competition": "赛事甲"}
+        second = {"scene": scene, "competition": "赛事乙"}
+        with patch(
+            "web_app.list_prediction_day_share_targets",
+            return_value=[first, second],
+        ):
+            self.assertIsNone(web_app.resolve_prediction_day_share_scene(scene, {}))
+
+    def test_existing_player_share_entry_remains_compatible(self) -> None:
+        player_ids_with_matches = {
+            str(participant.get("player_id") or "")
+            for match in self.data["matches"]
+            for participant in match.get("players", [])
+            if str(participant.get("player_id") or "")
+        }
+        player_id = next(
+            player["player_id"]
+            for player in self.data["players"]
+            if player["player_id"] in player_ids_with_matches
+        )
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/miniprogram/share-entry",
+            query={"scene": [f"p:{player_id}"]},
+            form={},
+            files={},
+            current_user=None,
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        statuses = []
+        body = b"".join(
+            web_app.handle_miniprogram_share_entry(
+                ctx, lambda status, headers: statuses.append(status)
+            )
+        )
+        payload = json.loads(body.decode("utf-8"))
+        self.assertEqual(statuses, ["200 OK"])
+        self.assertEqual(payload["player_id"], player_id)
+        self.assertNotIn("target", payload)
+
+    def test_prediction_and_player_share_codes_use_separate_cache_entries(self) -> None:
+        played_on = "2026-08-04"
+        prediction_scene = web_app.build_prediction_day_share_scene(
+            SEED_COMPETITION, SEED_SEASON, played_on
+        )
+        target = {
+            "scene": prediction_scene,
+            "competition": SEED_COMPETITION,
+            "season": SEED_SEASON,
+            "played_on": played_on,
+            "region": "广州",
+            "series": "jcds",
+            "seriesName": "京城大师赛",
+        }
+        prediction_ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/miniprogram/share-code",
+            query={
+                "share_type": ["prediction_day"],
+                "competition": [SEED_COMPETITION],
+                "season": [SEED_SEASON],
+                "played_on": [played_on],
+            },
+            form={},
+            files={},
+            current_user=None,
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        player_id = self.data["players"][0]["player_id"]
+        player_ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/miniprogram/share-code",
+            query={"player_id": [player_id]},
+            form={},
+            files={},
+            current_user=None,
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        fake_png = b"\x89PNG\r\n\x1a\nshare-code"
+        web_app.WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.clear()
+        statuses = []
+        try:
+            with patch("web_app.load_validated_data", return_value=self.data), patch(
+                "web_app.list_prediction_day_share_targets", return_value=[target]
+            ), patch(
+                "web_app.request_wechat_miniprogram_share_code",
+                return_value=(fake_png, "image/png"),
+            ) as request_mock:
+                for ctx in (prediction_ctx, prediction_ctx, player_ctx, player_ctx):
+                    body = b"".join(
+                        web_app.handle_miniprogram_share_code(
+                            ctx, lambda status, headers: statuses.append(status)
+                        )
+                    )
+                    self.assertEqual(body, fake_png)
+            self.assertEqual(request_mock.call_count, 2)
+            requested_scenes = {call.args[0] for call in request_mock.call_args_list}
+            self.assertEqual(
+                requested_scenes, {prediction_scene, f"p:{player_id}"}
+            )
+            self.assertEqual(statuses, ["200 OK"] * 4)
+        finally:
+            web_app.WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.clear()
 
 
 if __name__ == "__main__":

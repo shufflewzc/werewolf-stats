@@ -1,5 +1,5 @@
 const { request } = require("../../utils/api");
-const { applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
 
@@ -73,7 +73,8 @@ Page({
     notice: "",
     rosterSource: "none",
     modelMetadata: {},
-    scenario: null
+    scenario: null,
+    canGeneratePredictionCard: false
   },
 
   onLoad(options) {
@@ -96,6 +97,18 @@ Page({
     this.loadData({ playedOn: playedOn || "", forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    const selectedDay = this.data.selectedDay || {};
+    return {
+      title: `${scope && scope.competition ? scope.competition : "狼人杀赛事"} · ${selectedDay.played_on || "当天"}预测`,
+      path: appendScopeToPath(
+        `/pages/predictions/predictions?played_on=${encodeURIComponent(selectedDay.played_on || "")}`,
+        scope
+      )
+    };
+  },
+
   async loadData(options = {}) {
     this.setData({ loading: true, error: "" });
     try {
@@ -110,7 +123,8 @@ Page({
           predictionVisibleCount: 0,
           predictionHasMore: false,
           bandSummary: [],
-          notice: ""
+          notice: "",
+          canGeneratePredictionCard: false
         }));
         return;
       }
@@ -124,6 +138,9 @@ Page({
       const payload = await request("/api/predictions", paramsWithPaging, options);
       const predictions = (payload.predictions || []).map((item, index) => decoratePrediction(item, index));
       const pagination = payload.pagination || {};
+      const canGeneratePredictionCard = predictions.length === 12
+        && predictions.every((item) => item.markets.length === 6)
+        && Boolean(payload.selected_day && payload.selected_day.played_on);
       this.setData({
         loading: false,
         needsCompetition: false,
@@ -141,7 +158,8 @@ Page({
         notice: payload.notice || "",
         rosterSource: payload.roster_source || "none",
         modelMetadata: payload.model_metadata || {},
-        scenario: payload.scenario || null
+        scenario: payload.scenario || null,
+        canGeneratePredictionCard
       });
     } catch (error) {
       this.setData({
@@ -204,5 +222,20 @@ Page({
 
   changeCompetition() {
     goCompetitions();
+  },
+
+  generatePredictionCard() {
+    const scope = this.data.selectedScope;
+    const selectedDay = this.data.selectedDay || {};
+    if (!this.data.canGeneratePredictionCard || !scope || !selectedDay.played_on) {
+      wx.showToast({ title: "当天预测名单尚未完整", icon: "none" });
+      return;
+    }
+    wx.navigateTo({
+      url: appendScopeToPath(
+        `/pages/prediction-share-card/prediction-share-card?played_on=${encodeURIComponent(selectedDay.played_on)}`,
+        scope
+      )
+    });
   }
 });

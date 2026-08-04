@@ -74,6 +74,10 @@
           <text class="selected-label">当前比赛日</text>
           <text class="selected-title">{{selectedDay.label || selectedDay.played_on}}</text>
           <text class="selected-copy">12人随机模拟三局 · {{scenario ? "已发布场景" : (rosterSource === "official_schedule" ? "正式赛程名单" : "暂无完整名单")}}</text>
+          <view class="prediction-share-action" wx:if="{{canGeneratePredictionCard}}">
+            <button class="primary-button prediction-share-button" hover-class="tap-button-hover" bindtap="generatePredictionCard">一键生成当天预测图</button>
+            <text class="prediction-share-copy">生成后可保存到相册，图片内含直达当天预测的小程序码。</text>
+          </view>
         </view>
       </view>
 

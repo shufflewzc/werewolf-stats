@@ -1,0 +1,126 @@
+.prediction-share-page {
+  padding-bottom: 48rpx;
+}
+
+.intro-card,
+.status-card,
+.error-card,
+.action-card {
+  margin-bottom: 22rpx;
+  padding: 24rpx;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 16rpx;
+  box-sizing: border-box;
+  background: #ffffff;
+  box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.07);
+}
+
+.intro-eyebrow,
+.intro-title,
+.intro-copy,
+.status-title,
+.status-copy,
+.error-title,
+.error-copy,
+.action-copy {
+  display: block;
+}
+
+.intro-eyebrow {
+  font-size: 20rpx;
+  font-weight: 800;
+  letter-spacing: 2rpx;
+  text-transform: uppercase;
+  color: #a16207;
+}
+
+.intro-title {
+  margin-top: 8rpx;
+  font-size: 34rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.intro-copy,
+.status-copy,
+.error-copy,
+.action-copy {
+  margin-top: 10rpx;
+  font-size: 23rpx;
+  line-height: 1.65;
+  color: #475569;
+}
+
+.status-card {
+  display: flex;
+  align-items: center;
+  gap: 20rpx;
+}
+
+.status-spinner {
+  flex: 0 0 38rpx;
+  width: 38rpx;
+  height: 38rpx;
+  border: 5rpx solid #fde68a;
+  border-top-color: #a16207;
+  border-radius: 50%;
+  animation: prediction-share-spin 0.9s linear infinite;
+}
+
+.status-title,
+.error-title {
+  font-size: 27rpx;
+  font-weight: 800;
+  color: #0f172a;
+}
+
+.error-card {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+
+.error-title {
+  color: #991b1b;
+}
+
+.retry-button {
+  width: 100%;
+  min-height: 88rpx;
+  margin-top: 20rpx;
+}
+
+.prediction-share-canvas {
+  display: block;
+  width: 694rpx;
+  height: 2776rpx;
+  margin: 0 auto 22rpx;
+  border-radius: 16rpx;
+  background: #090b0f;
+  box-shadow: 0 16rpx 42rpx rgba(15, 23, 42, 0.24);
+}
+
+.action-card {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14rpx;
+}
+
+.action-button {
+  width: 100%;
+  min-height: 88rpx;
+  margin: 0;
+}
+
+.action-card .action-button:first-child {
+  grid-column: 1 / -1;
+}
+
+.action-copy {
+  grid-column: 1 / -1;
+  margin-top: 0;
+  text-align: center;
+}
+
+@keyframes prediction-share-spin {
+  to { transform: rotate(360deg); }
+}

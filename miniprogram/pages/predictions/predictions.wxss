@@ -81,6 +81,26 @@
   color: #64748b;
 }
 
+.prediction-share-action {
+  margin-top: 22rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #e2e8f0;
+}
+
+.prediction-share-button {
+  width: 100%;
+  min-height: 88rpx;
+}
+
+.prediction-share-copy {
+  display: block;
+  margin-top: 12rpx;
+  font-size: 21rpx;
+  line-height: 1.55;
+  color: #475569;
+  text-align: center;
+}
+
 .notice-card {
   padding: 22rpx;
   font-size: 23rpx;

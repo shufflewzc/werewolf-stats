@@ -13,6 +13,7 @@
     "pages/player-bind/player-bind",
     "pages/share-entry/share-entry",
     "pages/share-card/share-card",
+    "pages/prediction-share-card/prediction-share-card",
     "pages/predictions/predictions",
     "pages/day-detail/day-detail"
   ],

@@ -17126,6 +17126,130 @@ def request_wechat_miniprogram_share_code(scene: str) -> tuple[bytes, str]:
     raise RuntimeError("微信未返回有效的小程序码图片。")
 
 
+PREDICTION_DAY_SHARE_SCENE_PREFIX = "d1:"
+PREDICTION_DAY_SHARE_SCENE_DIGEST_LENGTH = 24
+
+
+def normalize_prediction_share_day(value: str) -> str:
+    normalized = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(normalized, "%Y-%m-%d")
+    except ValueError as exc:
+        raise ValueError("比赛日期格式无效。") from exc
+    if parsed.strftime("%Y-%m-%d") != normalized:
+        raise ValueError("比赛日期格式无效。")
+    return normalized
+
+
+def build_prediction_day_share_scene(
+    competition_name: str,
+    season_name: str,
+    played_on: str,
+) -> str:
+    competition = str(competition_name or "").strip()
+    season = str(season_name or "").strip()
+    if not competition or not season:
+        raise ValueError("赛事和赛季不能为空。")
+    day = normalize_prediction_share_day(played_on)
+    raw_value = "\x1f".join((competition, season, day))
+    digest = hashlib.sha256(raw_value.encode("utf-8")).hexdigest()[
+        :PREDICTION_DAY_SHARE_SCENE_DIGEST_LENGTH
+    ]
+    return f"{PREDICTION_DAY_SHARE_SCENE_PREFIX}{digest}"
+
+
+def prediction_day_schedule_is_complete(matches: list[dict[str, Any]]) -> bool:
+    if len(matches) != 3:
+        return False
+    appearances: dict[str, int] = {}
+    for match in matches:
+        player_ids = {
+            str(participant.get("player_id") or "").strip()
+            for participant in match.get("players", [])
+            if str(participant.get("player_id") or "").strip()
+            and str(participant.get("player_id") or "").strip().upper() != "NPC"
+        }
+        if len(player_ids) != 12:
+            return False
+        for player_id in player_ids:
+            appearances[player_id] = appearances.get(player_id, 0) + 1
+    return len(appearances) == 12 and all(count == 3 for count in appearances.values())
+
+
+def list_prediction_day_share_targets(
+    data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    from web.features.match_page import load_prediction_day_scenarios
+
+    repository = data or load_validated_data()
+    target_keys: set[tuple[str, str, str]] = set()
+    for scenario in load_prediction_day_scenarios().values():
+        if not scenario.get("published") or len(scenario.get("roster") or []) != 12:
+            continue
+        target_keys.add(
+            (
+                str(scenario.get("competition_name") or "").strip(),
+                str(scenario.get("season_name") or "").strip(),
+                str(scenario.get("played_on") or "").strip(),
+            )
+        )
+
+    grouped_matches: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
+    for match in repository.get("matches", []):
+        key = (
+            get_match_competition_name(match),
+            str(match.get("season") or "").strip(),
+            str(match.get("played_on") or "").strip(),
+        )
+        if all(key):
+            grouped_matches.setdefault(key, []).append(match)
+    for key, matches in grouped_matches.items():
+        if prediction_day_schedule_is_complete(matches):
+            target_keys.add(key)
+
+    series_catalog = load_series_catalog(repository)
+    targets = []
+    for competition_name, season_name, played_on in sorted(target_keys):
+        try:
+            scene = build_prediction_day_share_scene(
+                competition_name, season_name, played_on
+            )
+        except ValueError:
+            continue
+        series_context = build_series_context_from_competition(
+            competition_name, series_catalog
+        )
+        targets.append(
+            {
+                "scene": scene,
+                "competition": competition_name,
+                "season": season_name,
+                "played_on": played_on,
+                "region": infer_region_name_from_competition(competition_name),
+                "series": str(series_context.get("series_slug") or ""),
+                "seriesName": str(series_context.get("series_name") or ""),
+            }
+        )
+    return targets
+
+
+def resolve_prediction_day_share_scene(
+    scene: str,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    normalized_scene = str(scene or "").strip()
+    if not re.fullmatch(r"d1:[0-9a-f]{24}", normalized_scene):
+        return None
+    matches = [
+        target
+        for target in list_prediction_day_share_targets(data)
+        if target["scene"] == normalized_scene
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str:
     digest = hashlib.sha1(openid.encode("utf-8")).hexdigest()[:12]
     base = f"wx_{digest}"
@@ -17138,7 +17262,7 @@ def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str
 
 
 def handle_miniprogram_share_entry(ctx: RequestContext, start_response):
-    """Resolve a compact player scene into a safe mini-program detail route."""
+    """Resolve a compact scene into a safe mini-program detail route."""
     if ctx.method != "GET":
         return start_response_json(
             start_response,
@@ -17147,6 +17271,21 @@ def handle_miniprogram_share_entry(ctx: RequestContext, start_response):
             headers=[("Allow", "GET")],
         )
     scene = form_value(ctx.query, "scene").strip()
+    if scene.startswith(PREDICTION_DAY_SHARE_SCENE_PREFIX):
+        target = resolve_prediction_day_share_scene(scene)
+        if not target:
+            return start_response_json(start_response, "404 Not Found", {"error": "分享的预测日不存在或已失效。"})
+        return start_response_json(start_response, "200 OK", {
+            "target": "prediction_day",
+            "played_on": target["played_on"],
+            "scope": {
+                "competition": target["competition"],
+                "season": target["season"],
+                "region": target["region"],
+                "series": target["series"],
+                "seriesName": target["seriesName"],
+            },
+        })
     player_id = scene[2:] if scene.startswith("p:") else ""
     if not player_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
         return start_response_json(start_response, "400 Bad Request", {"error": "分享码无效或已过期。"})
@@ -17177,7 +17316,7 @@ def handle_miniprogram_share_entry(ctx: RequestContext, start_response):
 
 
 def handle_miniprogram_share_code(ctx: RequestContext, start_response):
-    """Return a real WeChat mini-program code for a public player share card."""
+    """Return a real WeChat mini-program code for a public share card."""
     if ctx.method != "GET":
         return start_response_json(
             start_response,
@@ -17185,13 +17324,46 @@ def handle_miniprogram_share_code(ctx: RequestContext, start_response):
             {"error": "share code only supports GET"},
             headers=[("Allow", "GET")],
         )
-    player_id = form_value(ctx.query, "player_id").strip()
-    if not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
-        return start_response_json(start_response, "400 Bad Request", {"error": "选手 ID 无效。"})
+    share_type = form_value(ctx.query, "share_type").strip()
     data = load_validated_data()
-    if not any(str(player.get("player_id") or "") == player_id for player in data["players"]):
-        return start_response_json(start_response, "404 Not Found", {"error": "选手不存在或已下线。"})
-    scene = f"p:{player_id}"
+    if share_type == "prediction_day":
+        competition_name = form_value(ctx.query, "competition").strip()
+        season_name = form_value(ctx.query, "season").strip()
+        played_on = form_value(ctx.query, "played_on").strip()
+        try:
+            scene = build_prediction_day_share_scene(
+                competition_name, season_name, played_on
+            )
+        except ValueError as exc:
+            return start_response_json(start_response, "400 Bad Request", {"error": str(exc)})
+        scene_targets = [
+            item
+            for item in list_prediction_day_share_targets(data)
+            if item["scene"] == scene
+        ]
+        target = next(
+            (
+                item
+                for item in scene_targets
+                if item["competition"] == competition_name
+                and item["season"] == season_name
+                and item["played_on"] == played_on
+            ),
+            None,
+        )
+        if len(scene_targets) > 1:
+            return start_response_json(start_response, "409 Conflict", {"error": "预测分享码发生冲突，请联系管理员。"})
+        if not target:
+            return start_response_json(start_response, "404 Not Found", {"error": "该比赛日暂无完整可分享的预测。"})
+    elif not share_type or share_type == "player":
+        player_id = form_value(ctx.query, "player_id").strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
+            return start_response_json(start_response, "400 Bad Request", {"error": "选手 ID 无效。"})
+        if not any(str(player.get("player_id") or "") == player_id for player in data["players"]):
+            return start_response_json(start_response, "404 Not Found", {"error": "选手不存在或已下线。"})
+        scene = f"p:{player_id}"
+    else:
+        return start_response_json(start_response, "400 Bad Request", {"error": "分享类型无效。"})
     now = time.monotonic()
     with WECHAT_MINIPROGRAM_SHARE_CODE_CACHE_LOCK:
         cached = WECHAT_MINIPROGRAM_SHARE_CODE_CACHE.get(scene)

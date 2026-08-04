@@ -138,8 +138,10 @@ Page({
       const payload = await request("/api/predictions", paramsWithPaging, options);
       const predictions = (payload.predictions || []).map((item, index) => decoratePrediction(item, index));
       const pagination = payload.pagination || {};
+      const predictionIds = predictions.map((item) => String(item.player_id || "").trim());
       const canGeneratePredictionCard = predictions.length === 12
-        && predictions.every((item) => item.markets.length === 6)
+        && predictionIds.every(Boolean)
+        && new Set(predictionIds).size === 12
         && Boolean(payload.selected_day && payload.selected_day.played_on);
       this.setData({
         loading: false,

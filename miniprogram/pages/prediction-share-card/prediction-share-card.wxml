@@ -2,7 +2,7 @@
   <view class="intro-card">
     <text class="intro-eyebrow">Prediction Share</text>
     <text class="intro-title">当天预测分享图</text>
-    <text class="intro-copy">自动汇总12名选手的预计总分、预计胜场及六项盘口概率，扫码可查看三局明细。</text>
+    <text class="intro-copy">自动汇总12名选手的当天预测总分，扫码可查看完整预测。</text>
   </view>
 
   <view class="status-card" wx:if="{{loading}}">

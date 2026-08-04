@@ -166,6 +166,27 @@ def check_miniprogram_release() -> None:
         raise ReleaseCheckError("小程序发布自检未通过：" + detail)
 
 
+def check_user_visible_prediction_terms() -> None:
+    forbidden_terms = ("盘口", "赔率", "下注", "投注", "走水", "通杀")
+    allowed_suffixes = {".py", ".js", ".wxml", ".wxss", ".html", ".css", ".swift"}
+    roots = [ROOT / "assets", ROOT / "miniprogram", ROOT / "ios", ROOT / "scripts" / "web"]
+    files = [ROOT / "scripts" / "web_app.py"]
+    for root in roots:
+        files.extend(
+            path
+            for path in root.rglob("*")
+            if path.is_file() and path.suffix.lower() in allowed_suffixes
+        )
+    violations = []
+    for path in files:
+        content = path.read_text(encoding="utf-8", errors="ignore")
+        matched = [term for term in forbidden_terms if term in content]
+        if matched:
+            violations.append(f"{path.relative_to(ROOT)}（{'、'.join(matched)}）")
+    if violations:
+        raise ReleaseCheckError("用户可见页面仍包含禁用预测用语：" + "；".join(violations))
+
+
 def run_existing_database_checks(database_url: str) -> None:
     schema_code = check_runtime_schema.main(["--database-url", database_url] if database_url else [])
     if schema_code != 0:
@@ -672,6 +693,7 @@ def main(argv: list[str] | None = None) -> int:
     checks = [
         ("Python 文件语法", compile_python_files),
         ("小程序发布自检", check_miniprogram_release),
+        ("预测页面用语检查", check_user_visible_prediction_terms),
         ("小程序 API 契约", lambda: check_miniprogram_api_contract(require_data=args.require_miniprogram_data)),
         ("预测缓存一致性", lambda: check_prediction_cache_consistency(require_data=args.require_miniprogram_data)),
         ("小程序 API 耗时基准", lambda: check_miniprogram_api_benchmark(require_data=args.require_miniprogram_data)),

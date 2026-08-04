@@ -175,6 +175,43 @@ function checkLocalAddressRisk() {
   }
 }
 
+function checkPredictionShareCard() {
+  const sourcePath = path.join(MINIPROGRAM_DIR, "pages", "prediction-share-card", "prediction-share-card.js");
+  const templatePath = path.join(MINIPROGRAM_DIR, "pages", "prediction-share-card", "prediction-share-card.wxml");
+  const source = fs.readFileSync(sourcePath, "utf8");
+  const template = fs.readFileSync(templatePath, "utf8");
+  const required = [
+    "const CARD_HEIGHT = 1900;",
+    "player.expectedTotal",
+    "基于历史数据进行可复现模拟",
+    "结果仅供赛前数据参考",
+    "一颗小草赛事数据中心"
+  ];
+  for (const text of required) {
+    if (!source.includes(text)) {
+      fail(`预测分享图缺少关键内容：${text}`);
+    }
+  }
+  for (const text of ["expectedWins", "manualOverrideApplied", "player.markets", "4神4民4狼"]) {
+    if (source.includes(text)) {
+      fail(`预测分享图仍包含已移除内容：${text}`);
+    }
+  }
+  if (!template.includes("自动汇总12名选手的当天预测总分")) {
+    fail("预测分享页介绍未改为仅展示当天预测总分。");
+  }
+  const forbiddenTerms = ["盘口", "赔率", "下注", "投注", "走水", "通杀"];
+  for (const file of walkFiles(MINIPROGRAM_DIR).filter((item) => /\.(js|json|wxml|wxss)$/.test(item))) {
+    const content = fs.readFileSync(file, "utf8");
+    for (const term of forbiddenTerms) {
+      if (content.includes(term)) {
+        fail(`小程序页面包含禁用预测用语：${path.relative(ROOT, file)}（${term}）`);
+      }
+    }
+  }
+  ok("预测分享图仅展示12人预测总分，且页面用语检查通过。");
+}
+
 function printReport() {
   console.log("小程序发布前自检");
   for (const message of results.ok) {
@@ -194,6 +231,7 @@ function main() {
   checkAppJson();
   checkJavaScriptSyntax();
   checkLocalAddressRisk();
+  checkPredictionShareCard();
   printReport();
   if (results.failures.length) {
     console.error("\n小程序发布前自检未通过，请先修正失败项。");

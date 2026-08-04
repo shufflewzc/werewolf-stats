@@ -327,6 +327,8 @@ class ThreeGamePredictionTests(unittest.TestCase):
         self.assertEqual(payload["roster_source"], "published_scenario")
         self.assertEqual(payload["model_metadata"]["version"], "jcds_three_game_v1")
         self.assertEqual(len(payload["predictions"]), 12)
+        for term in ("盘口", "赔率", "下注", "投注", "走水", "通杀"):
+            self.assertNotIn(term, payload["notice"])
         item = payload["predictions"][0]
         for field in (
             "player_id",

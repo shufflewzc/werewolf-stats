@@ -92,7 +92,7 @@
 .prediction-share-canvas {
   display: block;
   width: 694rpx;
-  height: 2776rpx;
+  height: 1758rpx;
   margin: 0 auto 22rpx;
   border-radius: 16rpx;
   background: #090b0f;

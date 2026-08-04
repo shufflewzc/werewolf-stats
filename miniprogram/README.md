@@ -45,5 +45,5 @@ node scripts/check_miniprogram_release.js
 - 网页端登录已改为“小程序扫码确认登录”：网页显示二维码，小程序“我的”页扫码确认后网页自动登录；服务器不需要配置网页开放平台参数。
 - 请求层会统一处理网络超时、临时 5xx 重试、后端错误信息和登录过期；如果接口返回 `X-Request-ID`，错误提示会带请求编号，方便对照服务器日志。
 - 选手与战队战力评价按当前赛事赛季的总积分、积分效率和胜率自动计算，分为 S/A/B/C/D；管理员可在网页端对应详情页人工覆盖，或恢复系统自动评级。
-- 选手详情页可生成黑金战绩卡；当天预测页可一键生成包含12名选手核心概率和小程序码的预测分享图。二维码统一由后端 `/api/miniprogram/share-code` 生成，小程序发布时必须包含 `pages/share-entry/share-entry`，并使用已配置 `WECHAT_MINIPROGRAM_APPID` / `WECHAT_MINIPROGRAM_SECRET` 的正式后端。
+- 选手详情页可生成黑金战绩卡；当天预测页可一键生成包含12名选手预测总分和小程序码的预测分享图。二维码统一由后端 `/api/miniprogram/share-code` 生成，小程序发布时必须包含 `pages/share-entry/share-entry`，并使用已配置 `WECHAT_MINIPROGRAM_APPID` / `WECHAT_MINIPROGRAM_SECRET` 的正式后端。
 - 预测分享图的小程序码使用 `share_type=prediction_day`，扫码后会恢复赛事、赛季和比赛日期并直达当天预测页；小程序新版本发布前应先部署兼容该参数的后端。

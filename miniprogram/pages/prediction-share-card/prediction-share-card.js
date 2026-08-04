@@ -3,17 +3,8 @@ const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, scopeParams 
 const { apiBaseUrl } = require("../../config");
 
 const CARD_WIDTH = 750;
-const CARD_HEIGHT = 3000;
+const CARD_HEIGHT = 1900;
 const MAX_CANVAS_EDGE = 4096;
-const MARKET_KEYS = ["lt_0", "lt_5", "lt_10", "gt_10", "gt_15", "gt_18"];
-const MARKET_LABELS = {
-  lt_0: "小0",
-  lt_5: "小5",
-  lt_10: "小10",
-  gt_10: "大10",
-  gt_15: "大15",
-  gt_18: "大18"
-};
 
 function safeDecode(value) {
   try {
@@ -110,13 +101,6 @@ function roundedRect(ctx, x, y, width, height, radius, options = {}) {
   ctx.restore();
 }
 
-function percentageDisplay(market) {
-  if (market && market.display) {
-    return String(market.display);
-  }
-  return `${(Number((market && market.probability) || 0) * 100).toFixed(1)}%`;
-}
-
 function normalizePredictions(payload, playedOn) {
   const selectedDay = payload.selected_day || {};
   if (selectedDay.played_on !== playedOn) {
@@ -130,30 +114,13 @@ function normalizePredictions(payload, playedOn) {
   if (ids.size !== 12 || ids.has("")) {
     throw new Error("当天预测名单存在重复或无效选手，暂时无法生成分享图。");
   }
-  return predictions.map((item, index) => {
-    const marketLookup = {};
-    (item.market_probabilities || []).forEach((market) => {
-      marketLookup[market.key] = market;
-    });
-    const markets = MARKET_KEYS.map((key) => marketLookup[key]);
-    if (markets.some((market) => !market)) {
-      throw new Error(`${item.player_name || "选手"}缺少完整的六项盘口概率。`);
-    }
-    return {
-      rank: Number(item.rank || index + 1),
-      playerId: String(item.player_id || ""),
-      playerName: String(item.player_name || item.player_id || "未知选手"),
-      teamName: String(item.team_name || "未绑定战队"),
-      expectedTotal: Number(item.expected_total || item.expected_points || 0).toFixed(2),
-      expectedWins: Number(item.expected_wins || 0).toFixed(2),
-      manualOverrideApplied: Boolean(item.manual_override_applied),
-      markets: markets.map((market, marketIndex) => ({
-        key: MARKET_KEYS[marketIndex],
-        label: market.label || MARKET_LABELS[MARKET_KEYS[marketIndex]],
-        display: percentageDisplay(market)
-      }))
-    };
-  }).sort((left, right) => left.rank - right.rank);
+  return predictions.map((item, index) => ({
+    rank: Number(item.rank || index + 1),
+    playerId: String(item.player_id || ""),
+    playerName: String(item.player_name || item.player_id || "未知选手"),
+    teamName: String(item.team_name || "未绑定战队"),
+    expectedTotal: Number(item.expected_total || item.expected_points || 0).toFixed(2)
+  })).sort((left, right) => left.rank - right.rank);
 }
 
 Page({
@@ -269,69 +236,56 @@ Page({
     ctx.restore();
     roundedRect(ctx, 18, 18, CARD_WIDTH - 36, CARD_HEIGHT - 36, 18, { stroke: gold, lineWidth: 2 });
 
-    drawText(ctx, "JCDS · PREDICTION REPORT", 42, 62, { size: 20, weight: 700, color: gold });
-    drawText(ctx, "当天三局胜率预测", 42, 119, { size: 46, weight: 800, color: text });
+    drawText(ctx, "JCDS · SCORE FORECAST", 42, 62, { size: 20, weight: 700, color: gold });
+    drawText(ctx, "当天预测总分", 42, 119, { size: 46, weight: 800, color: text });
     drawText(ctx, scope.competition, 42, 165, { size: 29, weight: 700, color: gold, maxWidth: 666 });
     drawText(ctx, `${scope.season} · ${this.playedOn}`, 42, 205, { size: 23, color: muted, maxWidth: 666 });
     const simulations = Number((payload.model_metadata || {}).simulations || 10000).toLocaleString("zh-CN");
     drawText(ctx, `12名选手 · ${simulations}次可复现模拟 · 按预计总分排序`, 42, 238, { size: 19, color: mutedGold });
 
     predictions.forEach((player, index) => {
-      const y = 255 + index * 195;
-      roundedRect(ctx, 34, y, 682, 181, 14, {
+      const y = 255 + index * 96;
+      roundedRect(ctx, 34, y, 682, 82, 14, {
         fill: index % 2 ? "rgba(24, 28, 37, 0.96)" : "rgba(17, 20, 27, 0.96)",
         stroke: index < 3 ? "#8f742f" : "#323845",
         lineWidth: index < 3 ? 1.5 : 1
       });
-      roundedRect(ctx, 47, y + 17, 29, 29, 14, { fill: index < 3 ? gold : "#343a46" });
-      drawText(ctx, player.rank, 61.5, y + 38, {
-        size: 17,
+      roundedRect(ctx, 48, y + 19, 44, 44, 22, { fill: index < 3 ? gold : "#343a46" });
+      drawText(ctx, player.rank, 70, y + 49, {
+        size: 20,
         weight: 800,
         color: index < 3 ? "#17130a" : text,
         align: "center"
       });
-      drawText(ctx, player.playerName, 88, y + 41, { size: 27, weight: 800, color: text, maxWidth: 188 });
-      drawText(ctx, player.teamName, 292, y + 40, { size: 20, color: muted, maxWidth: 168 });
+      drawText(ctx, player.playerName, 110, y + 38, { size: 29, weight: 800, color: text, maxWidth: 245 });
+      drawText(ctx, player.teamName, 110, y + 65, { size: 19, color: muted, maxWidth: 330 });
       drawText(
         ctx,
-        `总分 ${player.expectedTotal}${player.manualOverrideApplied ? "*" : ""} · ${player.expectedWins}胜`,
-        694,
-        y + 40,
-        { size: 22, weight: 700, color: gold, align: "right", maxWidth: 218 }
+        player.expectedTotal,
+        680,
+        y + 51,
+        { size: 38, weight: 800, color: gold, align: "right", maxWidth: 170 }
       );
-
-      player.markets.forEach((market, marketIndex) => {
-        const column = marketIndex % 3;
-        const row = Math.floor(marketIndex / 3);
-        const boxX = 47 + column * 221;
-        const boxY = y + 67 + row * 49;
-        roundedRect(ctx, boxX, boxY, 207, 39, 8, { fill: "#161b23", stroke: "#2d3440" });
-        drawText(ctx, market.label, boxX + 12, boxY + 27, { size: 19, weight: 700, color: mutedGold });
-        drawText(ctx, market.display, boxX + 195, boxY + 28, { size: 22, weight: 800, color: text, align: "right" });
-      });
+      drawText(ctx, "预测总分", 500, y + 48, { size: 19, weight: 700, color: mutedGold });
     });
 
     ctx.strokeStyle = "#6f5a28";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(42, 2613);
-    ctx.lineTo(708, 2613);
+    ctx.moveTo(42, 1426);
+    ctx.lineTo(708, 1426);
     ctx.stroke();
-    drawText(ctx, "预测说明", 44, 2660, { size: 23, weight: 800, color: gold });
-    drawText(ctx, "系统每局随机分配4神、4民、4狼", 44, 2703, { size: 22, color: text });
-    drawText(ctx, "等于盘口不计命中", 44, 2742, { size: 22, color: text });
-    drawText(ctx, "预测概率不等于赔率", 44, 2781, { size: 22, color: text });
-    if (predictions.some((player) => player.manualOverrideApplied)) {
-      drawText(ctx, "* 表示管理员人工修正预计总分", 44, 2820, { size: 19, color: mutedGold });
-    }
+    drawText(ctx, "预测说明", 44, 1474, { size: 23, weight: 800, color: gold });
+    drawText(ctx, "基于历史数据进行可复现模拟", 44, 1517, { size: 22, color: text });
+    drawText(ctx, "结果仅供赛前数据参考", 44, 1556, { size: 22, color: text });
     const modelVersion = String((payload.model_metadata || {}).version || "prediction_model");
-    drawText(ctx, `模型 ${modelVersion}`, 44, 2870, { size: 18, color: muted, maxWidth: 420 });
-    drawText(ctx, "更多三局胜率与胜场分布，请扫码查看", 44, 2910, { size: 18, color: muted, maxWidth: 430 });
+    drawText(ctx, `模型 ${modelVersion}`, 44, 1620, { size: 18, color: muted, maxWidth: 420 });
+    drawText(ctx, "扫码查看当天完整预测", 44, 1660, { size: 18, color: muted, maxWidth: 430 });
 
-    roundedRect(ctx, 522, 2673, 184, 184, 12, { fill: "#ffffff" });
-    ctx.drawImage(qrImage, 534, 2685, 160, 160);
-    drawText(ctx, "扫码查看当天预测", 614, 2894, { size: 19, weight: 700, color: gold, align: "center" });
-    drawText(ctx, "京城大师赛数据中心", 375, 2960, { size: 20, weight: 700, color: mutedGold, align: "center" });
+    roundedRect(ctx, 522, 1485, 184, 184, 12, { fill: "#ffffff" });
+    ctx.drawImage(qrImage, 534, 1497, 160, 160);
+    drawText(ctx, "扫码查看当天预测", 614, 1706, { size: 19, weight: 700, color: gold, align: "center" });
+    drawText(ctx, "一颗小草赛事数据中心", 375, 1852, { size: 22, weight: 700, color: mutedGold, align: "center" });
   },
 
   regenerateCard() {

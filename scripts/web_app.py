@@ -18460,7 +18460,7 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
             "roster_source": roster_source,
             "model_metadata": simulation["model_metadata"],
             "market_definitions": simulation["market_definitions"],
-            "notice": "系统每局随机分配4神、4民、4狼并统一抽取胜负；等于盘口不计命中，预测概率不等于赔率。",
+            "notice": "系统每局随机分配4神、4民、4狼并统一抽取胜负；等于分数线时单独统计；预测结果仅供赛前数据参考。",
         }
 
     aggregated_by_player: dict[str, dict[str, Any]] = {}
@@ -18848,7 +18848,7 @@ def get_predictions_page(ctx: RequestContext) -> str:
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">Three-game Forecast</div>
       <h1 class="hero-title mb-3">当天三局胜率预测</h1>
-      <p class="hero-copy mb-0">一次查看12名选手三局胜率、预计胜场、预计日总分与六项盘口概率。</p>
+      <p class="hero-copy mb-0">一次查看12名选手三局胜率、预计胜场、预计日总分与六项分数概率。</p>
       <div class="d-flex flex-wrap gap-2 mt-4">
         <span class="chip">{escape(selected_competition or '京城大师赛')}</span>
         <span class="chip">{escape(selected_season or '未选择赛季')}</span>
@@ -18860,7 +18860,7 @@ def get_predictions_page(ctx: RequestContext) -> str:
       <div class="d-flex flex-wrap gap-2">{day_links or '<span class="text-secondary">当前没有已发布场景或完整正式赛程。</span>'}</div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4">
-      <div class="alert alert-warning fw-semibold">系统每局随机分配4神、4民、4狼；等于盘口不计命中；概率不等于赔率。</div>
+      <div class="alert alert-warning fw-semibold">系统每局随机分配4神、4民、4狼；等于分数线时单独统计；预测结果仅供赛前数据参考。</div>
       <div class="table-responsive">
         <table class="table align-middle">
           <thead><tr><th>排名</th><th>选手</th><th>战队</th><th>第1局胜率</th><th>第2局胜率</th><th>第3局胜率</th><th>预计胜场</th><th>预计总分</th><th>0/1/2/3胜分布</th>{market_headers}</tr></thead>

@@ -15,10 +15,19 @@
       </view>
     </view>
   </view>
-  <canvas type="2d" id="shareCanvas" class="share-canvas {{mode === 'landscape' ? 'is-landscape' : ''}}"></canvas>
+  <view
+    class="canvas-tap-target"
+    hover-class="canvas-tap-hover"
+    hover-stay-time="120"
+    bindtap="previewCard"
+    aria-role="button"
+    aria-label="点击战绩卡查看大图"
+  >
+    <canvas type="2d" id="shareCanvas" class="share-canvas {{mode === 'landscape' ? 'is-landscape' : ''}}"></canvas>
+  </view>
+  <text class="canvas-tap-hint">点击图片查看大图</text>
   <view class="button-row">
     <button class="primary-button" hover-class="tap-button-hover" loading="{{loading}}" bindtap="saveCard">保存到相册</button>
-    <button class="ghost-button" hover-class="tap-button-hover" bindtap="previewCard">预览</button>
   </view>
   <view class="empty-inline" wx:if="{{error}}"><text>{{error}}</text></view>
 </view>

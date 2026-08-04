@@ -139,10 +139,16 @@ Page({
       const predictions = (payload.predictions || []).map((item, index) => decoratePrediction(item, index));
       const pagination = payload.pagination || {};
       const predictionIds = predictions.map((item) => String(item.player_id || "").trim());
+      const requiredMarketKeys = ["lt_0", "lt_5", "lt_10", "gt_10", "gt_15", "gt_18"];
+      const hasCompleteScoreProbabilities = predictions.every((item) => {
+        const keys = new Set((item.markets || []).map((market) => String(market.key || "")));
+        return requiredMarketKeys.every((key) => keys.has(key));
+      });
       const canGeneratePredictionCard = predictions.length === 12
         && predictionIds.every(Boolean)
         && new Set(predictionIds).size === 12
-        && Boolean(payload.selected_day && payload.selected_day.played_on);
+        && Boolean(payload.selected_day && payload.selected_day.played_on)
+        && hasCompleteScoreProbabilities;
       this.setData({
         loading: false,
         needsCompetition: false,

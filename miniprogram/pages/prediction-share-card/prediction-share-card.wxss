@@ -92,11 +92,30 @@
 .prediction-share-canvas {
   display: block;
   width: 694rpx;
-  height: 1758rpx;
-  margin: 0 auto 22rpx;
+  height: 2616rpx;
   border-radius: 16rpx;
   background: #090b0f;
   box-shadow: 0 16rpx 42rpx rgba(15, 23, 42, 0.24);
+  transition: opacity 160ms ease, box-shadow 160ms ease;
+}
+
+.canvas-tap-target {
+  width: 694rpx;
+  margin: 0 auto;
+}
+
+.canvas-tap-hover .prediction-share-canvas {
+  opacity: 0.86;
+  box-shadow: 0 8rpx 24rpx rgba(15, 23, 42, 0.18);
+}
+
+.canvas-tap-hint {
+  display: block;
+  margin: 14rpx 0 22rpx;
+  font-size: 23rpx;
+  line-height: 1.5;
+  text-align: center;
+  color: #64748b;
 }
 
 .action-card {
@@ -112,7 +131,7 @@
 }
 
 .action-card .action-button:first-child {
-  grid-column: 1 / -1;
+  grid-column: auto;
 }
 
 .action-copy {

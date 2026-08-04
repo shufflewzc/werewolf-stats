@@ -178,27 +178,38 @@ function checkLocalAddressRisk() {
 function checkPredictionShareCard() {
   const sourcePath = path.join(MINIPROGRAM_DIR, "pages", "prediction-share-card", "prediction-share-card.js");
   const templatePath = path.join(MINIPROGRAM_DIR, "pages", "prediction-share-card", "prediction-share-card.wxml");
+  const playerTemplatePath = path.join(MINIPROGRAM_DIR, "pages", "share-card", "share-card.wxml");
   const source = fs.readFileSync(sourcePath, "utf8");
   const template = fs.readFileSync(templatePath, "utf8");
+  const playerTemplate = fs.readFileSync(playerTemplatePath, "utf8");
   const required = [
-    "const CARD_HEIGHT = 1900;",
+    "const CARD_HEIGHT = 2820;",
     "player.expectedTotal",
+    "player.markets",
     "基于历史数据进行可复现模拟",
-    "结果仅供赛前数据参考",
-    "一颗小草赛事数据中心"
+    "结果仅供赛前数据参考"
   ];
   for (const text of required) {
     if (!source.includes(text)) {
       fail(`预测分享图缺少关键内容：${text}`);
     }
   }
-  for (const text of ["expectedWins", "manualOverrideApplied", "player.markets", "4神4民4狼"]) {
+  for (const text of ["expectedWins", "manualOverrideApplied", "4神4民4狼", "一颗小草赛事数据中心"]) {
     if (source.includes(text)) {
       fail(`预测分享图仍包含已移除内容：${text}`);
     }
   }
-  if (!template.includes("自动汇总12名选手的当天预测总分")) {
-    fail("预测分享页介绍未改为仅展示当天预测总分。");
+  if (!template.includes("自动汇总12名选手的预测总分和六项分数概率")) {
+    fail("预测分享页介绍未包含预测总分和六项分数概率。");
+  }
+  if (!template.includes('bindtap="previewCard"') || !playerTemplate.includes('bindtap="previewCard"')) {
+    fail("战绩卡或预测图未绑定点击图片查看大图。");
+  }
+  if (!template.includes("点击图片查看大图") || !playerTemplate.includes("点击图片查看大图")) {
+    fail("战绩卡或预测图缺少点击图片查看大图提示。");
+  }
+  if (/button[^>]+bindtap="previewCard"/.test(template) || /button[^>]+bindtap="previewCard"/.test(playerTemplate)) {
+    fail("战绩卡或预测图仍保留独立的大图查看按钮。");
   }
   const forbiddenTerms = ["盘口", "赔率", "下注", "投注", "走水", "通杀"];
   for (const file of walkFiles(MINIPROGRAM_DIR).filter((item) => /\.(js|json|wxml|wxss)$/.test(item))) {
@@ -209,7 +220,7 @@ function checkPredictionShareCard() {
       }
     }
   }
-  ok("预测分享图仅展示12人预测总分，且页面用语检查通过。");
+  ok("战绩卡点击查看与预测分享图六项分数概率检查通过。");
 }
 
 function printReport() {

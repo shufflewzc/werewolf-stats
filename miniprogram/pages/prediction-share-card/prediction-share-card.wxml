@@ -2,7 +2,7 @@
   <view class="intro-card">
     <text class="intro-eyebrow">Prediction Share</text>
     <text class="intro-title">当天预测分享图</text>
-    <text class="intro-copy">自动汇总12名选手的当天预测总分，扫码可查看完整预测。</text>
+    <text class="intro-copy">自动汇总12名选手的预测总分和六项分数概率，扫码可查看完整预测。</text>
   </view>
 
   <view class="status-card" wx:if="{{loading}}">
@@ -19,16 +19,25 @@
     <button class="primary-button retry-button" hover-class="tap-button-hover" bindtap="regenerateCard">重新生成</button>
   </view>
 
-  <canvas
+  <view
     wx:if="{{loading || cardReady}}"
-    type="2d"
-    id="predictionShareCanvas"
-    class="prediction-share-canvas"
-  ></canvas>
+    class="canvas-tap-target"
+    hover-class="canvas-tap-hover"
+    hover-stay-time="120"
+    bindtap="previewCard"
+    aria-role="button"
+    aria-label="点击预测图查看大图"
+  >
+    <canvas
+      type="2d"
+      id="predictionShareCanvas"
+      class="prediction-share-canvas"
+    ></canvas>
+  </view>
+  <text class="canvas-tap-hint" wx:if="{{cardReady}}">点击图片查看大图</text>
 
   <view class="action-card" wx:if="{{cardReady}}">
     <button class="primary-button action-button" hover-class="tap-button-hover" bindtap="saveCard">保存到相册</button>
-    <button class="ghost-button action-button" hover-class="tap-button-hover" bindtap="previewCard">预览大图</button>
     <button class="ghost-button action-button" hover-class="tap-button-hover" bindtap="regenerateCard">重新生成</button>
     <text class="action-copy">若首次保存失败，请在系统设置中允许小程序访问相册。</text>
   </view>

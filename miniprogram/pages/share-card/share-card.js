@@ -166,6 +166,7 @@ Page({
 
   initCanvas(payload, scope) {
     const dimensions = this.data.mode === "landscape" ? LANDSCAPE_CARD : VERTICAL_CARD;
+    this.previewing = false;
     this.setData({ loading: true, error: "" });
       const query = wx.createSelectorQuery();
       query.select("#shareCanvas").fields({ node: true, size: true }).exec(async (result) => {
@@ -347,9 +348,18 @@ Page({
   },
 
   previewCard() {
+    if (this.previewing) return;
+    this.previewing = true;
     this.exportCard((error, path) => {
-      if (error) { wx.showToast({ title: error.message, icon: "none" }); return; }
-      wx.previewImage({ urls: [path] });
+      if (error) {
+        this.previewing = false;
+        wx.showToast({ title: error.message, icon: "none" });
+        return;
+      }
+      wx.previewImage({
+        urls: [path],
+        complete: () => { this.previewing = false; }
+      });
     });
   },
 

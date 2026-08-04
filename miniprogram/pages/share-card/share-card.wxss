@@ -19,15 +19,36 @@
 }
 
 .share-canvas {
+  display: block;
   width: 694rpx;
   height: 1041rpx;
   border-radius: 16rpx;
   background: #0b0b0c;
   box-shadow: 0 14rpx 36rpx rgba(15, 23, 42, 0.18);
+  transition: opacity 160ms ease, box-shadow 160ms ease;
 }
 
 .share-canvas.is-landscape {
   height: 463rpx;
+}
+
+.canvas-tap-target {
+  width: 694rpx;
+  margin: 0 auto;
+}
+
+.canvas-tap-hover .share-canvas {
+  opacity: 0.86;
+  box-shadow: 0 8rpx 22rpx rgba(15, 23, 42, 0.14);
+}
+
+.canvas-tap-hint {
+  display: block;
+  margin: 14rpx 0 18rpx;
+  font-size: 23rpx;
+  line-height: 1.5;
+  text-align: center;
+  color: #64748b;
 }
 
 .mode-switch,

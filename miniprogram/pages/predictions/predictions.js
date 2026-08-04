@@ -20,6 +20,8 @@ function decoratePrediction(item, index) {
   const expectedTotal = Number(item.expected_total || item.expected_points || 0);
   const band = predictionBand(expectedTotal);
   const rank = Number(item.rank || index + 1);
+  const gameWinDisplays = item.game_win_displays || (item.game_win_probabilities || []).map((value) => `${(Number(value) * 100).toFixed(1)}%`);
+  const expectedWinsText = item.expected_wins === null || item.expected_wins === undefined ? "--" : Number(item.expected_wins).toFixed(2);
   return {
     ...item,
     expectedTotal,
@@ -27,7 +29,20 @@ function decoratePrediction(item, index) {
     rankText: `第 ${rank} 名`,
     bandLabel: band.label,
     bandClass: band.className,
-    matchLabels: item.match_labels || []
+    matchLabels: item.match_labels || [],
+    profilePlayerId: item.profile_href ? item.player_id : "",
+    gameWinDisplays,
+    hasThreeGame: gameWinDisplays.length === 3,
+    expectedWinsText,
+    predictionMeta: gameWinDisplays.length === 3
+      ? `${item.team_name || "未绑定战队"} · 预计 ${expectedWinsText} 胜 · 置信度 ${item.confidence || "--"}`
+      : `${item.team_name || "未绑定战队"} · 当日 ${item.match_count || 0} 场 · 场均 ${item.average_expected_points || "--"}`,
+    winCountLabels: (item.win_count_probabilities || []).map((entry) => `${entry.wins}胜 ${entry.display || `${(Number(entry.probability || 0) * 100).toFixed(1)}%`}`),
+    winCountText: (item.win_count_probabilities || []).map((entry) => `${entry.wins}胜 ${entry.display || `${(Number(entry.probability || 0) * 100).toFixed(1)}%`}`).join(" · "),
+    markets: (item.market_probabilities || []).map((market) => ({
+      ...market,
+      equalityDisplay: market.equality_display || `${(Number(market.equality_probability || 0) * 100).toFixed(1)}%`
+    }))
   };
 }
 
@@ -55,7 +70,10 @@ Page({
     loadingMore: false,
     loadMoreError: "",
     bandSummary: [],
-    notice: ""
+    notice: "",
+    rosterSource: "none",
+    modelMetadata: {},
+    scenario: null
   },
 
   onLoad(options) {
@@ -120,7 +138,10 @@ Page({
         loadingMore: false,
         loadMoreError: "",
         bandSummary: payload.band_summary || summarizeBands(predictions),
-        notice: payload.notice || ""
+        notice: payload.notice || "",
+        rosterSource: payload.roster_source || "none",
+        modelMetadata: payload.model_metadata || {},
+        scenario: payload.scenario || null
       });
     } catch (error) {
       this.setData({

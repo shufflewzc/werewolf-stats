@@ -429,6 +429,7 @@ LEGACY_PREDICTION_MODEL_SETTINGS_V7: dict[str, Any] = {
 
 DEFAULT_PREDICTION_MODEL_SETTINGS: dict[str, Any] = {
     "model_version": "result_weighted_v8",
+    "jcds_three_game_enabled": True,
     "score_uplift": 0.98,
     "score_bonus": 0.0,
     "camp_win_rate_priors": {
@@ -947,6 +948,9 @@ def _merge_prediction_model_settings(raw_settings: dict[str, Any] | None = None)
     raw_day = raw_settings.get("day_total") if isinstance(raw_settings.get("day_total"), dict) else {}
     result: dict[str, Any] = {
         "model_version": str(raw_settings.get("model_version") or defaults["model_version"]),
+        "jcds_three_game_enabled": bool(
+            raw_settings.get("jcds_three_game_enabled", defaults["jcds_three_game_enabled"])
+        ),
         "score_uplift": _clamp_float(raw_settings.get("score_uplift"), defaults["score_uplift"], 0.50, 1.50),
         "score_bonus": _clamp_float(raw_settings.get("score_bonus"), defaults["score_bonus"], -3.0, 3.0),
         "camp_win_rate_priors": {},
@@ -3305,6 +3309,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         nav_links = [
             build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
             build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
+            build_nav_link("胜率预测", "/predictions", ctx.path == "/predictions"),
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
         if AI_PUBLIC_FEATURES_ENABLED:
@@ -3380,6 +3385,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         nav_links = [
             build_nav_link("首页", "/dashboard", ctx.path == "/dashboard"),
             build_nav_link("比赛页面", "/competitions", ctx.path == "/competitions"),
+            build_nav_link("胜率预测", "/predictions", ctx.path == "/predictions"),
             build_nav_link("门派", "/guilds", ctx.path == "/guilds"),
         ]
         if AI_PUBLIC_FEATURES_ENABLED:
@@ -17990,16 +17996,47 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
         PREDICTION_BUCKETS,
         build_match_score_predictions,
         build_score_prediction_context_cache,
+        load_prediction_day_scenarios,
+        prediction_day_scenario_key,
     )
+    from web.features.prediction_simulator import simulate_three_game_day
 
     data = load_validated_data()
+    scenarios = load_prediction_day_scenarios()
+    series_catalog = load_series_catalog(data)
+    jcds_competitions = {
+        str(entry.get("competition_name") or "").strip()
+        for entry in series_catalog
+        if str(entry.get("series_slug") or "").strip() == "jcds"
+    }
     player_lookup = {
         str(player.get("player_id") or ""): player
         for player in data.get("players", [])
     }
-    competition_names = sorted({get_match_competition_name(match) for match in data.get("matches", [])})
+    competition_names = sorted(
+        {get_match_competition_name(match) for match in data.get("matches", [])}
+        | {
+            str(item.get("competition_name") or "").strip()
+            for item in scenarios.values()
+            if item.get("published")
+        }
+    )
     selected_competition = get_selected_competition(ctx, competition_names)
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    if not selected_competition and jcds_competitions:
+        selected_competition = sorted(jcds_competitions)[0]
+    season_names = list_seasons(
+        data,
+        selected_competition,
+        include_non_ongoing=True,
+        selected_season=form_value(ctx.query, "season").strip() or None,
+    ) if selected_competition else []
+    for scenario in scenarios.values():
+        if (
+            scenario.get("published")
+            and scenario.get("competition_name") == selected_competition
+            and str(scenario.get("season_name") or "") not in season_names
+        ):
+            season_names.append(str(scenario.get("season_name") or ""))
     selected_season = get_selected_season(ctx, season_names)
     selected_region = form_value(ctx.query, "region").strip() or None
     selected_series_slug = form_value(ctx.query, "series").strip() or None
@@ -18044,6 +18081,30 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
             ]
         )
         option["match_ids"].append(str(match.get("match_id") or ""))
+    for scenario in scenarios.values():
+        if not scenario.get("published"):
+            continue
+        if scenario.get("competition_name") != selected_competition or scenario.get("season_name") != selected_season:
+            continue
+        played_on = str(scenario.get("played_on") or "").strip()
+        if not played_on:
+            continue
+        option = day_options_by_date.setdefault(
+            played_on,
+            {
+                "played_on": played_on,
+                "match_count": 0,
+                "player_entry_count": 0,
+                "match_ids": [],
+                "label": played_on,
+            },
+        )
+        option["scenario_published"] = True
+        option["match_count"] = max(int(option.get("match_count") or 0), 3)
+        option["player_entry_count"] = max(
+            int(option.get("player_entry_count") or 0),
+            len(scenario.get("roster") or []),
+        )
     day_options = [
         day_options_by_date[played_on]
         for played_on in sort_match_days_by_relevance(list(day_options_by_date), china_today_label())
@@ -18084,6 +18145,150 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
             "table_label": str(match.get("table_label") or ""),
             "player_count": len(match.get("players", [])),
             "label": " · ".join(part for part in label_parts if part),
+        }
+
+    selected_scenario = scenarios.get(
+        prediction_day_scenario_key(
+            selected_competition or "", selected_season or "", selected_played_on
+        )
+    )
+    selected_scenario = (
+        selected_scenario
+        if selected_scenario and selected_scenario.get("published")
+        else None
+    )
+
+    def schedule_roster() -> list[dict[str, Any]]:
+        if len(selected_day_matches) != 3:
+            return []
+        appearances: dict[str, list[dict[str, Any]]] = {}
+        for match in selected_day_matches:
+            seen_in_match = set()
+            for participant in match.get("players", []):
+                player_id = str(participant.get("player_id") or "").strip()
+                if not player_id or player_id.upper() == "NPC" or player_id in seen_in_match:
+                    continue
+                seen_in_match.add(player_id)
+                appearances.setdefault(player_id, []).append(participant)
+        if len(appearances) != 12 or any(len(rows) != 3 for rows in appearances.values()):
+            return []
+        team_lookup = {
+            str(team.get("team_id") or ""): team for team in data.get("teams", [])
+        }
+        return [
+            {
+                "seat": index,
+                "player_id": player_id,
+                "scenario_player_id": "",
+                "player_name": str(player_lookup.get(player_id, {}).get("display_name") or player_id),
+                "team_id": str(rows[0].get("team_id") or ""),
+                "team_name": str(
+                    team_lookup.get(str(rows[0].get("team_id") or ""), {}).get("name")
+                    or rows[0].get("team_id")
+                    or ""
+                ),
+                "manual_total_override": None,
+            }
+            for index, (player_id, rows) in enumerate(
+                sorted(appearances.items(), key=lambda item: item[0]), start=1
+            )
+        ]
+
+    prediction_settings = load_prediction_model_settings()
+    use_three_game_model = bool(
+        prediction_settings.get("jcds_three_game_enabled", True)
+        and selected_competition in jcds_competitions
+    )
+    three_game_roster = (
+        list(selected_scenario.get("roster") or [])
+        if selected_scenario
+        else schedule_roster()
+    )
+    roster_source = "published_scenario" if selected_scenario else (
+        "official_schedule" if three_game_roster else "none"
+    )
+    if use_three_game_model and len(three_game_roster) == 12 and selected_played_on:
+        for row in three_game_roster:
+            player_id = str(row.get("player_id") or "").strip()
+            row["profile_href"] = (
+                build_scoped_path(
+                    f"/players/{player_id}",
+                    selected_competition,
+                    selected_season,
+                    selected_region,
+                    selected_series_slug or "jcds",
+                )
+                if player_id and player_id in player_lookup
+                else ""
+            )
+        simulation = simulate_three_game_day(
+            data,
+            three_game_roster,
+            competition_name=selected_competition or "",
+            season_name=selected_season or "",
+            played_on=selected_played_on,
+            jcds_competitions=jcds_competitions,
+        )
+        predictions = simulation["predictions"]
+        for item in predictions:
+            item["player_href"] = item.get("profile_href") or ""
+            item["is_star_player"] = bool(
+                player_lookup.get(str(item.get("player_id") or ""), {}).get("is_star_player")
+            )
+            item["win_rate"] = ""
+            item["seats"] = str(item.get("seat") or "")
+            item["match_labels"] = [f"{selected_played_on} 第{index}局" for index in range(1, 4)]
+            item["raw_expected_total"] = item.get("auto_expected_total")
+            item["probabilities"] = [
+                {
+                    "key": market.get("key"),
+                    "label": market.get("label"),
+                    "value": market.get("probability"),
+                    "display": market.get("display"),
+                }
+                for market in item.get("market_probabilities") or []
+            ]
+        selected_day_payload = {
+            "played_on": selected_played_on,
+            "label": f"{selected_played_on} 比赛日",
+            "match_count": 3,
+            "player_entry_count": 12,
+            "matches": [match_option(match) for match in selected_day_matches],
+            "scenario_published": bool(selected_scenario),
+        }
+        band_summary = [
+            {"label": "12+", "copy": "高分区", "value": sum(float(item["expected_total"]) >= 12 for item in predictions)},
+            {"label": "5-12", "copy": "中分区", "value": sum(5 <= float(item["expected_total"]) < 12 for item in predictions)},
+            {"label": "<5", "copy": "低分区", "value": sum(float(item["expected_total"]) < 5 for item in predictions)},
+        ]
+        return {
+            "scope": {
+                "label": selected_competition or "请先选择赛事",
+                "selected_competition": selected_competition,
+                "selected_season": selected_season,
+                "selected_region": selected_region,
+                "selected_series_slug": "jcds",
+            },
+            "days": day_options[:60],
+            "selected_day": selected_day_payload,
+            "matches": [match_option(match) for match in scoped_matches[:60]],
+            "selected_match": match_option(selected_day_matches[0]) if selected_day_matches else None,
+            "prediction_buckets": [{"key": item["key"], "label": item["label"]} for item in simulation["market_definitions"]],
+            "predictions": predictions,
+            "band_summary": band_summary,
+            "scenario": {
+                "version": selected_scenario.get("version"),
+                "competition_name": selected_competition,
+                "season_name": selected_season,
+                "played_on": selected_played_on,
+                "published": True,
+                "updated_at": selected_scenario.get("updated_at"),
+                "roster_size": len(three_game_roster),
+            } if selected_scenario else None,
+            "roster_source": roster_source,
+            "model_metadata": simulation["model_metadata"],
+            "market_definitions": simulation["market_definitions"],
+            "notice": "系统每局随机分配4神、4民、4狼并统一抽取胜负；等于盘口不计命中，预测概率不等于赔率。",
         }
 
     aggregated_by_player: dict[str, dict[str, Any]] = {}
@@ -18138,8 +18343,6 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
             if item.get("seat"):
                 entry["seats"].append(str(item.get("seat")))
             entry["match_labels"].append(match_label)
-
-    prediction_settings = load_prediction_model_settings()
 
     def calibrate_day_prediction_totals(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
         day_settings = prediction_settings.get("day_total", {})
@@ -18203,6 +18406,13 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
         return {
             "player_id": entry["player_id"],
             "player_name": entry["player_name"],
+            "profile_href": build_scoped_path(
+                f"/players/{entry['player_id']}",
+                selected_competition,
+                selected_season,
+                selected_region,
+                selected_series_slug,
+            ),
             "is_star_player": bool(
                 player_lookup.get(str(entry.get("player_id") or ""), {}).get("is_star_player")
             ),
@@ -18216,6 +18426,13 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
             "expected_total": f"{expected_total:.2f}",
             "average_expected_points": f"{expected_total / match_count:.2f}",
             "raw_expected_total": f"{float(entry.get('raw_expected_total') or expected_total):.2f}",
+            "game_win_probabilities": [],
+            "expected_wins": None,
+            "win_count_probabilities": [],
+            "auto_expected_total": f"{float(entry.get('raw_expected_total') or expected_total):.2f}",
+            "market_probabilities": [],
+            "manual_override_applied": False,
+            "model_source": "legacy_model",
         }
 
     predictions = [
@@ -18260,6 +18477,13 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
         "prediction_buckets": [{"key": key, "label": label} for key, label, _, _ in PREDICTION_BUCKETS],
         "predictions": predictions,
         "band_summary": prediction_band_summary,
+        "scenario": None,
+        "roster_source": "official_schedule" if selected_day_matches else "none",
+        "model_metadata": {
+            "version": prediction_settings.get("model_version") or "result_weighted",
+            "fallback": selected_competition in jcds_competitions and not prediction_settings.get("jcds_three_game_enabled", True),
+        },
+        "market_definitions": [],
         "notice": "预测按比赛日汇总，预计总分为同一天所有对局预期分数相加；未录入结果的比赛不会计入历史样本。",
     }
 
@@ -18312,6 +18536,169 @@ def handle_predictions_api(ctx: RequestContext, start_response):
             headers=[("Allow", "GET")],
         )
     return start_response_json(start_response, "200 OK", build_predictions_api_payload(ctx))
+
+
+def handle_prediction_roster_search_api(ctx: RequestContext, start_response):
+    if ctx.method != "GET":
+        return start_response_json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "roster search only supports GET"},
+            headers=[("Allow", "GET")],
+        )
+    if not ctx.current_user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+    data = load_validated_data()
+    competition_name = form_value(ctx.query, "competition").strip()
+    season_name = form_value(ctx.query, "season").strip()
+    if not competition_name or not can_manage_matches(ctx.current_user, data, competition_name):
+        return start_response_json(start_response, "403 Forbidden", {"error": "没有该赛事的管理权限。"})
+    query = form_value(ctx.query, "q").strip().casefold()
+    scoped_matches = [
+        match
+        for match in data.get("matches", [])
+        if get_match_competition_name(match) == competition_name
+        and (not season_name or str(match.get("season") or "") == season_name)
+    ]
+    if not scoped_matches:
+        scoped_matches = [
+            match
+            for match in data.get("matches", [])
+            if get_match_competition_name(match) == competition_name
+        ]
+    player_ids = {
+        str(participant.get("player_id") or "").strip()
+        for match in scoped_matches
+        for participant in match.get("players", [])
+        if str(participant.get("player_id") or "").strip().upper() != "NPC"
+    }
+    team_ids = {
+        str(participant.get("team_id") or "").strip()
+        for match in scoped_matches
+        for participant in match.get("players", [])
+        if str(participant.get("team_id") or "").strip()
+    }
+    team_lookup = {
+        str(team.get("team_id") or ""): team for team in data.get("teams", [])
+    }
+    players = []
+    for player in data.get("players", []):
+        player_id = str(player.get("player_id") or "").strip()
+        if player_id not in player_ids:
+            continue
+        player_name = str(player.get("display_name") or player_id)
+        if query and query not in player_name.casefold() and query not in player_id.casefold():
+            continue
+        team_id = str(player.get("team_id") or "").strip()
+        players.append(
+            {
+                "player_id": player_id,
+                "player_name": player_name,
+                "team_id": team_id,
+                "team_name": str(team_lookup.get(team_id, {}).get("name") or ""),
+            }
+        )
+        if team_id:
+            team_ids.add(team_id)
+    teams = []
+    for team_id in team_ids:
+        team = team_lookup.get(team_id, {})
+        team_name = str(team.get("name") or team_id)
+        if query and query not in team_name.casefold() and query not in team_id.casefold():
+            continue
+        teams.append({"team_id": team_id, "team_name": team_name})
+    players.sort(key=lambda item: (item["player_name"], item["player_id"]))
+    teams.sort(key=lambda item: (item["team_name"], item["team_id"]))
+    return start_response_json(
+        start_response,
+        "200 OK",
+        {
+            "scope": {"competition": competition_name, "season": season_name},
+            "players": players[:50],
+            "teams": teams[:50],
+        },
+    )
+
+
+def get_predictions_page(ctx: RequestContext) -> str:
+    payload = build_predictions_api_payload(ctx)
+    scope = payload.get("scope") or {}
+    selected_competition = str(scope.get("selected_competition") or "")
+    selected_season = str(scope.get("selected_season") or "")
+    selected_day = payload.get("selected_day") or {}
+    selected_played_on = str(selected_day.get("played_on") or "")
+    day_links = "".join(
+        f'<a class="btn btn-sm {"btn-dark" if str(day.get("played_on") or "") == selected_played_on else "btn-outline-dark"}" href="/predictions?{urlencode({"competition": selected_competition, "season": selected_season, "played_on": str(day.get("played_on") or "")})}">{escape(str(day.get("played_on") or ""))}{" · 已发布" if day.get("scenario_published") else ""}</a>'
+        for day in payload.get("days") or []
+    )
+    market_headers = "".join(
+        f'<th>{escape(str(item.get("label") or ""))}</th>'
+        for item in payload.get("market_definitions") or []
+    )
+    rows = []
+    for item in payload.get("predictions") or []:
+        market_cells = "".join(
+            f'<td><div class="fw-semibold">{escape(str(market.get("display") or "—"))}</div><div class="small text-secondary">等于 {escape(str(market.get("equality_display") or "0.0%"))}</div></td>'
+            for market in item.get("market_probabilities") or []
+        )
+        game_cells = "".join(
+            f'<td>{escape(str(display))}</td>'
+            for display in item.get("game_win_displays") or []
+        )
+        win_distribution = " / ".join(
+            f'{int(entry.get("wins") or 0)}胜 {entry.get("display") or "0.0%"}'
+            for entry in item.get("win_count_probabilities") or []
+        )
+        player_name = escape(str(item.get("player_name") or ""))
+        player_html = (
+            f'<a class="link-dark fw-semibold text-decoration-none" href="{escape(str(item.get("profile_href") or ""))}">{player_name}</a>'
+            if item.get("profile_href")
+            else f'<span class="fw-semibold">{player_name}</span><div class="small text-secondary">总体先验</div>'
+        )
+        rows.append(
+            f"""
+            <tr>
+              <td>{int(item.get('rank') or 0)}</td>
+              <td>{player_html}</td>
+              <td>{escape(str(item.get('team_name') or ''))}</td>
+              {game_cells or '<td>—</td><td>—</td><td>—</td>'}
+              <td>{float(item.get('expected_wins') or 0):.2f}</td>
+              <td><div class="fw-semibold">{escape(str(item.get('expected_total') or '—'))}</div><div class="small text-secondary">自动 {escape(str(item.get('auto_expected_total') or '—'))} · {escape(str(item.get('confidence') or ''))}</div></td>
+              <td class="small text-nowrap">{escape(win_distribution or '—')}</td>
+              {market_cells}
+            </tr>
+            """
+        )
+    status_label = "已发布场景" if payload.get("scenario") else (
+        "正式赛程名单" if payload.get("roster_source") == "official_schedule" else "暂无可预测数据"
+    )
+    body = f"""
+    <section class="hero p-4 p-md-5 shadow-lg mb-4">
+      <div class="eyebrow mb-3">Three-game Forecast</div>
+      <h1 class="hero-title mb-3">当天三局胜率预测</h1>
+      <p class="hero-copy mb-0">一次查看12名选手三局胜率、预计胜场、预计日总分与六项盘口概率。</p>
+      <div class="d-flex flex-wrap gap-2 mt-4">
+        <span class="chip">{escape(selected_competition or '京城大师赛')}</span>
+        <span class="chip">{escape(selected_season or '未选择赛季')}</span>
+        <span class="chip">{escape(selected_played_on or '未选择比赛日')}</span>
+        <span class="chip">{escape(status_label)}</span>
+      </div>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-wrap gap-2">{day_links or '<span class="text-secondary">当前没有已发布场景或完整正式赛程。</span>'}</div>
+    </section>
+    <section class="panel shadow-sm p-3 p-lg-4">
+      <div class="alert alert-warning fw-semibold">系统每局随机分配4神、4民、4狼；等于盘口不计命中；概率不等于赔率。</div>
+      <div class="table-responsive">
+        <table class="table align-middle">
+          <thead><tr><th>排名</th><th>选手</th><th>战队</th><th>第1局胜率</th><th>第2局胜率</th><th>第3局胜率</th><th>预计胜场</th><th>预计总分</th><th>0/1/2/3胜分布</th>{market_headers}</tr></thead>
+          <tbody>{''.join(rows) or '<tr><td colspan="15" class="text-secondary py-4">暂无可预测数据：请等待管理员发布12人名单，或补全正式赛程中的三局名单。</td></tr>'}</tbody>
+        </table>
+      </div>
+      <p class="small text-secondary mb-0">{escape(str(payload.get('notice') or ''))}</p>
+    </section>
+    """
+    return layout("当天三局胜率预测", body, ctx, alert=form_value(ctx.query, "alert").strip())
 
 
 def get_match_prediction_page(ctx: RequestContext, match_id: str) -> str:
@@ -18626,6 +19013,8 @@ def app(environ, start_response):
             return handle_match_api(ctx, start_response, match_id)
         if path == "/api/predictions":
             return handle_predictions_api(ctx, start_response)
+        if path == "/api/prediction-roster-search":
+            return handle_prediction_roster_search_api(ctx, start_response)
         if path.startswith("/api/series/"):
             series_slug = path.split("/", 3)[3]
             return handle_series_api(ctx, start_response, series_slug)
@@ -18651,6 +19040,8 @@ def app(environ, start_response):
             return start_response_html(start_response, "200 OK", get_dashboard_page(ctx))
         if path == "/dashboard/legacy":
             return start_response_html(start_response, "200 OK", get_dashboard_page(ctx))
+        if path == "/predictions":
+            return start_response_html(start_response, "200 OK", get_predictions_page(ctx))
         if path == "/competitions":
             return handle_competitions(ctx, start_response)
         if path == "/competitions/legacy":

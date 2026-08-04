@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from datetime import date
 
 import web_app as legacy
 from season_grouping import (
@@ -60,6 +62,130 @@ PREDICTION_SETTING_CAMPS = [
     ("villagers", "好人"),
     ("third_party", "第三方"),
 ]
+
+PREDICTION_DAY_SCENARIOS_KEY = "prediction_day_scenarios"
+PREDICTION_DAY_SCENARIO_VERSION = "prediction_day_scenario_v1"
+
+
+def prediction_day_scenario_key(
+    competition_name: str,
+    season_name: str,
+    played_on: str,
+) -> str:
+    return "\x1f".join(
+        str(value or "").strip()
+        for value in (competition_name, season_name, played_on)
+    )
+
+
+def _stable_scenario_player_id(
+    competition_name: str,
+    season_name: str,
+    played_on: str,
+    player_name: str,
+    seat: int,
+) -> str:
+    raw_value = "\x1f".join(
+        [competition_name, season_name, played_on, player_name.casefold(), str(seat)]
+    )
+    digest = hashlib.sha256(raw_value.encode("utf-8")).hexdigest()[:16]
+    return f"scenario-{digest}"
+
+
+def normalize_prediction_day_scenario(
+    raw_item: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if not isinstance(raw_item, dict):
+        return None
+    competition_name = str(raw_item.get("competition_name") or "").strip()
+    season_name = str(raw_item.get("season_name") or "").strip()
+    played_on = str(raw_item.get("played_on") or "").strip()
+    if not competition_name or not season_name or not played_on:
+        return None
+    roster = []
+    for index, raw_row in enumerate(raw_item.get("roster") or []):
+        if not isinstance(raw_row, dict):
+            continue
+        player_name = str(raw_row.get("player_name") or "").strip()
+        team_name = str(raw_row.get("team_name") or "").strip()
+        if not player_name or not team_name:
+            continue
+        override = raw_row.get("manual_total_override")
+        if override in (None, ""):
+            normalized_override = None
+        else:
+            try:
+                normalized_override = max(-10.0, min(30.0, round(float(override) * 2.0) / 2.0))
+            except (TypeError, ValueError):
+                normalized_override = None
+        seat = index + 1
+        roster.append(
+            {
+                "seat": seat,
+                "player_id": str(raw_row.get("player_id") or "").strip(),
+                "scenario_player_id": str(raw_row.get("scenario_player_id") or "").strip()
+                or _stable_scenario_player_id(
+                    competition_name, season_name, played_on, player_name, seat
+                ),
+                "player_name": player_name,
+                "team_id": str(raw_row.get("team_id") or "").strip(),
+                "team_name": team_name,
+                "manual_total_override": normalized_override,
+            }
+        )
+    return {
+        "version": str(raw_item.get("version") or PREDICTION_DAY_SCENARIO_VERSION),
+        "competition_name": competition_name,
+        "season_name": season_name,
+        "played_on": played_on,
+        "published": bool(raw_item.get("published", True)),
+        "roster": roster,
+        "updated_by": str(raw_item.get("updated_by") or "").strip(),
+        "updated_at": str(raw_item.get("updated_at") or "").strip(),
+        "published_at": str(raw_item.get("published_at") or "").strip(),
+    }
+
+
+def load_prediction_day_scenarios() -> dict[str, dict[str, Any]]:
+    raw_value = legacy.load_meta_value(PREDICTION_DAY_SCENARIOS_KEY) or ""
+    if not raw_value.strip():
+        return {}
+    try:
+        parsed = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(parsed, dict):
+        return {}
+    result = {}
+    for raw_item in parsed.values():
+        item = normalize_prediction_day_scenario(raw_item)
+        if not item:
+            continue
+        result[
+            prediction_day_scenario_key(
+                item["competition_name"], item["season_name"], item["played_on"]
+            )
+        ] = item
+    return result
+
+
+def save_prediction_day_scenarios(
+    scenarios: dict[str, dict[str, Any]],
+) -> None:
+    clean_payload = {}
+    for raw_item in scenarios.values():
+        item = normalize_prediction_day_scenario(raw_item)
+        if not item:
+            continue
+        key = prediction_day_scenario_key(
+            item["competition_name"], item["season_name"], item["played_on"]
+        )
+        clean_payload[key] = item
+    legacy.save_meta_value(
+        PREDICTION_DAY_SCENARIOS_KEY,
+        json.dumps(clean_payload, ensure_ascii=False, sort_keys=True),
+    )
+    legacy.invalidate_prediction_api_cache()
 
 
 def _is_completed_prediction_match(match: dict[str, Any], current_match_id: str) -> bool:
@@ -704,6 +830,10 @@ def _parse_setting_number(
 def _prediction_settings_from_form(ctx: RequestContext, current_settings: dict[str, Any]) -> dict[str, Any]:
     settings = {
         "model_version": "result_weighted_custom",
+        "jcds_three_game_enabled": form_value(
+            ctx.form, "jcds_three_game_enabled"
+        ).strip()
+        == "1",
         "score_uplift": _parse_setting_number(
             form_value(ctx.form, "score_uplift"),
             float(current_settings.get("score_uplift") or 1.0),
@@ -813,6 +943,10 @@ def _prediction_model_settings_form_html(settings: dict[str, Any], can_edit: boo
       </div>
       <form method="post" action="/prediction-admin">
         <input type="hidden" name="action" value="save_model_settings">
+        <div class="form-check form-switch mb-3">
+          <input class="form-check-input" type="checkbox" role="switch" id="jcds_three_game_enabled" name="jcds_three_game_enabled" value="1" {'checked' if settings.get('jcds_three_game_enabled', True) else ''} {'disabled' if not can_edit else ''}>
+          <label class="form-check-label fw-semibold" for="jcds_three_game_enabled">启用京城大师赛三局模型（关闭后立即回退原预测模型）</label>
+        </div>
         <div class="row g-3">
           <div class="col-12 col-lg-3">
             <label class="form-label">整体倍率</label>
@@ -1347,6 +1481,7 @@ def get_match_prediction_page(ctx: RequestContext, match_id: str, alert: str = "
           </div>
           <div class="d-flex flex-wrap gap-2 mt-3">
             <a class="btn btn-outline-dark" href="{escape(next_path)}">返回比赛详情</a>
+            <a class="btn btn-outline-dark" href="/predictions?competition={quote(competition_name)}&season={quote(season_name)}&played_on={quote(str(match.get('played_on') or ''))}">查看当天三局预测</a>
             <a class="btn btn-dark" href="/prediction-admin?match_id={escape(match_id)}">后台填写人工概率</a>
           </div>
         </div>
@@ -1366,10 +1501,169 @@ def get_match_prediction_page(ctx: RequestContext, match_id: str, alert: str = "
     return layout("胜率预测", body, ctx, alert=alert or form_value(ctx.query, "alert").strip())
 
 
+def _prediction_day_scope(
+    ctx: RequestContext,
+    data: dict[str, Any],
+) -> tuple[list[str], str, list[str], str, str]:
+    series_catalog = legacy.load_series_catalog(data)
+    jcds_competitions = sorted(
+        {
+            str(entry.get("competition_name") or "").strip()
+            for entry in series_catalog
+            if str(entry.get("series_slug") or "").strip() == "jcds"
+        }
+    )
+    selected_competition = form_value(ctx.query, "scenario_competition").strip()
+    if selected_competition not in jcds_competitions:
+        selected_competition = jcds_competitions[0] if jcds_competitions else ""
+    season_names = (
+        legacy.list_seasons(
+            data,
+            selected_competition,
+            include_non_ongoing=True,
+            selected_season=form_value(ctx.query, "scenario_season").strip() or None,
+        )
+        if selected_competition
+        else []
+    )
+    selected_season = form_value(ctx.query, "scenario_season").strip()
+    if selected_season not in season_names:
+        selected_season = season_names[0] if season_names else ""
+    played_on = form_value(ctx.query, "scenario_date").strip() or legacy.china_today_label()
+    try:
+        date.fromisoformat(played_on)
+    except ValueError:
+        played_on = legacy.china_today_label()
+    return jcds_competitions, selected_competition, season_names, selected_season, played_on
+
+
+def _prediction_day_scenario_admin_html(
+    ctx: RequestContext,
+    data: dict[str, Any],
+) -> str:
+    if not is_admin_user(ctx.current_user):
+        return ""
+    (
+        competitions,
+        selected_competition,
+        season_names,
+        selected_season,
+        played_on,
+    ) = _prediction_day_scope(ctx, data)
+    if not competitions:
+        return '<div class="alert alert-secondary">当前没有 series_slug=jcds 的赛事，无法发布三局预测。</div>'
+    scenarios = load_prediction_day_scenarios()
+    scenario = scenarios.get(
+        prediction_day_scenario_key(selected_competition, selected_season, played_on)
+    )
+    roster = list((scenario or {}).get("roster") or [])[:12]
+    roster.extend({} for _ in range(12 - len(roster)))
+    team_lookup = {
+        str(team.get("team_id") or ""): team for team in data.get("teams", [])
+    }
+    player_options = []
+    player_team_map: dict[str, str] = {}
+    for player in sorted(
+        data.get("players", []),
+        key=lambda item: str(item.get("display_name") or item.get("player_id") or ""),
+    ):
+        player_name = str(player.get("display_name") or player.get("player_id") or "").strip()
+        if not player_name:
+            continue
+        team = team_lookup.get(str(player.get("team_id") or ""), {})
+        team_name = str(team.get("name") or "").strip()
+        player_team_map[player_name] = team_name
+        player_options.append(f'<option value="{escape(player_name)}"></option>')
+    team_options = "".join(
+        f'<option value="{escape(str(team.get("name") or team.get("team_id") or ""))}"></option>'
+        for team in sorted(
+            data.get("teams", []),
+            key=lambda item: str(item.get("name") or item.get("team_id") or ""),
+        )
+    )
+    competition_options = "".join(
+        f'<option value="{escape(item)}"{" selected" if item == selected_competition else ""}>{escape(item)}</option>'
+        for item in competitions
+    )
+    season_options = "".join(
+        f'<option value="{escape(item)}"{" selected" if item == selected_season else ""}>{escape(item)}</option>'
+        for item in season_names
+    )
+    rows = []
+    for index, row in enumerate(roster, start=1):
+        override = row.get("manual_total_override")
+        override_value = "" if override in (None, "") else _format_setting_number(override)
+        rows.append(
+            f"""
+            <tr>
+              <td>{index}</td>
+              <td><input class="form-control scenario-player-input" list="prediction-player-options" name="scenario_player_{index}" data-row="{index}" value="{escape(str(row.get('player_name') or ''))}" autocomplete="off" required></td>
+              <td><input class="form-control" list="prediction-team-options" name="scenario_team_{index}" id="scenario-team-{index}" value="{escape(str(row.get('team_name') or ''))}" autocomplete="off" required></td>
+              <td><input class="form-control" type="number" min="-10" max="30" step="0.5" name="scenario_override_{index}" value="{escape(override_value)}" placeholder="自动"></td>
+            </tr>
+            """
+        )
+    map_json = json.dumps(player_team_map, ensure_ascii=False).replace("</", "<\\/")
+    status_copy = (
+        f"已发布 · {escape(str((scenario or {}).get('updated_at') or ''))} · 操作者 {escape(str((scenario or {}).get('updated_by') or ''))}"
+        if scenario and scenario.get("published")
+        else "未发布"
+    )
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
+        <div>
+          <div class="eyebrow mb-2">Three-game Scenario</div>
+          <h2 class="section-title mb-2">比赛日三局预测</h2>
+          <p class="section-copy mb-0">固定录入12人一次，发布后系统以每局4神、4民、4狼随机模拟三局；陌生名称不会创建正式档案。</p>
+        </div>
+        <span class="chip">{status_copy}</span>
+      </div>
+      <form method="get" action="/prediction-admin" class="row g-3 align-items-end mb-4">
+        <div class="col-12 col-lg-4"><label class="form-label">赛事</label><select class="form-select" name="scenario_competition">{competition_options}</select></div>
+        <div class="col-12 col-lg-3"><label class="form-label">赛季</label><select class="form-select" name="scenario_season">{season_options}</select></div>
+        <div class="col-12 col-lg-3"><label class="form-label">比赛日</label><input class="form-control" type="date" name="scenario_date" value="{escape(played_on)}"></div>
+        <div class="col-12 col-lg-2"><button class="btn btn-outline-dark w-100" type="submit">切换日期</button></div>
+      </form>
+      <form method="post" action="/prediction-admin?scenario_competition={quote(selected_competition)}&scenario_season={quote(selected_season)}&scenario_date={quote(played_on)}">
+        <input type="hidden" name="scenario_competition" value="{escape(selected_competition)}">
+        <input type="hidden" name="scenario_season" value="{escape(selected_season)}">
+        <input type="hidden" name="scenario_date" value="{escape(played_on)}">
+        <datalist id="prediction-player-options">{''.join(player_options)}</datalist>
+        <datalist id="prediction-team-options">{team_options}</datalist>
+        <div class="table-responsive">
+          <table class="table align-middle">
+            <thead><tr><th>序号</th><th>选手</th><th>战队</th><th>日总分修正</th></tr></thead>
+            <tbody>{''.join(rows)}</tbody>
+          </table>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mt-3">
+          <button class="btn btn-dark" type="submit" name="action" value="save_day_scenario">保存并发布</button>
+          <button class="btn btn-outline-dark" type="submit" name="action" value="resimulate_day_scenario">重新模拟</button>
+          <button class="btn btn-outline-danger" type="submit" name="action" value="unpublish_day_scenario" formnovalidate {'disabled' if not scenario or not scenario.get('published') else ''}>取消发布</button>
+          <a class="btn btn-outline-dark" href="/predictions?competition={quote(selected_competition)}&season={quote(selected_season)}&played_on={quote(played_on)}">查看公开页</a>
+        </div>
+      </form>
+      <script>
+        (() => {{
+          const teamByPlayer = {map_json};
+          document.querySelectorAll('.scenario-player-input').forEach((input) => {{
+            input.addEventListener('change', () => {{
+              const teamInput = document.getElementById(`scenario-team-${{input.dataset.row}}`);
+              if (teamInput && teamByPlayer[input.value]) teamInput.value = teamByPlayer[input.value];
+            }});
+          }});
+        }})();
+      </script>
+    </section>
+    """
+
+
 def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
     if not ctx.current_user:
         return layout("胜率预测后台", '<div class="alert alert-danger">请先登录。</div>', ctx)
     data = load_validated_data()
+    scenario_editor = _prediction_day_scenario_admin_html(ctx, data)
     match_id = form_value(ctx.query, "match_id").strip()
     matches = sorted(
         data.get("matches", []),
@@ -1425,6 +1719,7 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
       <p class="mb-0 opacity-75">这里维护预测模型参数和单场人工概率。模型参数保存后，小程序比赛日预测榜会立即按新口径展示。</p>
     </section>
     {model_settings_form}
+    {scenario_editor}
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <form method="get" action="/prediction-admin" class="row g-3 align-items-end">
         <div class="col-12 col-lg-8">
@@ -1462,6 +1757,172 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
     return layout("胜率预测后台", body, ctx, alert=alert or form_value(ctx.query, "alert").strip())
 
 
+def _prediction_day_redirect(
+    start_response,
+    competition_name: str,
+    season_name: str,
+    played_on: str,
+    alert: str,
+):
+    return legacy.redirect(
+        start_response,
+        "/prediction-admin?"
+        + urlencode(
+            {
+                "scenario_competition": competition_name,
+                "scenario_season": season_name,
+                "scenario_date": played_on,
+                "alert": alert,
+            }
+        ),
+    )
+
+
+def _handle_prediction_day_scenario_admin(
+    ctx: RequestContext,
+    start_response,
+    data: dict[str, Any],
+    action: str,
+):
+    if not is_admin_user(ctx.current_user):
+        return legacy.start_response_html(
+            start_response,
+            "403 Forbidden",
+            get_prediction_admin_page(ctx, "只有管理员可以发布比赛日三局预测。"),
+        )
+    competition_name = form_value(ctx.form, "scenario_competition").strip()
+    season_name = form_value(ctx.form, "scenario_season").strip()
+    played_on = form_value(ctx.form, "scenario_date").strip()
+    jcds_competitions = {
+        str(entry.get("competition_name") or "").strip()
+        for entry in legacy.load_series_catalog(data)
+        if str(entry.get("series_slug") or "").strip() == "jcds"
+    }
+    valid_seasons = legacy.list_seasons(
+        data,
+        competition_name,
+        include_non_ongoing=True,
+        selected_season=season_name or None,
+    )
+    try:
+        date.fromisoformat(played_on)
+    except ValueError:
+        played_on = ""
+    if competition_name not in jcds_competitions or season_name not in valid_seasons or not played_on:
+        return legacy.start_response_html(
+            start_response,
+            "400 Bad Request",
+            get_prediction_admin_page(ctx, "赛事、赛季或比赛日无效。"),
+        )
+    key = prediction_day_scenario_key(competition_name, season_name, played_on)
+    scenarios = load_prediction_day_scenarios()
+    if action == "unpublish_day_scenario":
+        scenario = scenarios.get(key)
+        if scenario:
+            scenario["published"] = False
+            scenario["updated_by"] = str(ctx.current_user.get("username") or "")
+            scenario["updated_at"] = ctx.now_label
+            scenarios[key] = scenario
+            save_prediction_day_scenarios(scenarios)
+            legacy.audit_action(
+                ctx,
+                "prediction_day.unpublish",
+                target_type="prediction_day_scenario",
+                target_id=key,
+                summary=f"取消发布 {competition_name} {season_name} {played_on} 三局预测",
+            )
+        return _prediction_day_redirect(
+            start_response, competition_name, season_name, played_on, "该比赛日预测已取消发布。"
+        )
+
+    players_by_name: dict[str, list[dict[str, Any]]] = {}
+    for player in data.get("players", []):
+        player_name = str(player.get("display_name") or player.get("player_id") or "").strip()
+        if player_name:
+            players_by_name.setdefault(player_name.casefold(), []).append(player)
+    teams_by_name: dict[str, list[dict[str, Any]]] = {}
+    for team in data.get("teams", []):
+        team_name = str(team.get("name") or team.get("team_id") or "").strip()
+        if team_name:
+            teams_by_name.setdefault(team_name.casefold(), []).append(team)
+    roster = []
+    seen_players: set[str] = set()
+    for index in range(1, 13):
+        player_name = form_value(ctx.form, f"scenario_player_{index}").strip()
+        team_name = form_value(ctx.form, f"scenario_team_{index}").strip()
+        if not player_name or not team_name:
+            return legacy.start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_prediction_admin_page(ctx, "12名选手和战队必须全部填写。"),
+            )
+        matched_players = players_by_name.get(player_name.casefold(), [])
+        player = matched_players[0] if len(matched_players) == 1 else {}
+        matched_teams = teams_by_name.get(team_name.casefold(), [])
+        team = matched_teams[0] if len(matched_teams) == 1 else {}
+        player_id = str(player.get("player_id") or "").strip()
+        team_id = str(team.get("team_id") or "").strip()
+        duplicate_key = f"id:{player_id}" if player_id else f"name:{player_name.casefold()}"
+        if duplicate_key in seen_players:
+            return legacy.start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_prediction_admin_page(ctx, f"选手“{player_name}”重复，12行不得重复。"),
+            )
+        seen_players.add(duplicate_key)
+        override_text = form_value(ctx.form, f"scenario_override_{index}").strip()
+        override = None
+        if override_text:
+            try:
+                override = float(override_text)
+            except ValueError:
+                override = 99.0
+            if not -10.0 <= override <= 30.0 or abs(override * 2.0 - round(override * 2.0)) > 0.000001:
+                return legacy.start_response_html(
+                    start_response,
+                    "400 Bad Request",
+                    get_prediction_admin_page(ctx, "日总分修正只能填写 -10～30、步长0.5的数字。"),
+                )
+        roster.append(
+            {
+                "seat": index,
+                "player_id": player_id,
+                "scenario_player_id": _stable_scenario_player_id(
+                    competition_name, season_name, played_on, player_name, index
+                ),
+                "player_name": player_name,
+                "team_id": team_id,
+                "team_name": team_name,
+                "manual_total_override": override,
+            }
+        )
+    scenario = normalize_prediction_day_scenario(
+        {
+            "version": PREDICTION_DAY_SCENARIO_VERSION,
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "played_on": played_on,
+            "published": True,
+            "roster": roster,
+            "updated_by": str(ctx.current_user.get("username") or ""),
+            "updated_at": ctx.now_label,
+            "published_at": ctx.now_label,
+        }
+    )
+    scenarios[key] = scenario or {}
+    save_prediction_day_scenarios(scenarios)
+    legacy.audit_action(
+        ctx,
+        "prediction_day.publish" if action == "save_day_scenario" else "prediction_day.resimulate",
+        target_type="prediction_day_scenario",
+        target_id=key,
+        summary=f"发布 {competition_name} {season_name} {played_on} 三局预测",
+        metadata={"roster_size": len(roster), "scenario_version": PREDICTION_DAY_SCENARIO_VERSION},
+    )
+    alert = "比赛日三局预测已保存并发布。" if action == "save_day_scenario" else "三局预测已按固定种子重新模拟并发布。"
+    return _prediction_day_redirect(start_response, competition_name, season_name, played_on, alert)
+
+
 def handle_prediction_admin(ctx: RequestContext, start_response):
     if not ctx.current_user:
         return legacy.redirect(start_response, "/login?next=/prediction-admin")
@@ -1476,6 +1937,14 @@ def handle_prediction_admin(ctx: RequestContext, start_response):
         legacy.save_prediction_model_settings(next_settings)
         return legacy.redirect(start_response, f"/prediction-admin?alert={quote('预测模型参数已保存。')}")
     data = load_validated_data()
+    if action in {
+        "save_day_scenario",
+        "resimulate_day_scenario",
+        "unpublish_day_scenario",
+    }:
+        return _handle_prediction_day_scenario_admin(
+            ctx, start_response, data, action
+        )
     match_id = form_value(ctx.form, "match_id").strip() or form_value(ctx.query, "match_id").strip()
     match = get_match_by_id(data.get("matches", []), match_id)
     if not match:

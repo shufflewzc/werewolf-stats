@@ -800,11 +800,18 @@ struct PredictionsResponse: Codable, Sendable {
     let pagination: Pagination?
     let bandSummary: [PredictionBand]?
     let notice: String?
+    let scenario: PredictionScenario?
+    let rosterSource: String?
+    let modelMetadata: PredictionModelMetadata?
+    let marketDefinitions: [PredictionMarket]?
     enum CodingKeys: String, CodingKey {
-        case days, predictions, pagination, notice
+        case days, predictions, pagination, notice, scenario
         case generatedAt = "generated_at"
         case selectedDay = "selected_day"
         case bandSummary = "band_summary"
+        case rosterSource = "roster_source"
+        case modelMetadata = "model_metadata"
+        case marketDefinitions = "market_definitions"
     }
 }
 
@@ -826,8 +833,21 @@ struct Prediction: Codable, Hashable, Identifiable, Sendable {
     let expectedTotal: JSONScalar?
     let expectedPoints: JSONScalar?
     let matchLabels: [String]?
+    let profileHref: String?
+    let modelSource: String?
+    let gameWinProbabilities: [Double]?
+    let gameWinDisplays: [String]?
+    let expectedWins: Double?
+    let winCountProbabilities: [PredictionWinCount]?
+    let autoExpectedTotal: JSONScalar?
+    let marketProbabilities: [PredictionMarket]?
+    let manualOverrideApplied: Bool?
     var id: String { playerID }
     var scoreText: String { expectedTotal?.text ?? expectedPoints?.text ?? "--" }
+    var canOpenProfile: Bool {
+        if !(profileHref ?? "").isEmpty { return true }
+        return modelSource != "population_prior" && !playerID.hasPrefix("scenario-")
+    }
     enum CodingKeys: String, CodingKey {
         case rank, confidence
         case playerID = "player_id"
@@ -838,6 +858,72 @@ struct Prediction: Codable, Hashable, Identifiable, Sendable {
         case expectedTotal = "expected_total"
         case expectedPoints = "expected_points"
         case matchLabels = "match_labels"
+        case profileHref = "profile_href"
+        case modelSource = "model_source"
+        case gameWinProbabilities = "game_win_probabilities"
+        case gameWinDisplays = "game_win_displays"
+        case expectedWins = "expected_wins"
+        case winCountProbabilities = "win_count_probabilities"
+        case autoExpectedTotal = "auto_expected_total"
+        case marketProbabilities = "market_probabilities"
+        case manualOverrideApplied = "manual_override_applied"
+    }
+}
+
+struct PredictionWinCount: Codable, Hashable, Identifiable, Sendable {
+    let wins: Int
+    let probability: Double
+    let display: String?
+    var id: Int { wins }
+}
+
+struct PredictionMarket: Codable, Hashable, Identifiable, Sendable {
+    let key: String
+    let label: String
+    let `operator`: String?
+    let line: Double?
+    let probability: Double?
+    let display: String?
+    let equalityProbability: Double?
+    let equalityDisplay: String?
+    var id: String { key }
+    enum CodingKeys: String, CodingKey {
+        case key, label, `operator`, line, probability, display
+        case equalityProbability = "equality_probability"
+        case equalityDisplay = "equality_display"
+    }
+}
+
+struct PredictionScenario: Codable, Hashable, Sendable {
+    let version: String?
+    let competitionName: String?
+    let seasonName: String?
+    let playedOn: String?
+    let published: Bool?
+    let updatedAt: String?
+    let rosterSize: Int?
+    enum CodingKeys: String, CodingKey {
+        case version, published
+        case competitionName = "competition_name"
+        case seasonName = "season_name"
+        case playedOn = "played_on"
+        case updatedAt = "updated_at"
+        case rosterSize = "roster_size"
+    }
+}
+
+struct PredictionModelMetadata: Codable, Hashable, Sendable {
+    let version: String?
+    let scoreBasis: String?
+    let simulations: Int?
+    let rollingShare: Double?
+    let werewolfWinPrior: Double?
+    let fallback: Bool?
+    enum CodingKeys: String, CodingKey {
+        case version, simulations, fallback
+        case scoreBasis = "score_basis"
+        case rollingShare = "rolling_share"
+        case werewolfWinPrior = "werewolf_win_prior"
     }
 }
 

@@ -21,7 +21,7 @@ struct PredictionsView: View {
             case .loaded(let payload, let stale): content(payload, stale: stale)
             } }
         }
-        .navigationTitle("胜率预测").navigationBarTitleDisplayMode(.inline)
+        .navigationTitle("当天三局胜率预测").navigationBarTitleDisplayMode(.inline)
         .task(id: app.selectedScope) { selectedDay = initialDay ?? ""; await load() }
     }
 
@@ -37,9 +37,10 @@ struct PredictionsView: View {
             if let bands = payload.bandSummary, !bands.isEmpty { Section("预测分区") { MetricGrid(metrics: bands.map { Metric(label: $0.copy ?? $0.label, value: $0.value ?? .null, copy: $0.label) }).listRowInsets(EdgeInsets()).listRowBackground(Color.clear) } }
             Section("选手预测") {
                 ForEach(predictions) { item in
-                    Button { router.navigate(to: .player(item.playerID)) } label: {
-                        HStack { RankBadge(rank: item.rank); VStack(alignment: .leading, spacing: 4) { Text(item.playerName).font(.headline); Text("\(item.teamName ?? "") · 胜率 \(item.winRate ?? "--") · \(item.confidence ?? "")").font(.caption).foregroundStyle(.secondary); if let labels = item.matchLabels, !labels.isEmpty { Text(labels.first ?? "").font(.caption2).foregroundStyle(.secondary).lineLimit(1) } }; Spacer(); VStack { Text(item.scoreText).font(.headline); Text("预期分").font(.caption2).foregroundStyle(.secondary) } }
-                    }.buttonStyle(.plain).onAppear { if item.id == predictions.last?.id { Task { await loadMore() } } }
+                    PredictionForecastRow(item: item) {
+                        if item.canOpenProfile { router.navigate(to: .player(item.playerID)) }
+                    }
+                    .onAppear { if item.id == predictions.last?.id { Task { await loadMore() } } }
                 }
                 if loadingMore { HStack { Spacer(); ProgressView(); Spacer() } }
                 if let loadMoreError { Button("\(loadMoreError) · 重试") { Task { await loadMore() } }.font(.caption).foregroundStyle(.red) }
@@ -73,5 +74,85 @@ struct PredictionsView: View {
             let result = try await app.api.get("/api/predictions", queryItems: query(offset: predictions.count), as: PredictionsResponse.self, forceRefresh: true)
             let existing = Set(predictions.map(\.id)); predictions.append(contentsOf: result.value.predictions.filter { !existing.contains($0.id) }); pagination = result.value.pagination
         } catch is CancellationError { return } catch { loadMoreError = error.localizedDescription }
+    }
+}
+
+private struct PredictionForecastRow: View {
+    let item: Prediction
+    let openProfile: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Button(action: openProfile) {
+                HStack {
+                    RankBadge(rank: item.rank)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(item.playerName).font(.headline)
+                        Text(metadata)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !item.canOpenProfile {
+                            Text("使用总体先验").font(.caption2).foregroundStyle(.secondary)
+                        }
+                    }
+                    Spacer()
+                    VStack {
+                        Text(item.scoreText).font(.headline)
+                        Text(item.manualOverrideApplied == true ? "修正总分" : "预计总分")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!item.canOpenProfile)
+
+            if let gameRates = item.gameWinDisplays, gameRates.count == 3 {
+                HStack(spacing: 8) {
+                    ForEach(Array(gameRates.enumerated()), id: \.offset) { index, value in
+                        VStack(spacing: 3) {
+                            Text("第\(index + 1)局").font(.caption2).foregroundStyle(.secondary)
+                            Text(value).font(.subheadline.bold())
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(8)
+                        .background(Brand.card, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+            if let distribution = item.winCountProbabilities, !distribution.isEmpty {
+                Text(distribution.map { "\($0.wins)胜 \($0.display ?? String(format: "%.1f%%", $0.probability * 100))" }.joined(separator: " · "))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let markets = item.marketProbabilities, !markets.isEmpty {
+                LazyVGrid(
+                    columns: [GridItem(.flexible()), GridItem(.flexible())],
+                    spacing: 8
+                ) {
+                    ForEach(markets) { market in
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(market.label).font(.caption).foregroundStyle(.secondary)
+                            Text(market.display ?? "--").font(.subheadline.bold())
+                            Text("等于 \(market.equalityDisplay ?? "0.0%")")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(Brand.card, in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private var metadata: String {
+        if let expectedWins = item.expectedWins {
+            return "\(item.teamName ?? "") · 预计 \(String(format: "%.2f", expectedWins)) 胜 · \(item.confidence ?? "")"
+        }
+        return "\(item.teamName ?? "") · 胜率 \(item.winRate ?? "--") · \(item.confidence ?? "")"
     }
 }

@@ -1,7 +1,7 @@
 <view class="page">
   <view class="hero">
     <text class="eyebrow">Score Forecast</text>
-    <text class="title">胜率预测</text>
+    <text class="title">当天三局胜率预测</text>
     <text class="copy" wx:if="{{needsCompetition}}">必须先进入一个赛事，之后才能查看赛事内比赛日总分预测。</text>
     <text class="copy" wx:else>{{scope.label || "当前赛事"}} · {{scope.selected_season || "当前赛季"}} · 按比赛日汇总</text>
   </view>
@@ -73,7 +73,7 @@
         <view class="selected-match">
           <text class="selected-label">当前比赛日</text>
           <text class="selected-title">{{selectedDay.label || selectedDay.played_on}}</text>
-          <text class="selected-copy">{{selectedDay.match_count || 0}} 场比赛 · {{selectedDay.player_entry_count || 0}} 人次参赛</text>
+          <text class="selected-copy">12人随机模拟三局 · {{scenario ? "已发布场景" : (rosterSource === "official_schedule" ? "正式赛程名单" : "暂无完整名单")}}</text>
         </view>
       </view>
 
@@ -100,7 +100,7 @@
         </view>
         <view class="stack">
           <view class="prediction-card {{item.bandClass}}" wx:for="{{predictions}}" wx:key="player_id">
-            <view class="prediction-head tap-card" hover-class="tap-card-hover" data-player-id="{{item.player_id}}" bindtap="openPlayer">
+            <view class="prediction-head tap-card" hover-class="tap-card-hover" data-player-id="{{item.profilePlayerId}}" bindtap="openPlayer">
               <view class="seat-pill">{{item.rank}}</view>
               <view class="prediction-main">
                 <view class="prediction-title-line">
@@ -109,13 +109,33 @@
                     <star-player-badge wx:if="{{item.is_star_player}}" compact="{{true}}" />
                   </view>
                 </view>
-                <text class="prediction-meta">{{item.team_name || "未绑定战队"}} · 当日 {{item.match_count}} 场 · 场均 {{item.average_expected_points}} · 置信度 {{item.confidence}}</text>
+                <text class="prediction-meta">{{item.predictionMeta}}</text>
               </view>
               <view class="expected-box">
                 <text class="expected-value">{{item.expected_total || item.expected_points}}</text>
                 <text class="expected-label">{{item.bandLabel}}</text>
               </view>
-              <text class="tap-cue">›</text>
+              <text class="tap-cue" wx:if="{{item.profilePlayerId}}">›</text>
+            </view>
+
+            <view class="game-prob-grid" wx:if="{{item.gameWinDisplays.length}}">
+              <view class="game-prob-item" wx:for="{{item.gameWinDisplays}}" wx:for-item="probability" wx:for-index="gameIndex" wx:key="gameIndex">
+                <text class="prob-label">第{{gameIndex + 1}}局胜率</text>
+                <text class="prob-value">{{probability}}</text>
+              </view>
+            </view>
+
+            <view class="win-distribution" wx:if="{{item.winCountLabels.length}}">
+              <text class="prob-label">胜场分布</text>
+              <text class="distribution-copy">{{item.winCountText}}</text>
+            </view>
+
+            <view class="market-grid" wx:if="{{item.markets.length}}">
+              <view class="market-item" wx:for="{{item.markets}}" wx:for-item="market" wx:key="key">
+                <text class="prob-label">{{market.label}}</text>
+                <text class="prob-value">{{market.display}}</text>
+                <text class="equality-copy">等于 {{market.equalityDisplay}}</text>
+              </view>
             </view>
 
             <view class="day-match-list" wx:if="{{item.matchLabels.length}}">

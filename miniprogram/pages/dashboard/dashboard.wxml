@@ -64,21 +64,6 @@
         <button class="change-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
       </view>
 
-    <view class="section" wx:if="{{latestDay}}">
-      <view class="day-focus-card tap-card" hover-class="tap-card-hover" data-played-on="{{latestDay.played_on}}" bindtap="openDayDetail">
-        <view class="list-main">
-          <text class="selected-label">比赛日中心 · 最近更新</text>
-          <text class="day-focus-title">{{latestDay.played_on}}</text>
-          <text class="list-meta">{{latestDay.competition_names[0] || selectedScope.competition}} · {{latestDay.match_count}} 场 · 点开看当天赛程和日榜</text>
-        </view>
-        <view class="match-day-actions">
-          <button class="day-action" hover-class="tap-button-hover" data-played-on="{{latestDay.played_on}}" catchtap="openLatestDayPrediction">预测</button>
-          <text class="day-pill">详情</text>
-        </view>
-        <text class="tap-cue">›</text>
-      </view>
-    </view>
-
     <view class="section">
       <view class="workbench-card">
         <view class="workbench-head">

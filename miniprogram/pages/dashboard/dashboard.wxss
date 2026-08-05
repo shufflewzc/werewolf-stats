@@ -106,30 +106,6 @@
   background: #fef3c7;
 }
 
-.match-day-actions {
-  display: flex;
-  align-items: center;
-  gap: 10rpx;
-}
-
-.day-action {
-  width: 74rpx;
-  height: 52rpx;
-  margin: 0;
-  padding: 0;
-  border: 1rpx solid #bfdbfe;
-  border-radius: 999rpx;
-  font-size: 21rpx;
-  font-weight: 700;
-  line-height: 52rpx;
-  color: #1d4ed8;
-  background: #eff6ff;
-}
-
-.day-action::after {
-  border: 0;
-}
-
 .competition-choice,
 .selected-bar {
   display: flex;
@@ -388,8 +364,7 @@
   background: #111827;
 }
 
-.workbench-card,
-.day-focus-card {
+.workbench-card {
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
   background: #ffffff;
@@ -401,8 +376,7 @@
 }
 
 .workbench-head,
-.my-player-card,
-.day-focus-card {
+.my-player-card {
   display: flex;
   align-items: center;
   gap: 18rpx;
@@ -443,18 +417,6 @@
   line-height: 1.5;
   color: #64748b;
   background: #f8fafc;
-}
-
-.day-focus-card {
-  min-height: 112rpx;
-  padding: 24rpx;
-}
-
-.day-focus-title {
-  display: block;
-  margin-top: 6rpx;
-  font-size: 34rpx;
-  font-weight: 800;
 }
 
 /* Homepage visual polish: restrained, professional data presentation. */
@@ -548,7 +510,6 @@
 .selected-bar,
 .season-search-card,
 .workbench-card,
-.day-focus-card,
 .metric-card,
 .list-card,
 .empty-card,
@@ -629,38 +590,6 @@
 
 .season-action {
   color: #1f5fd1;
-}
-
-.day-focus-card {
-  min-height: 118rpx;
-  padding: 24rpx 26rpx;
-}
-
-.day-focus-title {
-  margin-top: 8rpx;
-  font-size: 36rpx;
-  line-height: 1.15;
-  color: #0b1730;
-  letter-spacing: 0.5rpx;
-}
-
-.day-focus-card .list-meta {
-  margin-top: 10rpx;
-}
-
-.match-day-actions {
-  gap: 10rpx;
-}
-
-.day-action {
-  width: 84rpx;
-  height: 56rpx;
-  border-color: #9bbcf5;
-  border-radius: 10rpx;
-  font-size: 21rpx;
-  line-height: 56rpx;
-  color: #1f5fd1;
-  background: #f4f8ff;
 }
 
 .day-pill {

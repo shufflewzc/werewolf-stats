@@ -1,7 +1,12 @@
 {
   "description": "狼人杀赛事数据小程序",
   "packOptions": {
-    "ignore": [],
+    "ignore": [
+      {
+        "type": "folder",
+        "value": "/minitest"
+      }
+    ],
     "include": []
   },
   "setting": {
@@ -38,5 +43,6 @@
   "projectname": "werewolf-stats-miniprogram",
   "condition": {},
   "simulatorPluginLibVersion": {},
-  "editorSetting": {}
+  "editorSetting": {},
+  "testRoot": "minitest/"
 }

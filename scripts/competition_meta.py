@@ -40,6 +40,7 @@ PARTICIPATION_MODE_TEAM = "team"
 PARTICIPATION_MODE_INDIVIDUAL = "individual"
 PARTICIPATION_MODE_OPTIONS = {PARTICIPATION_MODE_TEAM, PARTICIPATION_MODE_INDIVIDUAL}
 MAX_SCORING_RULE_COMPONENTS = 20
+MAX_STAGE_LABEL_LENGTH = 20
 SCORING_COMPONENT_KEY_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 REGION_NAME_CANDIDATES = (
     "广州",
@@ -549,6 +550,36 @@ def normalize_stage_windows(value: Any) -> list[dict[str, str]]:
     return windows
 
 
+def normalize_stage_labels(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {
+        stage_key: label
+        for stage_key in STAGE_OPTIONS
+        if (label := str(value.get(stage_key) or "").strip())
+    }
+
+
+def stage_options_for_season_entry(entry: dict[str, Any] | None) -> dict[str, str]:
+    custom_labels = normalize_stage_labels(
+        entry.get("stage_labels") if isinstance(entry, dict) else None
+    )
+    return {
+        stage_key: custom_labels.get(stage_key, default_label)
+        for stage_key, default_label in STAGE_OPTIONS.items()
+    }
+
+
+def stage_label_for_season_entry(
+    entry: dict[str, Any] | None,
+    stage_key: object,
+) -> str:
+    normalized_key = str(stage_key or "").strip()
+    if not normalized_key:
+        return "未设置"
+    return stage_options_for_season_entry(entry).get(normalized_key, normalized_key)
+
+
 def default_scoring_rule(score_model: str = SCORING_RULE_STANDARD) -> dict[str, Any]:
     normalized_model = (
         SCORING_RULE_STRUCTURED
@@ -878,6 +909,7 @@ def normalize_season_catalog_entry(
         "season_name": season_name,
         "start_at": normalize_datetime_local_value(str(entry.get("start_at") or "")),
         "end_at": normalize_datetime_local_value(str(entry.get("end_at") or "")),
+        "stage_labels": normalize_stage_labels(entry.get("stage_labels")),
         "stage_windows": normalize_stage_windows(entry.get("stage_windows", [])),
         "scoring_rule": normalize_scoring_rule(entry.get("scoring_rule"), allow_inherit=True),
         "season_policy": normalize_season_policy(
@@ -961,6 +993,10 @@ def load_season_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
                     "series_code": existing.get("series_code") or entry["series_code"],
                     "start_at": existing.get("start_at") or entry["start_at"],
                     "end_at": existing.get("end_at") or entry["end_at"],
+                    "stage_labels": {
+                        **entry.get("stage_labels", {}),
+                        **existing.get("stage_labels", {}),
+                    },
                     "participation_mode": (
                         existing.get("participation_mode")
                         if existing.get("participation_mode") != "inherit"
@@ -1051,6 +1087,40 @@ def get_season_entry(
         ):
             return entry
     return None
+
+
+def resolve_stage_options_for_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str = "",
+) -> dict[str, str]:
+    series_catalog = load_series_catalog(data)
+    series_entry = get_series_entry_by_competition(series_catalog, competition_name)
+    if not series_entry or not season_name:
+        return dict(STAGE_OPTIONS)
+    season_entry = get_season_entry(
+        load_season_catalog(data),
+        series_entry["series_slug"],
+        season_name,
+        competition_name=competition_name,
+    )
+    return stage_options_for_season_entry(season_entry)
+
+
+def resolve_stage_label_for_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    stage_key: object,
+) -> str:
+    normalized_key = str(stage_key or "").strip()
+    if not normalized_key:
+        return "未设置"
+    return resolve_stage_options_for_scope(
+        data,
+        competition_name,
+        season_name,
+    ).get(normalized_key, normalized_key)
 
 
 def resolve_scoring_rule_for_scope(

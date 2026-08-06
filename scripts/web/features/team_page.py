@@ -47,6 +47,8 @@ layout = legacy.layout
 list_seasons = legacy.list_seasons
 load_membership_requests = legacy.load_membership_requests
 load_validated_data = legacy.load_validated_data
+resolve_stage_label_for_scope = legacy.resolve_stage_label_for_scope
+resolve_stage_options_for_scope = legacy.resolve_stage_options_for_scope
 quote = legacy.quote
 resolve_team_player_ids = legacy.resolve_team_player_ids
 start_response_json = legacy.start_response_json
@@ -145,6 +147,11 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
 
     requested_competition = form_value(ctx.query, "competition").strip()
     requested_season = form_value(ctx.query, "season").strip()
+    stage_options = resolve_stage_options_for_scope(
+        data,
+        requested_competition or team_competition_name or "",
+        requested_season or team_season_name or "",
+    )
     current_team_path = build_scoped_path(
         f"/teams/{team_id}",
         requested_competition or team_competition_name or None,
@@ -189,7 +196,7 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
     stage_group_summary = (
         " / ".join(
             f"{stage_label} {escape(stage_group_map.get(stage_key, ''))}"
-            for stage_key, stage_label in STAGE_OPTIONS.items()
+            for stage_key, stage_label in stage_options.items()
             if stage_group_map.get(stage_key)
         )
         or "暂未设置"
@@ -201,7 +208,7 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
           <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
         </div>
         """
-        for stage_key, stage_label in STAGE_OPTIONS.items()
+        for stage_key, stage_label in stage_options.items()
     )
     team_manage_panel = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -1014,10 +1021,6 @@ def _team_asset_href(path: str | None, fallback: str = DEFAULT_TEAM_LOGO) -> str
     return f"/{clean_path}"
 
 
-def _stage_label(stage_key: str) -> str:
-    return STAGE_OPTIONS.get(stage_key, stage_key or "未分组")
-
-
 def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[str, Any]:
     data = load_validated_data()
     team_lookup = {team["team_id"]: team for team in data["teams"]}
@@ -1038,6 +1041,9 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     team_competition_name, team_season_name = get_team_scope(team)
     selected_competition = requested_competition or team_competition_name or ""
     selected_season = requested_season or team_season_name or ""
+    stage_options = resolve_stage_options_for_scope(
+        data, selected_competition, selected_season
+    )
     team_status = get_team_season_status(data, team)
     team_status_label = get_team_season_status_label(team_status)
     guild = get_guild_by_id(data, str(team.get("guild_id") or "").strip())
@@ -1045,7 +1051,7 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     stage_group_map = get_team_stage_group_map(team)
     stage_groups = [
         {"stage": stage_key, "label": stage_label, "group": str(stage_group_map.get(stage_key) or "").strip()}
-        for stage_key, stage_label in STAGE_OPTIONS.items()
+        for stage_key, stage_label in stage_options.items()
         if str(stage_group_map.get(stage_key) or "").strip()
     ]
 
@@ -1077,7 +1083,10 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
                 "match_id": match.get("match_id") or "",
                 "played_on": match.get("played_on") or "",
                 "stage": match.get("stage") or "",
-                "stage_label": _stage_label(str(match.get("stage") or "")),
+                "stage_label": stage_options.get(
+                    str(match.get("stage") or ""),
+                    str(match.get("stage") or "") or "未设置",
+                ),
                 "round": int(match.get("round") or 0),
                 "game_no": int(match.get("game_no") or 0),
                 "format": match.get("format") or "",

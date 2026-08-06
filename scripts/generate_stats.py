@@ -537,6 +537,7 @@ def build_player_details(
                         "match_id": match["match_id"],
                         "competition_name": scoped_competition_name,
                         "season": match["season"],
+                        "stage": match["stage"],
                         "stage_label": to_chinese_stage(match["stage"]),
                         "round": match["round"],
                         "game_no": match["game_no"],

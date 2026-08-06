@@ -388,6 +388,69 @@ def assert_power_rating(payload: object, name: str) -> None:
 def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
     competitions = api_get_json("/api/competitions")
     assert_json_keys(competitions, ["cards", "metrics", "hero"], "/api/competitions")
+    if competitions.get("view") != "list":
+        raise ReleaseCheckError("/api/competitions 默认 view 必须保持为 list")
+    grouped_competitions = api_get_json("/api/competitions", {"grouped": "1"})
+    assert_json_keys(
+        grouped_competitions,
+        ["view", "city_groups", "cards", "metrics", "hero"],
+        "/api/competitions?grouped=1",
+    )
+    if grouped_competitions.get("view") != "grouped":
+        raise ReleaseCheckError("/api/competitions?grouped=1 的 view 必须为 grouped")
+    grouped_cards = (
+        grouped_competitions.get("cards")
+        if isinstance(grouped_competitions.get("cards"), list)
+        else []
+    )
+    city_groups = (
+        grouped_competitions.get("city_groups")
+        if isinstance(grouped_competitions.get("city_groups"), list)
+        else []
+    )
+    grouped_competition_names: list[str] = []
+    for group in city_groups:
+        if not isinstance(group, dict):
+            raise ReleaseCheckError("/api/competitions?grouped=1 city_groups 包含非对象数据")
+        assert_json_keys(
+            group,
+            ["region_name", "competition_count", "latest_played_on", "cards"],
+            "/api/competitions?grouped=1 city_group",
+        )
+        region_name = str(group.get("region_name") or "").strip()
+        if not region_name:
+            raise ReleaseCheckError("/api/competitions?grouped=1 city_group 缺少 region_name")
+        city_cards = group.get("cards") if isinstance(group.get("cards"), list) else []
+        if int(group.get("competition_count") or 0) != len(city_cards):
+            raise ReleaseCheckError(
+                f"/api/competitions?grouped=1 {region_name} 的 competition_count 与 cards 数量不一致"
+            )
+        for card in city_cards:
+            if not isinstance(card, dict):
+                raise ReleaseCheckError(
+                    f"/api/competitions?grouped=1 {region_name} cards 包含非对象数据"
+                )
+            if str(card.get("region_name") or "").strip() != region_name:
+                raise ReleaseCheckError(
+                    f"/api/competitions?grouped=1 {region_name} 包含其他城市的赛事"
+                )
+            competition_name = str(card.get("competition_name") or "").strip()
+            if not competition_name:
+                raise ReleaseCheckError(
+                    f"/api/competitions?grouped=1 {region_name} 的赛事缺少 competition_name"
+                )
+            grouped_competition_names.append(competition_name)
+    flat_competition_names = [
+        str(card.get("competition_name") or "").strip()
+        for card in grouped_cards
+        if isinstance(card, dict) and str(card.get("competition_name") or "").strip()
+    ]
+    if sorted(grouped_competition_names) != sorted(flat_competition_names):
+        raise ReleaseCheckError(
+            "/api/competitions?grouped=1 的 city_groups 与扁平 cards 赛事范围不一致"
+        )
+    if len(grouped_competition_names) != len(set(grouped_competition_names)):
+        raise ReleaseCheckError("/api/competitions?grouped=1 存在重复分组的赛事")
     cards = competitions.get("cards") if isinstance(competitions.get("cards"), list) else []
     if not cards:
         if require_data:

@@ -35,7 +35,7 @@ sys.modules.setdefault("web_app", sys.modules[__name__])
 
 from db_runtime import database_backend, database_url
 from generate_stats import (
-    build_player_details,
+    build_player_details as build_base_player_details,
     build_player_rows,
     build_team_rows,
     format_pct,
@@ -52,6 +52,7 @@ from season_grouping import (
 )
 from competition_meta import (
     MAX_SCORING_RULE_COMPONENTS,
+    MAX_STAGE_LABEL_LENGTH,
     PARTICIPATION_MODE_INDIVIDUAL,
     PARTICIPATION_MODE_TEAM,
     SCORING_RULE_COMPONENTS,
@@ -75,6 +76,7 @@ from competition_meta import (
     merge_participation_modes,
     merge_scoring_rules,
     normalize_participation_mode,
+    normalize_stage_labels,
     normalize_season_catalog_entry,
     normalize_scoring_rule,
     normalize_series_catalog_entry,
@@ -82,11 +84,15 @@ from competition_meta import (
     resolve_participation_mode_for_scope,
     resolve_scoring_rule_for_scope,
     resolve_season_policy_for_scope,
+    resolve_stage_label_for_scope,
+    resolve_stage_options_for_scope,
     save_season_catalog,
     save_scoring_rule_templates,
     save_series_catalog,
     season_status_label,
     scoring_rule_component_fields,
+    stage_label_for_season_entry,
+    stage_options_for_season_entry,
     version_scoring_rule,
 )
 from season_policy import (
@@ -218,6 +224,35 @@ from zoneinfo import ZoneInfo
 
 CHINA_TZ = ZoneInfo("Asia/Shanghai")
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def build_player_details(
+    data: dict[str, Any],
+    player_rows: list[dict[str, Any]],
+    competition_name: str | None = None,
+    season_name: str | None = None,
+) -> dict[str, dict[str, Any]]:
+    details = build_base_player_details(
+        data,
+        player_rows,
+        competition_name,
+        season_name,
+    )
+    stage_options_by_scope: dict[tuple[str, str], dict[str, str]] = {}
+    for detail in details.values():
+        for item in detail.get("history", []):
+            scope_key = (
+                str(item.get("competition_name") or competition_name or ""),
+                str(item.get("season") or season_name or ""),
+            )
+            if scope_key not in stage_options_by_scope:
+                stage_options_by_scope[scope_key] = resolve_stage_options_for_scope(
+                    data, *scope_key
+                )
+            stage_options = stage_options_by_scope[scope_key]
+            stage_key = str(item.get("stage") or "").strip()
+            item["stage_label"] = stage_options.get(stage_key, stage_key or "未设置")
+    return details
 ASSETS_DIR = ROOT / "assets"
 PLAYER_ASSETS_DIR = ASSETS_DIR / "players"
 PLAYER_UPLOAD_DIR = PLAYER_ASSETS_DIR / "uploads"
@@ -7526,6 +7561,22 @@ def build_bound_player_summary(
     correct_stances = 0
     incorrect_stances = 0
     history: list[dict[str, Any]] = []
+    stage_options_by_scope: dict[tuple[str, str], dict[str, str]] = {}
+
+    def scoped_stage_label(
+        competition_name: str,
+        season_name: str,
+        stage_key: object,
+    ) -> str:
+        scope_key = (competition_name, season_name)
+        if scope_key not in stage_options_by_scope:
+            stage_options_by_scope[scope_key] = resolve_stage_options_for_scope(
+                data, *scope_key
+            )
+        normalized_stage = str(stage_key or "").strip()
+        return stage_options_by_scope[scope_key].get(
+            normalized_stage, normalized_stage or "未设置"
+        )
     competition_stats: dict[str, dict[str, Any]] = {}
     seasons: set[str] = set()
     team_names: list[str] = []
@@ -7581,7 +7632,11 @@ def build_bound_player_summary(
                     "competition_name": competition_name,
                     "season": match["season"],
                     "played_on": match["played_on"],
-                    "stage_label": STAGE_OPTIONS.get(match["stage"], match["stage"]),
+                    "stage_label": scoped_stage_label(
+                        competition_name,
+                        str(match.get("season") or ""),
+                        match.get("stage"),
+                    ),
                     "round": match["round"],
                     "game_no": match["game_no"],
                     "team_name": team_name,
@@ -9602,7 +9657,10 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "leaderboard_stages": [
             {"key": "all", "label": "全部"},
             *[
-                {"key": stage_key, "label": STAGE_OPTIONS.get(stage_key, stage_key)}
+                {
+                    "key": stage_key,
+                    "label": stage_label_for_season_entry(season_entry, stage_key),
+                }
                 for stage_key in stage_keys
             ],
         ],
@@ -10440,6 +10498,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         else []
     )
     stage_option_keys = list(STAGE_OPTIONS.keys())
+    dashboard_stage_options = stage_options_for_season_entry(season_entry)
     dashboard_scope_hidden_fields = "".join(
         f'<input type="hidden" name="{escape(key)}" value="{escape(value)}">'
         for key, value in {
@@ -10451,7 +10510,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         if value
     )
     stage_options_html = "".join(
-        f'<option value="{escape(stage_key)}"{" selected" if stage_key == selected_stage_key else ""}>{escape(STAGE_OPTIONS.get(stage_key, stage_key))}</option>'
+        f'<option value="{escape(stage_key)}"{" selected" if stage_key == selected_stage_key else ""}>{escape(dashboard_stage_options.get(stage_key, stage_key))}</option>'
         for stage_key in stage_option_keys
     )
     group_options_html = "".join(
@@ -10595,7 +10654,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
           <button type="submit" class="btn btn-dark w-100">更新榜单</button>
         </div>
       </form>
-      <div class="dashboard-panel-kicker mb-3">{escape(STAGE_OPTIONS.get(selected_stage_key, selected_stage_key)) + (f" · {escape(selected_group)}" if selected_group else "") if selected_board == "group" else "全赛段 · 个人总积分"}</div>
+      <div class="dashboard-panel-kicker mb-3">{escape(dashboard_stage_options.get(selected_stage_key, selected_stage_key)) + (f" · {escape(selected_group)}" if selected_group else "") if selected_board == "group" else "全赛段 · 个人总积分"}</div>
       {dashboard_board_table_html}
       <script>
         (() => {{
@@ -12104,7 +12163,12 @@ def _legacy_summarize_team_match_impl(team_id: str, match: dict[str, Any], team_
         "match_id": match["match_id"],
         "competition_name": get_match_competition_name(match),
         "season": match["season"],
-        "stage": STAGE_OPTIONS.get(match["stage"], match["stage"]),
+        "stage": resolve_stage_label_for_scope(
+            load_validated_data(),
+            get_match_competition_name(match),
+            str(match.get("season") or ""),
+            match["stage"],
+        ),
         "round": match["round"],
         "game_no": match["game_no"],
         "played_on": match["played_on"],
@@ -12368,7 +12432,7 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
           <p class="hero-copy mb-0">这里展示单场比赛的完整信息，包括比赛编号、阶段、参赛分组以及所有上场成员的个人明细。</p>
           <div class="d-flex flex-wrap gap-2 mt-4">
             <span class="chip">编号 {escape(match['match_id'])}</span>
-            <span class="chip">{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</span>
+            <span class="chip">{escape(resolve_stage_label_for_scope(data, competition_name, season_name, match['stage']))}</span>
             <span class="chip">第 {match['round']} 轮</span>
             <span class="chip">计分模型 {escape(score_model_label)}</span>
             <a class="switcher-chip" href="{escape(build_match_day_path(match['played_on'], build_scoped_path('/matches/' + match_id, competition_name, season_name)))}">{escape(match['played_on'])}</a>
@@ -13012,6 +13076,11 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     )
     requested_competition = form_value(ctx.query, "competition").strip()
     requested_season = form_value(ctx.query, "season").strip()
+    team_stage_options = resolve_stage_options_for_scope(
+        data,
+        requested_competition or team_competition_name or "",
+        requested_season or team_season_name or "",
+    )
     claim_panel = ""
     if is_unclaimed and team_status != "completed":
         claim_copy = "战队名称和成员由赛季档案维护。认领后，你可以编辑战队队标、简称、介绍和赛段分组信息。"
@@ -13049,7 +13118,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     stage_group_summary = (
         " / ".join(
             f"{stage_label} {escape(stage_group_map.get(stage_key, ''))}"
-            for stage_key, stage_label in STAGE_OPTIONS.items()
+            for stage_key, stage_label in team_stage_options.items()
             if stage_group_map.get(stage_key)
         )
         or "暂未设置"
@@ -13061,7 +13130,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
           <input class="form-control" name="stage_group_{escape(stage_key)}" value="{escape(stage_group_map.get(stage_key, ''))}" placeholder="例如 A组 / 淘汰组 / 种子组">
         </div>
         """
-        for stage_key, stage_label in STAGE_OPTIONS.items()
+        for stage_key, stage_label in team_stage_options.items()
     )
     team_manage_panel = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
@@ -18299,7 +18368,12 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
 
     def match_option(match: dict[str, Any]) -> dict[str, Any]:
         match_id = str(match.get("match_id") or "")
-        stage = STAGE_OPTIONS.get(match.get("stage"), match.get("stage") or "")
+        stage = resolve_stage_label_for_scope(
+            data,
+            get_match_competition_name(match),
+            str(match.get("season") or ""),
+            match.get("stage"),
+        )
         label_parts = [
             str(match.get("played_on") or ""),
             stage,

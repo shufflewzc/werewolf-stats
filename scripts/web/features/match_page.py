@@ -39,6 +39,7 @@ normalize_score_breakdown = legacy.normalize_score_breakdown
 normalize_stance_result = legacy.normalize_stance_result
 quote = legacy.quote
 resolve_scoring_rule_for_scope = legacy.resolve_scoring_rule_for_scope
+resolve_stage_label_for_scope = legacy.resolve_stage_label_for_scope
 scoring_rule_component_fields = legacy.scoring_rule_component_fields
 start_response_json = legacy.start_response_json
 to_chinese_camp = legacy.to_chinese_camp
@@ -1271,7 +1272,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
           <p class="hero-copy mb-0">这里展示单场比赛的完整信息，包括比赛编号、阶段、参赛分组以及所有上场成员的个人明细。</p>
           <div class="d-flex flex-wrap gap-2 mt-4">
             <span class="chip">编号 {escape(match['match_id'])}</span>
-            <span class="chip">{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</span>
+            <span class="chip">{escape(resolve_stage_label_for_scope(data, competition_name, season_name, match['stage']))}</span>
             <span class="chip">第 {match['round']} 轮</span>
             <span class="chip">计分模型 {escape(score_model_label)} · V{scoring_rule_version}</span>
             <a class="switcher-chip" href="{escape(build_match_day_path(match['played_on'], build_scoped_path('/matches/' + match_id, competition_name, season_name)))}">{escape(match['played_on'])}</a>
@@ -1477,7 +1478,7 @@ def get_match_prediction_page(ctx: RequestContext, match_id: str, alert: str = "
             <span class="chip">{escape(competition_name)}</span>
             <span class="chip">{escape(season_name)}</span>
             <span class="chip">比赛 {escape(match_id)}</span>
-            <span class="chip">{escape(STAGE_OPTIONS.get(match.get('stage'), match.get('stage') or ''))}</span>
+            <span class="chip">{escape(resolve_stage_label_for_scope(context['data'], competition_name, season_name, match.get('stage')))}</span>
           </div>
           <div class="d-flex flex-wrap gap-2 mt-3">
             <a class="btn btn-outline-dark" href="{escape(next_path)}">返回比赛详情</a>
@@ -2142,7 +2143,9 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         "match_id": match_id,
         "competition": competition_name,
         "season": season_name,
-        "stage": STAGE_OPTIONS.get(match.get("stage"), match.get("stage") or ""),
+        "stage": resolve_stage_label_for_scope(
+            data, competition_name, season_name, match.get("stage")
+        ),
         "round": match.get("round") or 0,
         "game_no": match.get("game_no") or 0,
         "played_on": match.get("played_on") or "",

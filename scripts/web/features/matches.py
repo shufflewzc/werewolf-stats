@@ -78,6 +78,8 @@ rollback_import_batch = legacy.rollback_import_batch
 save_repository_state = legacy.save_repository_state
 resolve_scoring_rule_for_scope = legacy.resolve_scoring_rule_for_scope
 resolve_participation_mode_for_scope = legacy.resolve_participation_mode_for_scope
+resolve_stage_label_for_scope = legacy.resolve_stage_label_for_scope
+resolve_stage_options_for_scope = legacy.resolve_stage_options_for_scope
 safe_asset_path = legacy.safe_asset_path
 scoring_rule_component_fields = legacy.scoring_rule_component_fields
 ensure_team_asset_dirs = legacy.ensure_team_asset_dirs
@@ -336,6 +338,9 @@ def build_batch_create_form(
         current["season"],
         include_non_ongoing=True,
     )
+    stage_options = resolve_stage_options_for_scope(
+        load_validated_data(), current["competition_name"], current["season"]
+    )
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
@@ -358,7 +363,7 @@ def build_batch_create_form(
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">阶段</label>
             <select class="form-select" name="stage">
-              {option_tags(STAGE_OPTIONS, current["stage"])}
+              {option_tags(stage_options, current["stage"])}
             </select>
           </div>
           <div class="col-6 col-md-3 col-xl-1">
@@ -1245,6 +1250,9 @@ def build_match_management_panel(
             season_name = available_seasons[0] if available_seasons else ""
             current["season"] = season_name
     stage_value = current["stage"]
+    stage_options = resolve_stage_options_for_scope(
+        data, competition_name, season_name
+    )
     played_on = current["played_on"]
     keyword = current["keyword"]
     requested_page = normalize_positive_int(current["page"], 1, 1, 100000)
@@ -1287,6 +1295,21 @@ def build_match_management_panel(
     start_index = (page - 1) * per_page
     end_index = start_index + per_page
     page_matches = filtered_matches[start_index:end_index]
+    stage_options_by_scope: dict[tuple[str, str], dict[str, str]] = {}
+
+    def stage_label_for_match(match: dict[str, object]) -> str:
+        scope_key = (
+            get_match_competition_name(match),
+            str(match.get("season") or ""),
+        )
+        if scope_key not in stage_options_by_scope:
+            stage_options_by_scope[scope_key] = resolve_stage_options_for_scope(
+                data, *scope_key
+            )
+        options = stage_options_by_scope[scope_key]
+        stage_key = str(match.get("stage") or "")
+        return options.get(stage_key, stage_key or "未设置")
+
     page_summary = (
         f"显示第 {start_index + 1}-{min(end_index, total_matches)} 场，共 {total_matches} 场"
         if total_matches
@@ -1300,7 +1323,7 @@ def build_match_management_panel(
           <td>{escape(str(match.get('competition_name') or ''))}</td>
           <td>{escape(str(match.get('season') or ''))}</td>
           <td>{escape(match['played_on'])}</td>
-          <td>{escape(STAGE_LABELS.get(match['stage'], match['stage']))}</td>
+          <td>{escape(stage_label_for_match(match))}</td>
           <td>第 {match['round']} 轮</td>
           <td>{escape(str(match.get('group_label') or '未设置'))}</td>
           <td>{escape(str(match.get('table_label') or '未设置'))}</td>
@@ -1374,7 +1397,7 @@ def build_match_management_panel(
             <label class="form-label">赛段</label>
             <select class="form-select" name="stage">
               <option value="">全部赛段</option>
-              {option_tags(STAGE_OPTIONS, stage_value)}
+              {option_tags(stage_options, stage_value)}
             </select>
           </div>
           <div class="col-12 col-md-4 col-xl-2">
@@ -3854,6 +3877,11 @@ def render_match_form_page(
         str(current.get("season") or ""),
         str(current.get("stage") or ""),
     )
+    stage_options = resolve_stage_options_for_scope(
+        current_data,
+        str(current.get("competition_name") or ""),
+        str(current.get("season") or ""),
+    )
     is_individual_match = participation_mode == PARTICIPATION_MODE_INDIVIDUAL
     configured_score_fields = scoring_rule_component_fields(scoring_rule)
     score_component_fields = (
@@ -3997,7 +4025,7 @@ def render_match_form_page(
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">阶段</label>
             <select class="form-select" name="stage">
-              {option_tags(STAGE_OPTIONS, str(current['stage']))}
+              {option_tags(stage_options, str(current['stage']))}
             </select>
           </div>
           <div class="col-6 col-md-3 col-xl-1">

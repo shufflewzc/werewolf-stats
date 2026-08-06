@@ -22,20 +22,10 @@
   </view>
 
   <block wx:else>
-    <view class="section" wx:if="{{metrics.length}}">
-      <view class="metrics">
-        <view class="metric-card" wx:for="{{metrics}}" wx:key="label">
-          <text class="metric-label">{{item.label}}</text>
-          <text class="metric-value">{{item.value}}</text>
-          <text class="metric-copy">{{item.copy}}</text>
-        </view>
-      </view>
-    </view>
-
     <view class="section">
       <view class="section-head">
-        <text class="section-title">赛事站点</text>
-        <text class="section-note">{{cards.length}} 个</text>
+        <text class="section-title">城市赛事</text>
+        <text class="section-note">{{competitionCount}} 个赛事</text>
       </view>
       <view class="scope-bar current-scope" wx:if="{{selectedScope && selectedScope.competition}}">
         <view class="scope-main">
@@ -44,26 +34,39 @@
           <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
         </view>
       </view>
-      <view class="stack" wx:if="{{cards.length}}">
-        <view class="competition-card" wx:for="{{cards}}" wx:key="competition_name">
-          <text class="card-kicker">{{item.region_name || "赛区"}} · {{item.series_name || "系列赛"}}</text>
-          <text class="card-title">{{item.competition_name}}</text>
-          <text class="card-copy">最近 {{item.latest_played_on || "待更新"}}</text>
-          <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-index="{{index}}" bindchange="chooseSeason">
-            <view class="season-picker" hover-class="tap-chip-hover">
-              <view>
-                <text class="season-label">赛季</text>
-                <text class="season-value">{{item.selectedSeason || "待录入"}}</text>
-              </view>
-              <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
+      <view class="city-list" wx:if="{{cityGroups.length}}">
+        <view class="city-section" wx:for="{{cityGroups}}" wx:for-item="city" wx:for-index="cityIndex" wx:key="region_name">
+          <view class="city-toggle tap-card {{city.expanded ? 'is-expanded' : ''}}" hover-class="tap-card-hover" data-city-index="{{cityIndex}}" bindtap="toggleCity" aria-label="{{city.region_name}}，{{city.competition_count}} 个赛事" aria-expanded="{{city.expanded}}">
+            <view class="city-main">
+              <text class="city-name">{{city.region_name}}</text>
+              <text class="city-meta">{{city.competition_count}} 个赛事 · 最近 {{city.latest_played_on || "待更新"}}</text>
             </view>
-          </picker>
-          <button class="enter-label" hover-class="tap-button-hover" data-index="{{index}}" bindtap="chooseCompetition">{{item.enterText}}</button>
+            <text class="city-action">{{city.expanded ? "收起" : "展开"}}</text>
+            <text class="city-chevron {{city.expanded ? 'is-expanded' : ''}}">›</text>
+          </view>
+
+          <view class="city-competitions" wx:if="{{city.expanded}}">
+            <view class="competition-card {{item.isSelected ? 'is-selected' : ''}}" wx:for="{{city.cards}}" wx:for-item="item" wx:for-index="cardIndex" wx:key="competition_name">
+              <text class="card-kicker">{{item.series_name || "系列赛"}}</text>
+              <text class="card-title">{{item.competition_name}}</text>
+              <text class="card-copy">最近 {{item.latest_played_on || "待更新"}}</text>
+              <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-city-index="{{cityIndex}}" data-card-index="{{cardIndex}}" bindchange="chooseSeason">
+                <view class="season-picker" hover-class="tap-chip-hover">
+                  <view>
+                    <text class="season-label">赛季</text>
+                    <text class="season-value">{{item.selectedSeason || "待录入"}}</text>
+                  </view>
+                  <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
+                </view>
+              </picker>
+              <button class="enter-label" hover-class="tap-button-hover" data-city-index="{{cityIndex}}" data-card-index="{{cardIndex}}" bindtap="chooseCompetition">{{item.enterText}}</button>
+            </view>
+          </view>
         </view>
       </view>
       <view class="empty-card" wx:else>
-        <text class="empty-title">暂无赛事</text>
-        <text class="empty-copy">网站后台录入赛事后，小程序会自动显示。</text>
+        <text class="empty-title">暂无城市赛事</text>
+        <text class="empty-copy">网站后台创建城市和赛事后，小程序会自动显示。</text>
       </view>
     </view>
   </block>

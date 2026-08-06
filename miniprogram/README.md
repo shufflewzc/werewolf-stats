@@ -5,7 +5,7 @@
 ## 当前页面
 
 - 首页：读取 `/api/dashboard`
-- 赛事：读取 `/api/competitions`
+- 赛事：读取 `/api/competitions?grouped=1`，按城市折叠展示全部赛事
 - 门派：读取 `/api/guilds`
 - 选手：读取 `/api/players`
 

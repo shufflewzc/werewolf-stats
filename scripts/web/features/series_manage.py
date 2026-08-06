@@ -42,6 +42,7 @@ normalize_series_catalog_entry = legacy.normalize_series_catalog_entry
 merge_scoring_rules = legacy.merge_scoring_rules
 merge_participation_modes = legacy.merge_participation_modes
 normalize_participation_mode = legacy.normalize_participation_mode
+normalize_stage_labels = legacy.normalize_stage_labels
 parse_china_datetime = legacy.parse_china_datetime
 require_competition_catalog_manager = legacy.require_competition_catalog_manager
 require_competition_season_manager = legacy.require_competition_season_manager
@@ -64,6 +65,8 @@ validate_season_policy = legacy.validate_season_policy
 version_season_policy = legacy.version_season_policy
 start_response_html = legacy.start_response_html
 STAGE_OPTIONS = legacy.STAGE_OPTIONS
+MAX_STAGE_LABEL_LENGTH = legacy.MAX_STAGE_LABEL_LENGTH
+stage_options_for_season_entry = legacy.stage_options_for_season_entry
 SCORING_RULE_COMPONENTS = legacy.SCORING_RULE_COMPONENTS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 MAX_SCORING_RULE_COMPONENTS = legacy.MAX_SCORING_RULE_COMPONENTS
@@ -145,13 +148,17 @@ def render_grouping_panel(
     )
     if preview.get("error"):
         return ""
-    source_stage_label = STAGE_OPTIONS.get(
-        str(preview.get("source_stage") or ""),
-        str(preview.get("source_stage") or "来源赛段"),
+    source_stage_label = legacy.resolve_stage_label_for_scope(
+        data,
+        competition_name,
+        season_name,
+        preview.get("source_stage") or "来源赛段",
     )
-    assignment_stage_label = STAGE_OPTIONS.get(
-        str(preview.get("assignment_stage") or ""),
-        str(preview.get("assignment_stage") or "目标赛段"),
+    assignment_stage_label = legacy.resolve_stage_label_for_scope(
+        data,
+        competition_name,
+        season_name,
+        preview.get("assignment_stage") or "目标赛段",
     )
     rows_html = "".join(
         f"""
@@ -217,9 +224,12 @@ def render_grouping_panel(
     """
 
 
-def build_stage_window_form_values(entry: dict[str, str] | None = None) -> dict[str, str]:
+def build_stage_window_form_values(entry: dict[str, object] | None = None) -> dict[str, str]:
     values: dict[str, str] = {}
     windows = entry.get("stage_windows", []) if isinstance(entry, dict) else []
+    stage_labels = normalize_stage_labels(
+        entry.get("stage_labels") if isinstance(entry, dict) else None
+    )
     window_by_stage = {
         str(item.get("stage") or "").strip(): item
         for item in windows
@@ -227,6 +237,7 @@ def build_stage_window_form_values(entry: dict[str, str] | None = None) -> dict[
     }
     for stage_key in STAGE_OPTIONS:
         window = window_by_stage.get(stage_key, {})
+        values[f"stage_{stage_key}_label"] = stage_labels.get(stage_key, "")
         values[f"stage_{stage_key}_start_at"] = str(window.get("start_at") or "")
         values[f"stage_{stage_key}_end_at"] = str(window.get("end_at") or "")
         values[f"stage_{stage_key}_participation_mode"] = normalize_participation_mode(
@@ -263,6 +274,33 @@ def collect_stage_windows_from_form(form: dict[str, list[str]]) -> list[dict[str
     return windows
 
 
+def collect_stage_labels_from_form(form: dict[str, list[str]]) -> dict[str, str]:
+    return normalize_stage_labels(
+        {
+            stage_key: form_value(form, f"stage_{stage_key}_label")
+            for stage_key in STAGE_OPTIONS
+        }
+    )
+
+
+def validate_stage_labels(stage_labels: dict[str, str]) -> str:
+    for stage_key, label in stage_labels.items():
+        if len(label) > MAX_STAGE_LABEL_LENGTH:
+            return f"{STAGE_OPTIONS[stage_key]}的显示名称不能超过 {MAX_STAGE_LABEL_LENGTH} 个字符。"
+    effective_labels = {
+        stage_key: stage_labels.get(stage_key, default_label)
+        for stage_key, default_label in STAGE_OPTIONS.items()
+    }
+    duplicate_labels = {
+        label
+        for label in effective_labels.values()
+        if list(effective_labels.values()).count(label) > 1
+    }
+    if duplicate_labels:
+        return f"赛段显示名称不能重复：{'、'.join(sorted(duplicate_labels))}。"
+    return ""
+
+
 def validate_stage_windows(stage_windows: list[dict[str, str]]) -> str:
     for window in stage_windows:
         stage_key = str(window.get("stage") or "").strip()
@@ -293,7 +331,9 @@ def render_stage_window_cards(
         if isinstance(item, dict)
     }
     cards: list[str] = []
-    for stage_key, stage_label in STAGE_OPTIONS.items():
+    effective_stage_options = stage_options_for_season_entry(entry)
+    for stage_key, default_stage_label in STAGE_OPTIONS.items():
+        stage_label = effective_stage_options[stage_key]
         window = window_by_stage.get(stage_key)
         period = (
             f"{format_datetime_local_label(str(window.get('start_at') or ''))} - "
@@ -311,6 +351,7 @@ def render_stage_window_cards(
             <div class="col-12 col-lg-6">
               <div class="team-link-card shadow-sm p-4 h-100">
                 <div class="small text-secondary">{escape(stage_label)}</div>
+                {f'<div class="small text-secondary mt-1">默认名称：{escape(default_stage_label)}</div>' if stage_label != default_stage_label else ''}
                 <div class="fw-semibold mt-1">{escape(period)}</div>
                 <div class="small text-secondary mt-3">参赛模式</div>
                 <div class="fw-semibold mt-1">{escape(participation_mode_label(effective_mode))}</div>
@@ -598,8 +639,12 @@ def collect_season_policy_from_form(
     return normalize_season_policy(policy)
 
 
-def render_season_policy_summary(policy: dict[str, object] | None) -> str:
+def render_season_policy_summary(
+    policy: dict[str, object] | None,
+    stage_options: dict[str, str] | None = None,
+) -> str:
     normalized = normalize_season_policy(policy)
+    effective_stage_options = stage_options or STAGE_OPTIONS
     preset = str(normalized.get("preset") or POLICY_PRESET_STANDARD)
     preset_label = POLICY_PRESETS.get(preset, preset)
     source = get_grouping_source(normalized)
@@ -611,8 +656,8 @@ def render_season_policy_summary(policy: dict[str, object] | None) -> str:
             for item in grouping.get("ranges", [])
         )
         grouping_text = (
-            f"{STAGE_OPTIONS.get(source_stage, source_stage)}排名分组 → "
-            f"{STAGE_OPTIONS.get(str(grouping.get('assignment_stage') or ''), str(grouping.get('assignment_stage') or ''))}"
+            f"{effective_stage_options.get(source_stage, source_stage)}排名分组 → "
+            f"{effective_stage_options.get(str(grouping.get('assignment_stage') or ''), str(grouping.get('assignment_stage') or ''))}"
             f"（{groups}）"
         )
     section_parts = []
@@ -620,7 +665,7 @@ def render_season_policy_summary(policy: dict[str, object] | None) -> str:
         sections = get_leaderboard_sections(normalized, stage)
         if sections:
             section_parts.append(
-                f"{STAGE_OPTIONS.get(stage, stage)}："
+                f"{effective_stage_options.get(stage, stage)}："
                 + " / ".join(str(item.get("label") or item.get("key")) for item in sections)
             )
     version = int(normalized.get("version") or 1)
@@ -640,6 +685,7 @@ def render_season_policy_editor(
     *,
     allow_inherit: bool = False,
     inherited_policy: dict[str, object] | None = None,
+    display_stage_options: dict[str, str] | None = None,
 ) -> str:
     values = _policy_form_values(policy)
     inherited_summary = render_season_policy_summary(inherited_policy)
@@ -658,12 +704,12 @@ def render_season_policy_editor(
         f'<option value="{escape(key)}"{" selected" if values["preset"] == key else ""}>{escape(label)}</option>'
         for key, label in POLICY_PRESETS.items()
     )
-    stage_options = "".join(
+    stage_options_html = "".join(
         f'<option value="{escape(key)}">{{label}}</option>'.replace(
             "{label}",
             escape(label),
         )
-        for key, label in STAGE_OPTIONS.items()
+        for key, label in (display_stage_options or STAGE_OPTIONS).items()
     )
     return f"""
     <div class="col-12" data-season-policy-editor>
@@ -682,11 +728,11 @@ def render_season_policy_editor(
             <div class="row g-3">
               <div class="col-12 col-md-6">
                 <label class="form-label">分组来源赛段</label>
-                <select class="form-select" name="{escape(prefix)}_source_stage">{stage_options.replace(f'value="{escape(values["source_stage"])}"', f'value="{escape(values["source_stage"])}" selected')}</select>
+                <select class="form-select" name="{escape(prefix)}_source_stage">{stage_options_html.replace(f'value="{escape(values["source_stage"])}"', f'value="{escape(values["source_stage"])}" selected')}</select>
               </div>
               <div class="col-12 col-md-6">
                 <label class="form-label">分组写入及分层榜赛段</label>
-                <select class="form-select" name="{escape(prefix)}_target_stage">{stage_options.replace(f'value="{escape(values["target_stage"])}"', f'value="{escape(values["target_stage"])}" selected')}</select>
+                <select class="form-select" name="{escape(prefix)}_target_stage">{stage_options_html.replace(f'value="{escape(values["target_stage"])}"', f'value="{escape(values["target_stage"])}" selected')}</select>
               </div>
               <div class="col-12 col-md-8">
                 <label class="form-label">分组名称</label>
@@ -1154,6 +1200,7 @@ def get_series_manage_page(
                             f"stage_{stage_key}_start_at",
                             f"stage_{stage_key}_end_at",
                             f"stage_{stage_key}_participation_mode",
+                            f"stage_{stage_key}_label",
                         )
                     ],
                 )
@@ -1311,7 +1358,7 @@ def get_series_manage_page(
             <div class="col-12"><div class="team-link-card shadow-sm p-4"><div class="small text-secondary">赛季说明</div><div class="fw-semibold mt-1">{escape(selected_season_entry.get('notes') or '暂无赛季说明')}</div></div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_participation_mode_summary(merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}</div></div>
             <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_scoring_rule_summary(merge_scoring_rules(selected_entry.get('scoring_rule') if selected_entry else None, selected_season_entry.get('scoring_rule')))}</div></div>
-            <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_season_policy_summary(resolve_season_policy_for_scope(data, selected_competition_name, selected_season_entry['season_name']))}</div></div>
+            <div class="col-12"><div class="team-link-card shadow-sm p-4">{render_season_policy_summary(resolve_season_policy_for_scope(data, selected_competition_name, selected_season_entry['season_name']), stage_options_for_season_entry(selected_season_entry))}</div></div>
             <div class="col-12"><h3 class="h5 mb-0 mt-2">赛段设置</h3></div>
             {render_stage_window_cards(selected_season_entry, merge_participation_modes((selected_entry or {}).get('participation_mode'), selected_season_entry.get('participation_mode')))}
           </div>
@@ -1413,8 +1460,14 @@ def get_series_manage_page(
                     f"""
                     <div class="col-12 col-lg-6">
                       <div class="team-link-card shadow-sm p-3 h-100">
-                        <div class="fw-semibold mb-3">{escape(stage_label)}</div>
+                        <div class="fw-semibold mb-1">{escape(season_form.get(f'stage_{stage_key}_label') or stage_label)}</div>
+                        <div class="small text-secondary mb-3">系统赛段：{escape(stage_label)}</div>
                         <div class="row g-2">
+                          <div class="col-12">
+                            <label class="form-label">显示名称</label>
+                            <input class="form-control" name="stage_{escape(stage_key)}_label" maxlength="{MAX_STAGE_LABEL_LENGTH}" value="{escape(season_form.get(f'stage_{stage_key}_label', ''))}" placeholder="默认：{escape(stage_label)}">
+                            <div class="small text-secondary mt-1">留空时使用默认名称。</div>
+                          </div>
                           <div class="col-12 col-md-6">
                             <label class="form-label">开始日期</label>
                             <input class="form-control" name="stage_{escape(stage_key)}_start_at" type="date" value="{escape(date_input_value(season_form[f'stage_{stage_key}_start_at']))}">
@@ -1466,12 +1519,12 @@ def get_series_manage_page(
                         <div class="small text-secondary mt-2">个人赛允许参赛选手不填战队，并自动不进入战队榜。</div>
                       </div>
                       {render_scoring_rule_editor(season_form.get('scoring_rule'), 'season', allow_inherit=True, inherited_rule=(selected_entry or {}).get('scoring_rule'))}
-                      {render_season_policy_editor(season_form.get('season_policy'), 'season_policy', allow_inherit=True, inherited_policy=(selected_entry or {}).get('season_policy'))}
+                      {render_season_policy_editor(season_form.get('season_policy'), 'season_policy', allow_inherit=True, inherited_policy=(selected_entry or {}).get('season_policy'), display_stage_options=stage_options_for_season_entry({'stage_labels': {stage_key: season_form.get(f'stage_{stage_key}_label', '') for stage_key in STAGE_OPTIONS}}))}
                       <div class="col-12">
                         <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mt-2">
                           <div>
                             <h3 class="h5 mb-1">赛段设置</h3>
-                            <div class="small text-secondary">每个赛段可覆盖参赛模式；日期均按北京时间保存，赛事页会按当天自动显示赛段状态。</div>
+                            <div class="small text-secondary">每个赛段可自定义显示名称并覆盖参赛模式；日期均按北京时间保存，赛事页会按当天自动显示赛段状态。</div>
                           </div>
                         </div>
                       </div>
@@ -1749,6 +1802,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         )
         next_path = form_value(ctx.form, "next").strip()
         stage_windows = collect_stage_windows_from_form(ctx.form)
+        stage_labels = collect_stage_labels_from_form(ctx.form)
         permission_guard = require_competition_season_manager(ctx, start_response, data, competition_name, "你只能编辑自己负责地区系列赛下的赛季。")
         if permission_guard is not None:
             return permission_guard
@@ -1768,12 +1822,17 @@ def handle_series_manage(ctx: RequestContext, start_response):
             "next": next_path,
             "edit_mode": edit_mode,
             **{
+                f"stage_{stage_key}_label": stage_labels.get(stage_key, "")
+                for stage_key in STAGE_OPTIONS
+            },
+            **{
                 f"stage_{window['stage']}_{field}": window.get(f"{field}", "")
                 for window in stage_windows
                 for field in ("start_at", "end_at", "participation_mode")
             },
         }
         error = legacy.validate_season_catalog_form(series_slug, season_name, start_at, end_at)
+        error = error or validate_stage_labels(stage_labels)
         error = error or validate_stage_windows(stage_windows)
         error = error or validate_scoring_rule_labels(season_scoring_rule)
         policy_errors = validate_season_policy(season_policy)
@@ -1792,7 +1851,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
             existing_entry.get("season_policy") if existing_entry else None,
             allow_inherit=True,
         )
-        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_windows": stage_windows, "participation_mode": participation_mode, "scoring_rule": season_scoring_rule, "season_policy": season_policy, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
+        new_entry = normalize_season_catalog_entry({"series_slug": series_slug, "series_name": selected_entry["series_name"] if selected_entry else "", "series_code": selected_entry["series_code"] if selected_entry else "", "competition_name": competition_name, "season_name": season_name, "start_at": start_at, "end_at": end_at, "stage_labels": stage_labels, "stage_windows": stage_windows, "participation_mode": participation_mode, "scoring_rule": season_scoring_rule, "season_policy": season_policy, "notes": notes, "registered_team_ids": existing_entry.get("registered_team_ids", []) if existing_entry else [], "created_by": existing_entry.get("created_by") if existing_entry else (ctx.current_user["username"] if ctx.current_user else "system"), "created_on": existing_entry.get("created_on", china_today_label()) if existing_entry else china_today_label()})
         if not new_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季保存失败。", form_values=form_values))
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == series_slug and item.get("competition_name", "") == competition_name and item["season_name"] == lookup_season_name)]

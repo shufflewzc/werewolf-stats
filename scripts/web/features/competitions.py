@@ -79,6 +79,9 @@ match_in_scope = legacy.match_in_scope
 quote = legacy.quote
 redirect = legacy.redirect
 resolve_catalog_scope = legacy.resolve_catalog_scope
+resolve_stage_label_for_scope = legacy.resolve_stage_label_for_scope
+resolve_stage_options_for_scope = legacy.resolve_stage_options_for_scope
+stage_label_for_season_entry = legacy.stage_label_for_season_entry
 require_login = legacy.require_login
 save_ai_match_day_report = legacy.save_ai_match_day_report
 save_ai_season_summary = legacy.save_ai_season_summary
@@ -762,6 +765,32 @@ def _serialize_competition_card(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _serialize_competition_city_groups(
+    competition_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    grouped_rows: dict[str, list[dict[str, Any]]] = {}
+    for row in competition_rows:
+        region_name = str(row.get("region_name") or "").strip() or DEFAULT_REGION_NAME
+        grouped_rows.setdefault(region_name, []).append(row)
+
+    groups: list[dict[str, Any]] = []
+    for region_name, rows in grouped_rows.items():
+        featured = max(rows, key=competition_latest_day_sort_key, default=None)
+        groups.append(
+            {
+                "region_name": region_name,
+                "competition_count": len(rows),
+                "latest_played_on": (
+                    str(featured.get("latest_played_on") or "待更新")
+                    if featured
+                    else "待更新"
+                ),
+                "cards": [_serialize_competition_card(row) for row in rows],
+            }
+        )
+    return groups
+
+
 def _serialize_team_ranking_row(
     row: dict[str, Any],
     competition_name: str | None,
@@ -895,7 +924,7 @@ def select_progress_stage(
         stage_key = str(selected_window.get("stage") or "").strip()
         return {
             "stage_key": stage_key,
-            "stage_label": STAGE_OPTIONS.get(stage_key, stage_key),
+            "stage_label": stage_label_for_season_entry(season_entry, stage_key),
             "status": str(selected_window.get("status") or "draft"),
             "start_at": str(selected_window.get("start_at") or ""),
             "end_at": str(selected_window.get("end_at") or ""),
@@ -904,7 +933,7 @@ def select_progress_stage(
     fallback_stage = "playoffs"
     return {
         "stage_key": fallback_stage,
-        "stage_label": STAGE_OPTIONS.get(fallback_stage, fallback_stage),
+        "stage_label": stage_label_for_season_entry(season_entry, fallback_stage),
         "status": legacy.get_season_status(season_entry or {}) if season_entry else "ongoing",
         "start_at": "",
         "end_at": "",
@@ -1021,6 +1050,75 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
     )
 
     if not selected_competition:
+        grouped_view = form_value(ctx.query, "grouped").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }
+        if grouped_view:
+            featured_competition = max(
+                competition_rows,
+                key=competition_latest_day_sort_key,
+                default=None,
+            )
+            cards = [_serialize_competition_card(row) for row in competition_rows]
+            city_groups = _serialize_competition_city_groups(competition_rows)
+            return {
+                "view": "grouped",
+                "generated_at": ctx.now_label,
+                "legacy_href": legacy_href,
+                "scope": {
+                    "selected_region": selected_region,
+                    "selected_series_slug": selected_series_slug,
+                    "filters": {
+                        "regions": filters["regions"],
+                        "series": filters["series"],
+                    },
+                },
+                "hero": {
+                    "title": "赛事入口",
+                    "copy": "按城市展开赛事，再选择要进入的赛季。",
+                    "featured_name": (
+                        featured_competition["competition_name"]
+                        if featured_competition
+                        else "等待录入赛事"
+                    ),
+                    "featured_latest": (
+                        featured_competition["latest_played_on"]
+                        if featured_competition
+                        else "待更新"
+                    ),
+                    "featured_seasons": (
+                        " / ".join(featured_competition["seasons"][:2])
+                        if featured_competition and featured_competition["seasons"]
+                        else "赛季待录入"
+                    ),
+                },
+                "metrics": [
+                    {
+                        "label": "城市",
+                        "value": str(len(city_groups)),
+                        "copy": "当前开放赛区",
+                    },
+                    {
+                        "label": "赛事",
+                        "value": str(len(competition_rows)),
+                        "copy": "可进入赛事站点",
+                    },
+                    {
+                        "label": "累计对局",
+                        "value": str(sum(row["match_count"] for row in competition_rows)),
+                        "copy": "全部城市完整赛程",
+                    },
+                ],
+                "management": {
+                    "can_manage_series": can_access_series_management(ctx.current_user),
+                    "manage_href": "/series-manage",
+                },
+                "city_groups": city_groups,
+                "cards": cards,
+            }
+
         featured_competition = max(
             visible_competitions or competition_rows,
             key=competition_latest_day_sort_key,
@@ -1185,7 +1283,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         grouped_team_boards.append(
             {
                 "stage_key": stage_key,
-                "stage_label": STAGE_OPTIONS.get(stage_key, stage_key),
+                "stage_label": stage_label_for_season_entry(season_entry, stage_key),
                 "groups": [
                     {
                         "group_label": group_label,
@@ -1374,7 +1472,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "stage_team": [
                 {
                     "stage_key": stage_key,
-                    "stage_label": STAGE_OPTIONS.get(stage_key, stage_key),
+                    "stage_label": stage_label_for_season_entry(season_entry, stage_key),
                     "rows": [
                         _serialize_team_ranking_row(
                             row,
@@ -1603,7 +1701,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
             for row in rows
         )
         stage_team_sections.append(
-            f"""<div class="col-12 col-xxl-6"><div class="panel h-100 shadow-sm p-3"><h3 class="h5 mb-3">{escape(STAGE_OPTIONS.get(stage_key, stage_key))}</h3><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均积分</th><th>胜率</th></tr></thead><tbody>{stage_table_rows}</tbody></table></div></div></div>"""
+            f"""<div class="col-12 col-xxl-6"><div class="panel h-100 shadow-sm p-3"><h3 class="h5 mb-3">{escape(stage_label_for_season_entry(season_entry, stage_key))}</h3><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均积分</th><th>胜率</th></tr></thead><tbody>{stage_table_rows}</tbody></table></div></div></div>"""
         )
     grouped_team_sections: list[str] = []
     for stage_key, group_map in stage_group_team_rows.items():
@@ -1617,7 +1715,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
                 f"""<div class="col-12 col-xxl-6"><div class="panel h-100 shadow-sm p-3"><h4 class="h6 mb-3">{escape(group_label)}</h4><div class="table-responsive"><table class="table align-middle mb-0"><thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均积分</th></tr></thead><tbody>{group_table_rows or '<tr><td colspan="6" class="text-secondary">当前分组还没有积分数据。</td></tr>'}</tbody></table></div></div></div>"""
             )
         grouped_team_sections.append(
-            f"""<section class="panel shadow-sm p-3 p-lg-4 mb-3"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h3 class="h5 mb-2">{escape(STAGE_OPTIONS.get(stage_key, stage_key))}</h3><p class="section-copy mb-0">该赛段内再按比赛实际录入的分组拆分统计战队积分。</p></div></div><div class="row g-3">{''.join(stage_group_blocks)}</div></section>"""
+            f"""<section class="panel shadow-sm p-3 p-lg-4 mb-3"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h3 class="h5 mb-2">{escape(stage_label_for_season_entry(season_entry, stage_key))}</h3><p class="section-copy mb-0">该赛段内再按比赛实际录入的分组拆分统计战队积分。</p></div></div><div class="row g-3">{''.join(stage_group_blocks)}</div></section>"""
         )
     player_points_rows = [f"""<tr><td>{row['rank']}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td><td>{escape(row['team_name'])}</td><td>{row['games_played']}</td><td>{escape(row['record'])}</td><td>{row['points_earned_total']:.2f}</td><td>{row['average_points']:.2f}</td><td>{format_pct(row['win_rate'])}</td></tr>""" for row in player_rows]
     mvp_table_rows = "".join(
@@ -2228,6 +2326,7 @@ def build_ai_data_question_prompt(
     conversation: list[dict[str, str]],
     question: str,
 ) -> str:
+    data = load_validated_data()
     stage_lines = []
     for stage_key, rows in stage_team_rows.items():
         top_rows = rows[:8]
@@ -2237,7 +2336,9 @@ def build_ai_data_question_prompt(
             f"第{index}名 {row['name']} 总积分 {float(row['points_earned_total']):.2f} / 胜率 {format_pct(row['win_rate'])}"
             for index, row in enumerate(top_rows, start=1)
         )
-        stage_lines.append(f"- {STAGE_OPTIONS.get(stage_key, stage_key)}：{summary}")
+        stage_lines.append(
+            f"- {resolve_stage_label_for_scope(data, competition_name, season_name, stage_key)}：{summary}"
+        )
     top_team_lines = [
         f"- 第{row.get('points_rank', '-')}名 {row['name']} | 场次 {row['matches_represented']} | 上场队员 {row['player_count']} | 总积分 {float(row['points_earned_total']):.2f} | 场均 {float(row.get('points_per_match', 0.0)):.2f} | 胜率 {format_pct(row['win_rate'])}"
         for row in team_rows[:16]
@@ -2262,8 +2363,8 @@ def build_ai_data_question_prompt(
     for played_on in seen_days[:16]:
         day_count = sum(1 for match in match_rows if str(match.get("played_on") or "").strip() == played_on)
         match_day_lines.append(f"- {played_on}：{day_count} 场")
-    team_lookup = {str(team.get("team_id") or ""): team for team in load_validated_data()["teams"]}
-    player_lookup = {str(player.get("player_id") or ""): player for player in load_validated_data()["players"]}
+    team_lookup = {str(team.get("team_id") or ""): team for team in data["teams"]}
+    player_lookup = {str(player.get("player_id") or ""): player for player in data["players"]}
     all_match_lines = []
     for match in sorted(
         match_rows,
@@ -2271,7 +2372,7 @@ def build_ai_data_question_prompt(
     ):
         match_title = (
             f"- 比赛 {match.get('match_id')} | 日期 {match.get('played_on')} | "
-            f"赛段 {STAGE_OPTIONS.get(str(match.get('stage') or '').strip(), str(match.get('stage') or '').strip() or '未设置')} | "
+            f"赛段 {resolve_stage_label_for_scope(data, competition_name, season_name, match.get('stage'))} | "
             f"分组 {str(match.get('group_label') or '').strip() or '未分组'} | "
             f"轮次 {match.get('round')} | 局号 {match.get('game_no')} | "
             f"台次 {str(match.get('table_label') or '').strip() or '未标注'} | "
@@ -2940,6 +3041,18 @@ def _serialize_day_match_competition_section(
     player_count = len({entry["player_id"] for match in matches for entry in match["players"]})
     team_count = len({entry["team_id"] for match in matches for entry in match["players"] if entry.get("team_id")})
     completed_count = sum(1 for match in matches if is_match_counted_as_played(match))
+    stage_options_by_season: dict[str, dict[str, str]] = {}
+
+    def stage_label(match: dict[str, Any]) -> str:
+        match_season = str(match.get("season") or season_name)
+        if match_season not in stage_options_by_season:
+            stage_options_by_season[match_season] = resolve_stage_options_for_scope(
+                data, competition_name, match_season
+            )
+        stage_key = str(match.get("stage") or "")
+        return stage_options_by_season[match_season].get(
+            stage_key, stage_key or "未设置"
+        )
 
     serialized_matches: list[dict[str, Any]] = []
     for match in sorted(
@@ -3012,7 +3125,7 @@ def _serialize_day_match_competition_section(
             {
                 "match_id": match["match_id"],
                 "season_name": season_name,
-                "stage_label": "定位赛" if match["stage"] == "placement" else STAGE_OPTIONS.get(match["stage"], match["stage"]),
+                "stage_label": stage_label(match),
                 "round": int(match["round"]),
                 "game_no": int(match["game_no"]),
                 "meta_text": " · ".join(meta_parts),
@@ -3270,6 +3383,7 @@ def build_ai_match_day_prompt(
     player_lookup: dict[str, dict[str, Any]],
     team_lookup: dict[str, dict[str, Any]],
 ) -> str:
+    data = load_validated_data()
     prompt_templates = load_ai_prompt_templates()
     grouped_matches: dict[str, list[dict[str, Any]]] = {}
     for match in day_matches:
@@ -3305,7 +3419,7 @@ def build_ai_match_day_prompt(
             )
             match_lines.append(
                 f"比赛 {match['match_id']} | 赛季 {(match.get('season') or '').strip()} | "
-                f"{STAGE_OPTIONS.get(match.get('stage'), match.get('stage'))} | 第 {match['round']} 轮 / 第 {match['game_no']} 局 | "
+                f"{resolve_stage_label_for_scope(data, competition_name, str(match.get('season') or ''), match.get('stage'))} | 第 {match['round']} 轮 / 第 {match['game_no']} 局 | "
                 f"台次 {(match.get('table_label') or '').strip() or '未标注'} | 战队总分 {team_score_summary or '待补录'}"
             )
             match_lines.extend(participant_lines)
@@ -3377,6 +3491,7 @@ def build_ai_season_summary_prompt(
     stage_team_rows: dict[str, list[dict[str, Any]]],
     mvp_rows: list[dict[str, Any]],
 ) -> str:
+    data = load_validated_data()
     prompt_templates = load_ai_prompt_templates()
     stage_lines = []
     for stage_key, rows in stage_team_rows.items():
@@ -3387,7 +3502,9 @@ def build_ai_season_summary_prompt(
             f"{row['name']} 总积分 {float(row['points_earned_total']):.2f} / 胜率 {format_pct(row['win_rate'])}"
             for row in top_rows
         )
-        stage_lines.append(f"- {STAGE_OPTIONS.get(stage_key, stage_key)}：{summary}")
+        stage_lines.append(
+            f"- {resolve_stage_label_for_scope(data, competition_name, season_name, stage_key)}：{summary}"
+        )
     top_team_lines = [
         f"- 第{row.get('points_rank', '-')}名 {row['name']} | 场次 {row['matches_represented']} | 上场队员 {row['player_count']} | 总积分 {float(row['points_earned_total']):.2f} | 胜率 {format_pct(row['win_rate'])}"
         for row in team_rows[:8]
@@ -3579,7 +3696,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
                       <div>
                         <div class="card-kicker mb-2">比赛结果</div>
                         <h3 class="h5 mb-2">{legacy.escape(match['match_id'])}</h3>
-                        <div class="small-muted">赛季 {legacy.escape(season_name)} · {legacy.escape(STAGE_OPTIONS.get(match['stage'], match['stage']))} · 第 {match['round']} 轮 / 第 {match['game_no']} 局</div>
+                        <div class="small-muted">赛季 {legacy.escape(season_name)} · {legacy.escape(resolve_stage_label_for_scope(data, competition_name, season_name, match['stage']))} · 第 {match['round']} 轮 / 第 {match['game_no']} 局</div>
                         <div class="small-muted mt-1">{' · '.join(meta_parts)}</div>
                       </div>
                       <div class="d-flex flex-wrap gap-2">
@@ -4265,6 +4382,7 @@ def _serialize_schedule_filters(
 
 
 def _serialize_schedule_day_section(
+    stage_options: dict[str, str],
     played_on: str,
     matches: list[dict[str, Any]],
     team_lookup: dict[str, dict[str, Any]],
@@ -4287,7 +4405,7 @@ def _serialize_schedule_day_section(
                 "match_id": match["match_id"],
                 "detail_href": match_detail_path,
                 "season_name": match["season"],
-                "stage_label": "定位赛" if match["stage"] == "placement" else STAGE_OPTIONS.get(match["stage"], match["stage"]),
+                "stage_label": stage_options.get(match["stage"], match["stage"]),
                 "round_label": f"第 {match['round']} 轮",
                 "game_label": f"第 {match['game_no']} 局",
                 "group_label": str(match.get("group_label") or team_names or "未设置"),
@@ -4426,6 +4544,9 @@ def build_schedule_api_payload(
     total_team_count = len({entry["team_id"] for match in scope["match_rows"] for entry in match["players"] if entry.get("team_id")})
     total_player_count = len({entry["player_id"] for match in scope["match_rows"] for entry in match["players"]})
     day_groups = scope["day_groups"]
+    stage_options = resolve_stage_options_for_scope(
+        scope["data"], selected_competition, selected_season or ""
+    )
     return {
         "alert": form_value(ctx.query, "alert").strip(),
         "hero": {
@@ -4461,6 +4582,7 @@ def build_schedule_api_payload(
         },
         "days": [
             _serialize_schedule_day_section(
+                stage_options,
                 played_on,
                 matches,
                 scope["team_lookup"],
@@ -4542,6 +4664,9 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
         )
 
     team_lookup = {team["team_id"]: team for team in data["teams"]}
+    stage_options = resolve_stage_options_for_scope(
+        data, selected_competition, selected_season or ""
+    )
     day_groups: dict[str, list[dict[str, Any]]] = {}
     for match in match_rows:
         day_groups.setdefault(match["played_on"], []).append(match)
@@ -4569,7 +4694,7 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
                 <tr>
                   <td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(match_detail_path)}">{escape(match['match_id'])}</a></td>
                   <td>{escape(match['season'])}</td>
-                  <td>{escape(STAGE_OPTIONS.get(match['stage'], match['stage']))}</td>
+                  <td>{escape(stage_options.get(match['stage'], match['stage']))}</td>
                   <td>第 {match['round']} 轮</td>
                   <td>{escape(str(match.get('group_label') or team_names or '未设置'))}</td>
                   <td>{escape(match['table_label'])}</td>
@@ -4829,7 +4954,12 @@ def summarize_team_match(team_id: str, match: dict[str, Any], team_lookup: dict[
         "match_id": match["match_id"],
         "competition_name": get_match_competition_name(match),
         "season": match["season"],
-        "stage": STAGE_OPTIONS.get(match["stage"], match["stage"]),
+        "stage": resolve_stage_label_for_scope(
+            load_validated_data(),
+            get_match_competition_name(match),
+            str(match.get("season") or ""),
+            match["stage"],
+        ),
         "round": match["round"],
         "game_no": match["game_no"],
         "played_on": match["played_on"],

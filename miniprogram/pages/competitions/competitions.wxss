@@ -1,9 +1,100 @@
+.city-list,
+.city-competitions {
+  display: flex;
+  flex-direction: column;
+}
+
+.city-list {
+  gap: 18rpx;
+}
+
+.city-section {
+  width: 100%;
+}
+
+.city-toggle {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  min-height: 104rpx;
+  padding: 20rpx 22rpx;
+  border: 1rpx solid #d8e0eb;
+  border-radius: 12rpx;
+  background: #ffffff;
+  box-shadow: 0 6rpx 18rpx rgba(15, 23, 42, 0.045);
+}
+
+.city-toggle.is-expanded {
+  border-color: #9bbcf5;
+  background: #f4f8ff;
+}
+
+.city-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.city-name,
+.city-meta {
+  display: block;
+}
+
+.city-name {
+  overflow: hidden;
+  font-size: 30rpx;
+  font-weight: 800;
+  line-height: 1.25;
+  color: #0b1730;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.city-meta {
+  margin-top: 8rpx;
+  font-size: 22rpx;
+  line-height: 1.35;
+  color: #68758a;
+}
+
+.city-action {
+  flex: 0 0 auto;
+  font-size: 22rpx;
+  font-weight: 700;
+  color: #1f5fd1;
+}
+
+.city-chevron {
+  flex: 0 0 auto;
+  width: 22rpx;
+  font-size: 32rpx;
+  line-height: 1;
+  color: #1f5fd1;
+  transform: rotate(0deg);
+  transition: transform 160ms ease;
+}
+
+.city-chevron.is-expanded {
+  transform: rotate(90deg);
+}
+
+.city-competitions {
+  gap: 16rpx;
+  margin-top: 14rpx;
+  padding-left: 16rpx;
+  border-left: 4rpx solid #d8e6fb;
+}
+
 .competition-card {
   padding: 26rpx;
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;
   background: #ffffff;
   box-shadow: 0 10rpx 28rpx rgba(15, 23, 42, 0.06);
+}
+
+.competition-card.is-selected {
+  border-color: #9bbcf5;
+  box-shadow: 0 8rpx 22rpx rgba(31, 95, 209, 0.1);
 }
 
 .current-scope {

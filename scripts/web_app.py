@@ -9539,6 +9539,12 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
                         "competition_name": get_match_competition_name(match),
                         "played_on": str(match.get("played_on") or ""),
                         "stage": str(match.get("stage") or ""),
+                        "stage_label": resolve_stage_label_for_scope(
+                            data,
+                            get_match_competition_name(match),
+                            str(match.get("season") or ""),
+                            match.get("stage"),
+                        ),
                         "round": int(match.get("round") or 0),
                         "game_no": int(match.get("game_no") or 0),
                         "table_label": str(match.get("table_label") or ""),
@@ -9648,6 +9654,7 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
             _serialize_dashboard_finalist_row(row)
             for row in promotion_context["final_rows"]
         ],
+        "stage_labels": promotion_context["stage_labels"],
         "leaderboards": {
             "teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows],
             "players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows],
@@ -9900,6 +9907,14 @@ def build_dashboard_promotion_context(
     selected_region: str | None,
     selected_series_slug: str | None,
 ) -> dict[str, Any]:
+    stage_labels = resolve_stage_options_for_scope(
+        data,
+        selected_competition or "",
+        selected_season or "",
+    )
+    regular_stage_label = stage_labels["regular_season"]
+    playoff_stage_label = stage_labels["playoffs"]
+    final_stage_label = stage_labels["finals"]
     regular_season_matches = [
         match
         for match in scoped_played_matches
@@ -9947,8 +9962,8 @@ def build_dashboard_promotion_context(
         selected_season,
     )
     if target_regular_status_is_display_only:
-        # 京城 S2 的直通/晋级/淘汰仅随当前常规赛榜名次展示，
-        # 不复用历史规则自动生成季后赛或总决赛名单。
+        # This season's progression badges are display-only and do not build
+        # later-stage rosters automatically.
         direct_rows = []
         playoff_rows = []
     playoff_stage_matches = [
@@ -10013,7 +10028,7 @@ def build_dashboard_promotion_context(
     seen_final_team_ids: set[str] = set()
     for group_label, row in direct_rows:
         normalized = normalize_dashboard_promotion_row(
-            "常规赛直通",
+            f"{regular_stage_label}直通",
             row,
             f"{group_label}-{int(row['rank'])}",
             selected_competition,
@@ -10029,9 +10044,9 @@ def build_dashboard_promotion_context(
         if team_id and team_id in seen_final_team_ids:
             continue
         normalized = normalize_dashboard_promotion_row(
-            "季后赛前9",
+            f"{playoff_stage_label}前9",
             row,
-            f"季后赛-{int(row.get('points_rank') or len(final_rows) + 1)}",
+            f"{playoff_stage_label}-{int(row.get('points_rank') or len(final_rows) + 1)}",
             selected_competition,
             selected_season,
             selected_region,
@@ -10045,9 +10060,9 @@ def build_dashboard_promotion_context(
         if team_id and team_id in seen_final_team_ids:
             continue
         normalized = normalize_dashboard_promotion_row(
-            "总决赛",
+            final_stage_label,
             row,
-            f"决赛-{int(row.get('points_rank') or len(final_rows) + 1)}",
+            f"{final_stage_label}-{int(row.get('points_rank') or len(final_rows) + 1)}",
             selected_competition,
             selected_season,
             selected_region,
@@ -10066,7 +10081,7 @@ def build_dashboard_promotion_context(
         )
     playoff_promotion_rows = [
         normalize_dashboard_promotion_row(
-            "常规赛晋级",
+            f"{regular_stage_label}晋级",
             row,
             f"{group_label}-{int(row['rank'])}",
             selected_competition,
@@ -10077,15 +10092,16 @@ def build_dashboard_promotion_context(
         for group_label, row in playoff_rows
     ]
     rules = (
-        ["京城大师赛 S2 的直通、晋级、淘汰仅用于常规赛战队榜展示，不自动生成季后赛名单。"]
+        [f"京城大师赛 S2 的直通、晋级、淘汰仅用于{regular_stage_label}战队榜展示，不自动生成{playoff_stage_label}名单。"]
         if target_regular_status_is_display_only
         else [
-            "决赛区由常规赛 3 支直通队伍和季后赛排名前 9 队伍组成。",
-            "常规赛直通队伍：S组第1-2名、F组第1名。",
-            "季后赛区：常规赛 S组第3-9名、F组第2-6名。",
+            f"{final_stage_label}由{regular_stage_label} 3 支直通队伍和{playoff_stage_label}排名前 9 队伍组成。",
+            f"{regular_stage_label}直通队伍：S组第1-2名、F组第1名。",
+            f"{playoff_stage_label}参赛范围：{regular_stage_label} S组第3-9名、F组第2-6名。",
         ]
     )
     return {
+        "stage_labels": stage_labels,
         "rules": rules,
         "final_rows": final_rows,
         "playoff_rows": playoff_promotion_rows,
@@ -10584,6 +10600,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     )
     final_rows = promotion_context["final_rows"]
     playoff_promotion_rows = promotion_context["playoff_rows"]
+    final_stage_label = promotion_context["stage_labels"]["finals"]
 
     def dashboard_team_logo_src(logo_path: str) -> str:
         logo_text = str(logo_path or "").strip()
@@ -10604,9 +10621,9 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
               </span>
               <div>
                 <div class="dashboard-ranking-name">{escape(row['team_name'])}</div>
-                <div class="dashboard-ranking-meta">{escape(row['source_label'])} · 决赛分数 {row.get('final_points_total', 0.0):.2f} · 决赛场均 {row.get('final_points_per_match', 0.0):.2f} · 决赛对局 {row.get('final_matches_represented', 0)} 场</div>
+                <div class="dashboard-ranking-meta">{escape(row['source_label'])} · {escape(final_stage_label)}分数 {row.get('final_points_total', 0.0):.2f} · {escape(final_stage_label)}场均 {row.get('final_points_per_match', 0.0):.2f} · {escape(final_stage_label)}对局 {row.get('final_matches_represented', 0)} 场</div>
               </div>
-              <div class="dashboard-ranking-score">{row.get('final_points_total', 0.0):.2f}<small>决赛分</small></div>
+              <div class="dashboard-ranking-score">{row.get('final_points_total', 0.0):.2f}<small>{escape(final_stage_label)}分</small></div>
             </a>
             """
             for row in rows
@@ -10616,12 +10633,12 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     <section class="panel dashboard-section-panel shadow-sm">
       <div class="dashboard-section-head">
         <div>
-          <h2 class="section-title mb-2">决赛名单</h2>
-          <p class="dashboard-section-copy mb-0">按总决赛赛段成绩展示决赛分数；未录入总决赛对局的队伍会暂时显示 0.00 分。</p>
+          <h2 class="section-title mb-2">{escape(final_stage_label)}名单</h2>
+          <p class="dashboard-section-copy mb-0">按{escape(final_stage_label)}成绩展示分数；未录入{escape(final_stage_label)}对局的队伍会暂时显示 0.00 分。</p>
         </div>
       </div>
       <div class="dashboard-ranking-list">
-        {render_promotion_rows(final_rows) or '<div class="alert alert-secondary mb-0">当前还没有可计算的决赛队伍。</div>'}
+        {render_promotion_rows(final_rows) or f'<div class="alert alert-secondary mb-0">当前还没有可计算的{escape(final_stage_label)}队伍。</div>'}
       </div>
     </section>
     """
@@ -12735,6 +12752,24 @@ def build_empty_dimension_panel(title: str, description: str) -> str:
     """
 
 
+def build_dimension_stage_notice(
+    data: dict[str, Any],
+    competition_name: str | None,
+    season_name: str | None,
+) -> str:
+    stage_label = (
+        resolve_stage_label_for_scope(
+            data,
+            competition_name,
+            season_name,
+            "finals",
+        )
+        if competition_name and season_name
+        else "决赛阶段"
+    )
+    return f"{stage_label}维度按照当日第一天上场的队员计算"
+
+
 def build_player_dimension_panel(
     ctx: RequestContext,
     data: dict[str, Any],
@@ -12742,7 +12777,11 @@ def build_player_dimension_panel(
     competition_name: str | None,
     season_name: str | None,
 ) -> str:
-    dimension_notice = "总决赛维度按照当日第一天上场的队员计算"
+    dimension_notice = build_dimension_stage_notice(
+        data,
+        competition_name,
+        season_name,
+    )
     if not competition_name:
         return ""
     all_rows = get_player_dimension_history(data, player_id, competition_name, None)
@@ -12768,6 +12807,11 @@ def build_player_dimension_panel(
     )
     if not selected_dimension_season:
         return ""
+    dimension_notice = build_dimension_stage_notice(
+        data,
+        competition_name,
+        selected_dimension_season,
+    )
     history = [
         row
         for row in all_rows
@@ -16603,6 +16647,24 @@ def validate_match_season_selection(
     )
     if season_name not in available_seasons:
         return "请选择该系列赛已配置的赛季。"
+    return ""
+
+
+def validate_match_stage_selection(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    stage: str,
+) -> str:
+    if not stage.strip():
+        return "请选择赛段。"
+    stage_options = resolve_stage_options_for_scope(
+        data,
+        competition_name,
+        season_name,
+    )
+    if stage not in stage_options:
+        return "请选择当前赛事赛季配置的赛段。"
     return ""
 
 

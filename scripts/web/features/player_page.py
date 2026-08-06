@@ -25,6 +25,7 @@ build_match_day_path = legacy.build_match_day_path
 build_player_details = legacy.build_player_details
 build_player_achievement_tags = legacy.build_player_achievement_tags
 build_player_dimension_panel = legacy.build_player_dimension_panel
+build_dimension_stage_notice = legacy.build_dimension_stage_notice
 build_player_photo_html = legacy.build_player_photo_html
 build_player_rows = legacy.build_player_rows
 build_scoped_path = legacy.build_scoped_path
@@ -1364,7 +1365,7 @@ def _serialize_player_dimension_payload(
     competition_name: str | None,
     season_name: str | None,
 ) -> dict[str, Any]:
-    notice = "总决赛维度按照当日第一天上场的队员计算"
+    notice = build_dimension_stage_notice(data, competition_name, season_name)
     if not competition_name:
         return {"available": False, "reason": "请先选择赛事。", "notice": notice}
     all_rows = get_player_dimension_history(data, player_id, competition_name, None)
@@ -1384,6 +1385,11 @@ def _serialize_player_dimension_payload(
         requested_dimension_season
         if requested_dimension_season in available_seasons
         else (season_name if season_name in available_seasons else (available_seasons[0] if available_seasons else ""))
+    )
+    notice = build_dimension_stage_notice(
+        data,
+        competition_name,
+        selected_dimension_season,
     )
     history = [
         row

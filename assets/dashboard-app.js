@@ -100,19 +100,12 @@
 
   function renderSchedule(payload) {
     const hero = payload.hero || {};
-    const stageLabels = {
-      regular_season: "常规赛",
-      placement: "定位赛",
-      group_stage: "小组赛",
-      knockout: "淘汰赛",
-      semifinal: "半决赛",
-      final: "决赛",
-      finals: "总决赛",
-    };
     const scheduleItems = Array.isArray(payload.schedule_matches) ? payload.schedule_matches : [];
     const rows = (scheduleItems.length ? scheduleItems : [0, 1, 2]).slice(0, 3).map((item, index) => {
       const match = typeof item === "object" ? item : null;
-      const stage = match ? stageLabels[match.stage] || match.stage || "赛段待定" : "赛段待定";
+      const stage = match
+        ? match.stage_label || resolveStageLabel(payload, match.stage, match.stage || "赛段待定")
+        : "赛段待定";
       const game = match ? `第${match.round || "-"}轮第${match.game_no || "-"}局` : `第${index + 1}轮第-局`;
       return `
         <a class="dashboard-schedule-row" href="${escapeHtml((match && match.href) || hero.latest_match_day_href || "/competitions")}">
@@ -236,22 +229,29 @@
     `;
   }
 
-  function renderFinalists(items) {
+  function resolveStageLabel(payload, stageKey, fallback) {
+    const configured = payload.stage_labels && payload.stage_labels[stageKey];
+    if (configured) return configured;
+    const stage = (payload.leaderboard_stages || []).find((item) => item.key === stageKey);
+    return (stage && stage.label) || fallback;
+  }
+
+  function renderFinalists(items, finalStageLabel) {
     if (!Array.isArray(items) || items.length === 0) {
       return `
         <section class="dashboard-panel dashboard-section dashboard-ranking-panel">
           <div class="dashboard-section-head">
-            <div><div class="dashboard-section-kicker">Finalists</div><h2 class="dashboard-section-title">决赛名单</h2></div>
+            <div><div class="dashboard-section-kicker">Finalists</div><h2 class="dashboard-section-title">${escapeHtml(finalStageLabel)}名单</h2></div>
             <a class="dashboard-section-action" href="/competitions">更多</a>
           </div>
-          <div class="dashboard-select-note">当前还没有可计算的决赛队伍。</div>
+          <div class="dashboard-select-note">当前还没有可计算的${escapeHtml(finalStageLabel)}队伍。</div>
         </section>
       `;
     }
     return `
       <section class="dashboard-panel dashboard-section dashboard-ranking-panel">
         <div class="dashboard-section-head">
-          <div><div class="dashboard-section-kicker">Finalists</div><h2 class="dashboard-section-title">决赛名单</h2></div>
+          <div><div class="dashboard-section-kicker">Finalists</div><h2 class="dashboard-section-title">${escapeHtml(finalStageLabel)}名单</h2></div>
           <a class="dashboard-section-action" href="/competitions">更多</a>
         </div>
         <div class="dashboard-ranking-list dashboard-finalist-list">
@@ -264,10 +264,10 @@
                     <img class="dashboard-ranking-avatar" src="${escapeHtml(item.logo)}" alt="${escapeHtml(item.team_name)}">
                     <div class="dashboard-ranking-copy">
                       <div class="dashboard-ranking-name">${escapeHtml(item.team_name)}</div>
-                      <div class="dashboard-ranking-meta">${escapeHtml(item.source_label)} · 决赛对局 ${escapeHtml(item.final_matches_represented)} 场 · 场均 ${escapeHtml(item.final_points_per_match)}</div>
+                      <div class="dashboard-ranking-meta">${escapeHtml(item.source_label)} · ${escapeHtml(finalStageLabel)}对局 ${escapeHtml(item.final_matches_represented)} 场 · 场均 ${escapeHtml(item.final_points_per_match)}</div>
                     </div>
                   </div>
-                  <div class="dashboard-ranking-value">${escapeHtml(item.final_points_total)}<small>决赛分</small></div>
+                  <div class="dashboard-ranking-value">${escapeHtml(item.final_points_total)}<small>${escapeHtml(finalStageLabel)}分</small></div>
                 </a>
               `
             )
@@ -405,7 +405,7 @@
 
         ${renderMetrics(payload.metrics)}
 
-        ${renderFinalists(payload.finalists)}
+        ${renderFinalists(payload.finalists, resolveStageLabel(payload, "finals", "决赛阶段"))}
 
         <section class="dashboard-board-grid">
           <section class="dashboard-panel dashboard-section dashboard-ranking-panel">

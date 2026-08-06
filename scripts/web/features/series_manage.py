@@ -177,7 +177,7 @@ def render_grouping_panel(
         if preview["ready"]
         else (
             '<div class="alert alert-warning">'
-            f'必须恰好识别 {preview["expected_team_count"]} 支有效定级赛战队，'
+            f'必须恰好识别 {preview["expected_team_count"]} 支有效{escape(source_stage_label)}战队，'
             f'当前为 {preview["team_count"]} 支，暂不能确认。'
             '</div>'
         )
@@ -301,10 +301,14 @@ def validate_stage_labels(stage_labels: dict[str, str]) -> str:
     return ""
 
 
-def validate_stage_windows(stage_windows: list[dict[str, str]]) -> str:
+def validate_stage_windows(
+    stage_windows: list[dict[str, str]],
+    stage_options: dict[str, str] | None = None,
+) -> str:
+    effective_stage_options = stage_options or STAGE_OPTIONS
     for window in stage_windows:
         stage_key = str(window.get("stage") or "").strip()
-        stage_label = STAGE_OPTIONS.get(stage_key, stage_key or "赛段")
+        stage_label = effective_stage_options.get(stage_key, stage_key or "赛段")
         start_at = str(window.get("start_at") or "").strip()
         end_at = str(window.get("end_at") or "").strip()
         if not start_at and not end_at:
@@ -1715,12 +1719,23 @@ def handle_series_manage(ctx: RequestContext, start_response):
                 "400 Bad Request",
                 get_series_manage_page(ctx, alert="当前赛季策略没有启用按排名分组。"),
             )
+        grouping_preview = build_placement_assignment_preview(
+            data,
+            competition_name,
+            season_name,
+        )
+        assignment_stage_label = legacy.resolve_stage_label_for_scope(
+            data,
+            competition_name,
+            season_name,
+            grouping_preview.get("assignment_stage") or "regular_season",
+        )
         permission_guard = require_competition_season_manager(
             ctx,
             start_response,
             data,
             competition_name,
-            "你没有权限确认该赛季的定级赛分组。",
+            f"你没有权限确认该赛季的{assignment_stage_label}分组。",
         )
         if permission_guard is not None:
             return permission_guard
@@ -1780,7 +1795,7 @@ def handle_series_manage(ctx: RequestContext, start_response):
         return start_response_html(
             start_response,
             "200 OK",
-            get_series_manage_page(page_ctx, alert=f"定级赛分组已固定写入，共更新 {updated_count} 支战队。"),
+            get_series_manage_page(page_ctx, alert=f"{assignment_stage_label}分组已固定写入，共更新 {updated_count} 支战队。"),
         )
     if action == "save_season":
         edit_mode = form_value(ctx.form, "edit_mode").strip() or "season"
@@ -1833,7 +1848,10 @@ def handle_series_manage(ctx: RequestContext, start_response):
         }
         error = legacy.validate_season_catalog_form(series_slug, season_name, start_at, end_at)
         error = error or validate_stage_labels(stage_labels)
-        error = error or validate_stage_windows(stage_windows)
+        error = error or validate_stage_windows(
+            stage_windows,
+            stage_options_for_season_entry({"stage_labels": stage_labels}),
+        )
         error = error or validate_scoring_rule_labels(season_scoring_rule)
         policy_errors = validate_season_policy(season_policy)
         error = error or ("；".join(policy_errors) if policy_errors else "")

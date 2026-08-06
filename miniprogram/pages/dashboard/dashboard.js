@@ -264,6 +264,8 @@ Page({
       const leaderboardStages = payload.leaderboard_stages || [{ key: "all", label: "全部" }];
       const leaderboardsByStage = payload.leaderboards_by_stage || {};
       const regularSeasonTeamLeaderboards = payload.regular_season_team_leaderboards || {};
+      const regularSeasonStage = leaderboardStages.find((item) => item.key === "regular_season");
+      const regularSeasonLabel = (regularSeasonStage && regularSeasonStage.label) || "当前赛段";
       const teamLeaderboardSections = {
         ...(payload.team_leaderboard_sections || {})
       };
@@ -275,7 +277,7 @@ Page({
           .map((key) => ({
             key,
             label: `${key}组`,
-            title: `${key}组常规赛榜`,
+            title: `${key}组${regularSeasonLabel}榜`,
             rows: regularSeasonTeamLeaderboards[key] || []
           }));
       }

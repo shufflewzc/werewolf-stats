@@ -223,6 +223,18 @@ function checkPredictionShareCard() {
   ok("战绩卡点击查看与预测分享图六项分数概率检查通过。");
 }
 
+function checkCustomStageLabels() {
+  const dashboardPath = path.join(MINIPROGRAM_DIR, "pages", "dashboard", "dashboard.js");
+  const source = fs.readFileSync(dashboardPath, "utf8");
+  if (!source.includes('item.key === "regular_season"') || !source.includes("regularSeasonLabel")) {
+    fail("小程序排行榜没有读取后端返回的自定义赛段名称。");
+  }
+  if (source.includes("组常规赛榜")) {
+    fail("小程序排行榜仍包含硬编码的常规赛榜标题。");
+  }
+  ok("小程序自定义赛段名称检查通过。");
+}
+
 function printReport() {
   console.log("小程序发布前自检");
   for (const message of results.ok) {
@@ -243,6 +255,7 @@ function main() {
   checkJavaScriptSyntax();
   checkLocalAddressRisk();
   checkPredictionShareCard();
+  checkCustomStageLabels();
   printReport();
   if (results.failures.length) {
     console.error("\n小程序发布前自检未通过，请先修正失败项。");

@@ -2,14 +2,17 @@ import unittest
 from unittest.mock import patch
 
 import competition_meta
+import season_grouping
 import web_app
 from competition_meta import (
     normalize_season_catalog_entry,
     normalize_stage_labels,
     resolve_stage_label_for_scope,
+    resolve_stage_title_for_scope,
     stage_label_for_season_entry,
     stage_options_for_season_entry,
 )
+from web.features import matches as matches_feature
 from web.features.series_manage import (
     build_stage_window_form_values,
     collect_stage_labels_from_form,
@@ -102,6 +105,173 @@ class StageLabelTests(unittest.TestCase):
                 ),
                 "常规赛",
             )
+
+    def test_generated_stage_titles_follow_custom_label(self):
+        series_catalog = [
+            {
+                "series_slug": "sample",
+                "competition_name": "示例赛事广州站",
+            }
+        ]
+        season_catalog = [
+            {
+                "series_slug": "sample",
+                "competition_name": "示例赛事广州站",
+                "season_name": "S1",
+                "stage_labels": {"regular_season": "积分循环赛"},
+            }
+        ]
+        with patch.object(
+            competition_meta,
+            "load_series_catalog",
+            return_value=series_catalog,
+        ), patch.object(
+            competition_meta,
+            "load_season_catalog",
+            return_value=season_catalog,
+        ):
+            self.assertEqual(
+                resolve_stage_title_for_scope(
+                    {},
+                    "示例赛事广州站",
+                    "S1",
+                    "regular_season",
+                    "S组常规赛榜",
+                    "S组",
+                ),
+                "S组积分循环赛榜",
+            )
+            self.assertEqual(
+                resolve_stage_title_for_scope(
+                    {},
+                    "示例赛事广州站",
+                    "S1",
+                    "regular_season",
+                    "荣耀战队榜",
+                    "S组",
+                ),
+                "荣耀战队榜",
+            )
+
+    def test_grouped_leaderboard_api_section_uses_custom_title(self):
+        policy = {
+            "stages": {
+                "regular_season": {
+                    "standings": {
+                        "mode": "tiered",
+                        "sections": [
+                            {
+                                "key": "S",
+                                "label": "S组",
+                                "title": "S组常规赛榜",
+                                "groups": ["S1"],
+                            }
+                        ],
+                    }
+                }
+            }
+        }
+        with patch.object(
+            season_grouping,
+            "resolve_policy",
+            return_value=policy,
+        ), patch.object(
+            season_grouping,
+            "build_regular_season_team_leaderboards",
+            return_value={"S": []},
+        ), patch.object(
+            competition_meta,
+            "resolve_stage_label_for_scope",
+            return_value="积分循环赛",
+        ):
+            sections = season_grouping.build_team_leaderboard_sections(
+                {},
+                "示例赛事广州站",
+                "S1",
+                "regular_season",
+            )
+        self.assertEqual(sections[0]["title"], "S组积分循环赛榜")
+
+    def test_dashboard_progression_copy_uses_custom_stage_labels(self):
+        custom_labels = {
+            **stage_options_for_season_entry(None),
+            "regular_season": "积分循环赛",
+            "playoffs": "晋级赛",
+            "finals": "巅峰赛",
+        }
+        with patch.object(
+            web_app,
+            "resolve_stage_options_for_scope",
+            return_value=custom_labels,
+        ), patch.object(
+            web_app,
+            "progression_is_display_only",
+            return_value=False,
+        ):
+            context = web_app.build_dashboard_promotion_context(
+                {"teams": [], "players": []},
+                [],
+                "示例赛事广州站",
+                "S1",
+                "广州",
+                "sample",
+            )
+        self.assertEqual(context["stage_labels"]["finals"], "巅峰赛")
+        self.assertTrue(any("积分循环赛" in item for item in context["rules"]))
+        self.assertTrue(any("晋级赛" in item for item in context["rules"]))
+
+    def test_match_stage_validation_uses_stable_stage_keys(self):
+        with patch.object(
+            web_app,
+            "resolve_stage_options_for_scope",
+            return_value={"regular_season": "积分循环赛", "finals": "巅峰赛"},
+        ):
+            self.assertEqual(
+                web_app.validate_match_stage_selection(
+                    {}, "示例赛事广州站", "S1", "regular_season"
+                ),
+                "",
+            )
+            self.assertIn(
+                "当前赛事赛季",
+                web_app.validate_match_stage_selection(
+                    {}, "示例赛事广州站", "S1", "unknown"
+                ),
+            )
+
+    def test_match_season_picker_embeds_custom_stage_map(self):
+        catalog = [
+            {
+                "competition_name": "示例赛事广州站",
+                "region_name": "广州",
+                "series_name": "示例赛事",
+            }
+        ]
+        with patch.object(
+            matches_feature,
+            "load_validated_data",
+            return_value={"matches": []},
+        ), patch.object(
+            matches_feature,
+            "load_series_catalog",
+            return_value=catalog,
+        ), patch.object(
+            matches_feature,
+            "list_seasons",
+            return_value=["S1"],
+        ), patch.object(
+            matches_feature,
+            "resolve_stage_options_for_scope",
+            return_value={"regular_season": "积分循环赛", "finals": "巅峰赛"},
+        ):
+            html = matches_feature.build_match_season_field(
+                "示例赛事广州站",
+                "S1",
+                include_non_ongoing=True,
+            )
+        self.assertIn("data-stage-map", html)
+        self.assertIn("积分循环赛", html)
+        self.assertIn("data-match-stage-select", html)
 
     def test_validation_rejects_duplicate_and_overlong_labels(self):
         self.assertIn("不能重复", validate_stage_labels({"placement": "常规赛"}))

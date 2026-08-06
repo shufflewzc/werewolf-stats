@@ -98,6 +98,7 @@ uses_structured_score_model = legacy.uses_structured_score_model
 validate_match_awards = legacy.validate_match_awards
 validate_match_competition_selection = legacy.validate_match_competition_selection
 validate_match_season_selection = legacy.validate_match_season_selection
+validate_match_stage_selection = legacy.validate_match_stage_selection
 STAGE_LABELS = STAGE_OPTIONS
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -362,7 +363,7 @@ def build_batch_create_form(
           </div>
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">阶段</label>
-            <select class="form-select" name="stage">
+            <select class="form-select" name="stage" required data-match-stage-select data-selected="{escape(current['stage'])}">
               {option_tags(stage_options, current["stage"])}
             </select>
           </div>
@@ -377,7 +378,7 @@ def build_batch_create_form(
           <div class="col-12 col-md-6 col-xl-3">
             <label class="form-label">房间</label>
             <input class="form-control" name="room_label" value="{escape(current['room_label'])}">
-            <div class="small text-secondary mt-2">这里只先批量生成赛程壳子；如果常规赛需要分组，后续可以在 Excel 批量补录时选填。</div>
+            <div class="small text-secondary mt-2">这里只先批量生成赛程壳子；需要分组的赛段可在后续 Excel 批量补录时选填。</div>
           </div>
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">开始日期</label>
@@ -475,7 +476,7 @@ def build_excel_import_panel(
           <div class="col-12 col-lg-4">
             <label class="form-label">本次上传分组（选填）</label>
             <input class="form-control" name="group_label" value="{escape(current['group_label'])}" placeholder="如 A组 / B组">
-            <div class="small text-secondary mt-2">只有常规赛这类需要分组时再填；留空也可以正常上传。</div>
+            <div class="small text-secondary mt-2">只有需要分组的赛段再填写；留空也可以正常上传。</div>
           </div>
           <div class="col-12 col-lg-8">
             <label class="form-label">选择 Excel 文件</label>
@@ -537,7 +538,7 @@ def build_dimension_import_panel(
             <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </div>
         </div>
-        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。定级赛的个人维度允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写定级赛记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
+        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。个人参赛阶段允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写个人参赛阶段记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
         </div>
@@ -3713,6 +3714,7 @@ def build_match_season_field(
         )
 
     season_map: dict[str, list[str]] = {}
+    stage_map: dict[str, dict[str, dict[str, str]]] = {}
     if current_competition_name:
         try:
             scoped_match_seasons = set(
@@ -3745,11 +3747,27 @@ def build_match_season_field(
         )
         if season_names:
             season_map[entry["competition_name"]] = season_names
+            stage_map[entry["competition_name"]] = {
+                season_name: resolve_stage_options_for_scope(
+                    data,
+                    entry["competition_name"],
+                    season_name,
+                )
+                for season_name in season_names
+            }
     if current_competition_name and current_competition_name not in season_map and valid_current_season:
         season_map[current_competition_name] = [valid_current_season]
+        stage_map[current_competition_name] = {
+            valid_current_season: resolve_stage_options_for_scope(
+                data,
+                current_competition_name,
+                valid_current_season,
+            )
+        }
     selected_json = escape(json.dumps(season_map, ensure_ascii=False))
+    stage_json = escape(json.dumps(stage_map, ensure_ascii=False))
     return f"""
-    <div class="match-season-picker" data-season-map='{selected_json}'>
+    <div class="match-season-picker" data-season-map='{selected_json}' data-stage-map='{stage_json}'>
       <select class="form-select" name="season" required data-match-season-select data-selected="{escape(current_season_name)}"></select>
       <div class="small text-secondary mt-2" data-match-season-helper>按进行中、未开始、待排期、已结束排序；未开始赛季也可以提前创建待补录比赛。</div>
     </div>
@@ -3757,37 +3775,80 @@ def build_match_season_field(
       (function() {{
         const scope = document.currentScript.previousElementSibling;
         if (!scope) return;
-        const seasonMap = JSON.parse(scope.getAttribute("data-season-map") || "{{}}");
-        const seasonSelect = scope.querySelector("[data-match-season-select]");
-        const helper = scope.querySelector("[data-match-season-helper]");
-        const form = scope.closest("form");
-        const competitionSelect = form ? form.querySelector("[data-match-competition-select]") : null;
-        if (!seasonSelect || !competitionSelect) return;
-        function renderSeasons() {{
-          const seasons = seasonMap[competitionSelect.value] || [];
-          const selected = seasonSelect.getAttribute("data-selected") || "";
-          seasonSelect.innerHTML = seasons.map((season) => {{
-            const isSelected = season === selected ? " selected" : "";
-            return `<option value="${{season}}"${{isSelected}}>${{season}}</option>`;
-          }}).join("");
-          if (!seasonSelect.value && seasons.length) {{
-            seasonSelect.value = seasons[0];
+        function initPicker() {{
+          const seasonMap = JSON.parse(scope.getAttribute("data-season-map") || "{{}}");
+          const stageMap = JSON.parse(scope.getAttribute("data-stage-map") || "{{}}");
+          const seasonSelect = scope.querySelector("[data-match-season-select]");
+          const helper = scope.querySelector("[data-match-season-helper]");
+          const form = scope.closest("form");
+          const competitionSelect = form ? form.querySelector("[data-match-competition-select]") : null;
+          const stageSelect = form ? form.querySelector("[data-match-stage-select]") : null;
+          if (!seasonSelect || !competitionSelect) return;
+
+          function replaceOptions(select, rows, selected, emptyLabel) {{
+            select.replaceChildren();
+            rows.forEach(([value, label]) => {{
+              const option = document.createElement("option");
+              option.value = value;
+              option.textContent = label;
+              option.selected = value === selected;
+              select.appendChild(option);
+            }});
+            if (!rows.length) {{
+              const option = document.createElement("option");
+              option.value = "";
+              option.textContent = emptyLabel;
+              select.appendChild(option);
+            }}
+            if (!select.value && rows.length) select.value = rows[0][0];
           }}
-          if (!seasons.length) {{
-            seasonSelect.innerHTML = '<option value="">暂无可用赛季</option>';
+
+          function renderStages() {{
+            if (!stageSelect) return;
+            const options = ((stageMap[competitionSelect.value] || {{}})[seasonSelect.value]) || {{}};
+            const selected = stageSelect.getAttribute("data-selected") || stageSelect.value || "";
+            replaceOptions(stageSelect, Object.entries(options), selected, "暂无可用赛段");
+            stageSelect.setAttribute("data-selected", stageSelect.value || selected);
           }}
-          if (helper) {{
-            helper.textContent = seasons.length
-              ? '优先显示正在进行的赛季，已结束赛季排在最后。'
-              : '当前地区赛事页还没有可用赛季，请先到系列赛管理里配置。';
+
+          function renderSeasons() {{
+            const seasons = seasonMap[competitionSelect.value] || [];
+            const selected = seasonSelect.getAttribute("data-selected") || "";
+            replaceOptions(
+              seasonSelect,
+              seasons.map((season) => [season, season]),
+              selected,
+              "暂无可用赛季"
+            );
+            if (helper) {{
+              helper.textContent = seasons.length
+                ? "优先显示正在进行的赛季，已结束赛季排在最后。"
+                : "当前地区赛事页还没有可用赛季，请先到系列赛管理里配置。";
+            }}
+            seasonSelect.setAttribute("data-selected", seasonSelect.value || selected);
+            renderStages();
           }}
-          seasonSelect.setAttribute("data-selected", seasonSelect.value || selected);
-        }}
-        competitionSelect.addEventListener("change", function() {{
-          seasonSelect.setAttribute("data-selected", "");
+
+          competitionSelect.addEventListener("change", function() {{
+            seasonSelect.setAttribute("data-selected", "");
+            renderSeasons();
+          }});
+          seasonSelect.addEventListener("change", function() {{
+            seasonSelect.setAttribute("data-selected", seasonSelect.value || "");
+            renderStages();
+          }});
+          if (stageSelect) {{
+            stageSelect.addEventListener("change", function() {{
+              stageSelect.setAttribute("data-selected", stageSelect.value || "");
+            }});
+          }}
           renderSeasons();
-        }});
-        renderSeasons();
+        }}
+        if (document.readyState === "loading") {{
+          document.addEventListener("DOMContentLoaded", initPicker, {{ once: true }});
+        }} else {{
+          initPicker();
+        }}
       }})();
     </script>
     """
@@ -4024,7 +4085,7 @@ def render_match_form_page(
           </div>
           <div class="col-12 col-md-6 col-xl-2">
             <label class="form-label">阶段</label>
-            <select class="form-select" name="stage">
+            <select class="form-select" name="stage" required data-match-stage-select data-selected="{escape(str(current['stage']))}">
               {option_tags(stage_options, str(current['stage']))}
             </select>
           </div>
@@ -4441,6 +4502,18 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
             start_response,
             "200 OK",
             get_match_edit_page(ctx, match_id, alert=season_error, field_values=updated_match),
+        )
+    stage_error = validate_match_stage_selection(
+        data,
+        updated_match["competition_name"],
+        updated_match["season"],
+        updated_match["stage"],
+    )
+    if stage_error:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_match_edit_page(ctx, match_id, alert=stage_error, field_values=updated_match),
         )
     award_error = validate_match_awards(updated_match)
     if award_error:
@@ -4912,6 +4985,18 @@ def handle_match_create(ctx: RequestContext, start_response):
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert=season_error, batch_form_values=batch_form_values),
+            )
+        stage_error = validate_match_stage_selection(
+            data,
+            competition_name,
+            season_name,
+            stage,
+        )
+        if stage_error:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=stage_error, batch_form_values=batch_form_values),
             )
         try:
             new_matches = batch_create_matches(
@@ -5488,6 +5573,22 @@ def handle_match_create(ctx: RequestContext, start_response):
             get_match_create_page(
                 ctx,
                 alert=season_error,
+                field_values=new_match,
+            ),
+        )
+    stage_error = validate_match_stage_selection(
+        data,
+        new_match["competition_name"],
+        new_match["season"],
+        new_match["stage"],
+    )
+    if stage_error:
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_match_create_page(
+                ctx,
+                alert=stage_error,
                 field_values=new_match,
             ),
         )

@@ -995,7 +995,7 @@ def render_legacy_progress_overview(progress: dict[str, Any]) -> str:
         <div class="col-12">
           <div class="team-link-card shadow-sm p-4 h-100">
             <div class="card-kicker mb-2">当前阶段</div>
-            <h3 class="h4 mb-3">{escape(str(progress.get('stage_label') or '季后赛'))}</h3>
+            <h3 class="h4 mb-3">{escape(str(progress.get('stage_label') or '当前赛段'))}</h3>
             <div class="small-muted mb-1">最近比赛日 {escape(str(progress.get('latest_played_on') or '待更新'))}</div>
             <div class="small-muted">赛段时间 {escape(str(progress.get('period') or '未设置'))}</div>
           </div>
@@ -2392,6 +2392,9 @@ def build_ai_data_question_prompt(
         for item in promotion_context.get("rules", [])
         if str(item).strip()
     ]
+    promotion_stage_labels = promotion_context.get("stage_labels", {})
+    final_stage_label = str(promotion_stage_labels.get("finals") or "决赛阶段")
+    playoff_stage_label = str(promotion_stage_labels.get("playoffs") or "晋级赛段")
 
     def render_promotion_prompt_rows(rows: list[dict[str, Any]]) -> str:
         lines = []
@@ -2442,10 +2445,10 @@ MVP 榜：
 dashboard 晋级名单规则：
 {chr(10).join(f"- {line}" for line in promotion_rules) if promotion_rules else "- 暂无晋级规则"}
 
-dashboard 决赛区名单：
+dashboard {final_stage_label}名单：
 {render_promotion_prompt_rows(list(promotion_context.get("final_rows", [])))}
 
-dashboard 季后赛区名单：
+dashboard {playoff_stage_label}名单：
 {render_promotion_prompt_rows(list(promotion_context.get("playoff_rows", [])))}
 
 全选手比赛明细：

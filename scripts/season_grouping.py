@@ -4,7 +4,10 @@ import hashlib
 import json
 from typing import Any
 
-from competition_meta import resolve_season_policy_for_scope
+from competition_meta import (
+    resolve_season_policy_for_scope,
+    resolve_stage_title_for_scope,
+)
 from generate_stats import (
     build_team_rows,
     get_match_competition_name,
@@ -549,7 +552,14 @@ def build_team_leaderboard_sections(
         {
             "key": str(section["key"]),
             "label": str(section["label"]),
-            "title": str(section.get("title") or f"{section['label']}榜"),
+            "title": resolve_stage_title_for_scope(
+                data,
+                competition_name,
+                season_name,
+                stage,
+                section.get("title"),
+                section.get("label"),
+            ),
             "rows": boards.get(str(section["key"]), []),
         }
         for section in get_leaderboard_sections(policy, stage)

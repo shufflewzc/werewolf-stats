@@ -209,7 +209,7 @@
       return `
         <section class="competitions-panel player-detail-section player-detail-dimension-section">
           <div class="competitions-section-head"><div><div class="competitions-section-kicker">Season Dimension</div><h2 class="competitions-section-title">赛季维度补充数据</h2><p class="competitions-copy">${escapeHtml(data.reason || "当前还没有导入对应赛季的维度数据。")}</p></div></div>
-          <div class="player-detail-dimension-notice">${escapeHtml(data.notice || "总决赛维度按照当日第一天上场的队员计算")}</div>
+          <div class="player-detail-dimension-notice">${escapeHtml(data.notice || "决赛阶段维度按照当日第一天上场的队员计算")}</div>
         </section>
       `;
     }
@@ -225,7 +225,7 @@
           </div>
           <span class="player-detail-dimension-chip">${escapeHtml(data.selected_season)}</span>
         </div>
-        <div class="player-detail-dimension-notice">${escapeHtml(data.notice || "总决赛维度按照当日第一天上场的队员计算")}</div>
+        <div class="player-detail-dimension-notice">${escapeHtml(data.notice || "决赛阶段维度按照当日第一天上场的队员计算")}</div>
         <div class="player-detail-dimension-grid">
           ${(data.summary_cards || []).map((item) => `
             <article class="player-detail-dimension-card">

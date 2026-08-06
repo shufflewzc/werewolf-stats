@@ -1123,6 +1123,35 @@ def resolve_stage_label_for_scope(
     ).get(normalized_key, normalized_key)
 
 
+def resolve_stage_title_for_scope(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+    stage_key: object,
+    configured_title: object = "",
+    section_label: object = "",
+) -> str:
+    normalized_key = str(stage_key or "").strip()
+    normalized_section_label = str(section_label or "").strip()
+    title = str(configured_title or "").strip()
+    display_label = resolve_stage_label_for_scope(
+        data,
+        competition_name,
+        season_name,
+        normalized_key,
+    )
+    default_label = STAGE_OPTIONS.get(normalized_key, normalized_key)
+    if not title:
+        return f"{normalized_section_label}{display_label}榜"
+    if display_label == default_label:
+        return title
+    if default_label and default_label in title:
+        return title.replace(default_label, display_label)
+    if normalized_section_label and title == f"{normalized_section_label}榜":
+        return f"{normalized_section_label}{display_label}榜"
+    return title
+
+
 def resolve_scoring_rule_for_scope(
     data: dict[str, Any],
     competition_name: str,

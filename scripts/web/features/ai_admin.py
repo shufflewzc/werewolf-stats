@@ -896,7 +896,7 @@ AUDIT_ACTION_LABELS = {
     "team_claim.unbind": "解除战队认领",
     "team.profile_update": "更新战队资料",
     "team.stage_groups_update": "更新战队分组",
-    "season.regular_groups_apply": "固定定级赛分组",
+    "season.regular_groups_apply": "固定赛段分组",
     "team.logo_update": "更新战队图标",
     "team.manual_achievements_update": "更新战队成就",
     "team.ai_summary_save": "保存战队 AI 总结",

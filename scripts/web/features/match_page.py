@@ -1514,7 +1514,11 @@ def _prediction_day_scope(
             if str(entry.get("series_slug") or "").strip() == "jcds"
         }
     )
+    selected_match_id = form_value(ctx.query, "match_id").strip()
+    selected_match = get_match_by_id(data.get("matches", []), selected_match_id)
     selected_competition = form_value(ctx.query, "scenario_competition").strip()
+    if not selected_competition and selected_match:
+        selected_competition = get_match_competition_name(selected_match)
     if selected_competition not in jcds_competitions:
         selected_competition = jcds_competitions[0] if jcds_competitions else ""
     season_names = (
@@ -1528,9 +1532,14 @@ def _prediction_day_scope(
         else []
     )
     selected_season = form_value(ctx.query, "scenario_season").strip()
+    if not selected_season and selected_match:
+        selected_season = str(selected_match.get("season") or "").strip()
     if selected_season not in season_names:
         selected_season = season_names[0] if season_names else ""
-    played_on = form_value(ctx.query, "scenario_date").strip() or legacy.china_today_label()
+    played_on = form_value(ctx.query, "scenario_date").strip()
+    if not played_on and selected_match:
+        played_on = str(selected_match.get("played_on") or "").strip()
+    played_on = played_on or legacy.china_today_label()
     try:
         date.fromisoformat(played_on)
     except ValueError:
@@ -1610,6 +1619,19 @@ def _prediction_day_scenario_admin_html(
         if scenario and scenario.get("published")
         else "未发布"
     )
+    selected_match_id = form_value(ctx.query, "match_id").strip()
+    selected_match_input = (
+        f'<input type="hidden" name="match_id" value="{escape(selected_match_id)}">'
+        if selected_match_id
+        else ""
+    )
+    scenario_action_query = {
+        "scenario_competition": selected_competition,
+        "scenario_season": selected_season,
+        "scenario_date": played_on,
+    }
+    if selected_match_id:
+        scenario_action_query["match_id"] = selected_match_id
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -1621,12 +1643,14 @@ def _prediction_day_scenario_admin_html(
         <span class="chip">{status_copy}</span>
       </div>
       <form method="get" action="/prediction-admin" class="row g-3 align-items-end mb-4">
+        {selected_match_input}
         <div class="col-12 col-lg-4"><label class="form-label">赛事</label><select class="form-select" name="scenario_competition">{competition_options}</select></div>
         <div class="col-12 col-lg-3"><label class="form-label">赛季</label><select class="form-select" name="scenario_season">{season_options}</select></div>
         <div class="col-12 col-lg-3"><label class="form-label">比赛日</label><input class="form-control" type="date" name="scenario_date" value="{escape(played_on)}"></div>
-        <div class="col-12 col-lg-2"><button class="btn btn-outline-dark w-100" type="submit">切换日期</button></div>
+        <div class="col-12 col-lg-2"><button class="btn btn-outline-dark w-100" type="submit">切换录入场次</button></div>
       </form>
-      <form method="post" action="/prediction-admin?scenario_competition={quote(selected_competition)}&scenario_season={quote(selected_season)}&scenario_date={quote(played_on)}">
+      <form method="post" action="/prediction-admin?{escape(urlencode(scenario_action_query))}">
+        {selected_match_input}
         <input type="hidden" name="scenario_competition" value="{escape(selected_competition)}">
         <input type="hidden" name="scenario_season" value="{escape(selected_season)}">
         <input type="hidden" name="scenario_date" value="{escape(played_on)}">
@@ -1692,7 +1716,7 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
     predictions = context["predictions"]
     match_options = "".join(
         f'<option value="{escape(str(item.get("match_id") or ""))}"{" selected" if str(item.get("match_id") or "") == selected_match_id else ""}>{escape(str(item.get("played_on") or ""))} · {escape(get_match_competition_name(item))} · {escape(str(item.get("season") or ""))} · {escape(str(item.get("match_id") or ""))}</option>'
-        for item in matches[:300]
+        for item in matches
     )
     headers = "".join(f"<th>{escape(label)} (%)</th>" for _, label, _, _ in PREDICTION_BUCKETS)
     rows = []
@@ -1725,7 +1749,7 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
       <form method="get" action="/prediction-admin" class="row g-3 align-items-end">
         <div class="col-12 col-lg-8">
           <label class="form-label">选择比赛</label>
-          <select class="form-select" name="match_id">{match_options}</select>
+          <select class="form-select" name="match_id" onchange="this.form.submit()">{match_options}</select>
         </div>
         <div class="col-12 col-lg-4">
           <button class="btn btn-dark w-100" type="submit">切换比赛</button>
@@ -1764,18 +1788,20 @@ def _prediction_day_redirect(
     season_name: str,
     played_on: str,
     alert: str,
+    match_id: str = "",
 ):
+    query = {
+        "scenario_competition": competition_name,
+        "scenario_season": season_name,
+        "scenario_date": played_on,
+        "alert": alert,
+    }
+    if match_id:
+        query["match_id"] = match_id
     return legacy.redirect(
         start_response,
         "/prediction-admin?"
-        + urlencode(
-            {
-                "scenario_competition": competition_name,
-                "scenario_season": season_name,
-                "scenario_date": played_on,
-                "alert": alert,
-            }
-        ),
+        + urlencode(query),
     )
 
 
@@ -1794,6 +1820,10 @@ def _handle_prediction_day_scenario_admin(
     competition_name = form_value(ctx.form, "scenario_competition").strip()
     season_name = form_value(ctx.form, "scenario_season").strip()
     played_on = form_value(ctx.form, "scenario_date").strip()
+    selected_match_id = (
+        form_value(ctx.form, "match_id").strip()
+        or form_value(ctx.query, "match_id").strip()
+    )
     jcds_competitions = {
         str(entry.get("competition_name") or "").strip()
         for entry in legacy.load_series_catalog(data)
@@ -1833,7 +1863,12 @@ def _handle_prediction_day_scenario_admin(
                 summary=f"取消发布 {competition_name} {season_name} {played_on} 三局预测",
             )
         return _prediction_day_redirect(
-            start_response, competition_name, season_name, played_on, "该比赛日预测已取消发布。"
+            start_response,
+            competition_name,
+            season_name,
+            played_on,
+            "该比赛日预测已取消发布。",
+            selected_match_id,
         )
 
     players_by_name: dict[str, list[dict[str, Any]]] = {}
@@ -1921,7 +1956,14 @@ def _handle_prediction_day_scenario_admin(
         metadata={"roster_size": len(roster), "scenario_version": PREDICTION_DAY_SCENARIO_VERSION},
     )
     alert = "比赛日三局预测已保存并发布。" if action == "save_day_scenario" else "三局预测已按固定种子重新模拟并发布。"
-    return _prediction_day_redirect(start_response, competition_name, season_name, played_on, alert)
+    return _prediction_day_redirect(
+        start_response,
+        competition_name,
+        season_name,
+        played_on,
+        alert,
+        selected_match_id,
+    )
 
 
 def handle_prediction_admin(ctx: RequestContext, start_response):

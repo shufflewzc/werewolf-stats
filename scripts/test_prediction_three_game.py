@@ -10,6 +10,7 @@ from unittest.mock import patch
 import web_app
 from web.features.match_page import (
     _handle_prediction_day_scenario_admin,
+    _prediction_day_scope,
     normalize_prediction_day_scenario,
     prediction_day_scenario_key,
 )
@@ -212,10 +213,12 @@ class ThreeGamePredictionTests(unittest.TestCase):
         self.assertNotIn("matches", scenario)
 
     def scenario_context(self, *, duplicate: bool = False, override: str = ""):
+        match_id = str(self.data["matches"][0].get("match_id") or "")
         form = {
             "scenario_competition": [SEED_COMPETITION],
             "scenario_season": [SEED_SEASON],
             "scenario_date": ["2026-08-04"],
+            "match_id": [match_id],
         }
         for index in range(1, 13):
             form[f"scenario_player_{index}"] = ["重复选手" if duplicate else f"发布选手{index}"]
@@ -260,7 +263,7 @@ class ThreeGamePredictionTests(unittest.TestCase):
         save_mock.assert_not_called()
 
     def test_admin_publish_saves_one_version_for_scope_and_date(self) -> None:
-        statuses = []
+        responses = []
         captured = {}
 
         def capture(payload):
@@ -271,16 +274,36 @@ class ThreeGamePredictionTests(unittest.TestCase):
         ), patch("web.features.match_page.legacy.audit_action"):
             _handle_prediction_day_scenario_admin(
                 self.scenario_context(override="1.5"),
-                lambda status, headers: statuses.append(status),
+                lambda status, headers: responses.append((status, dict(headers))),
                 self.data,
                 "save_day_scenario",
             )
-        self.assertEqual(statuses[0], "302 Found")
+        self.assertEqual(responses[0][0], "302 Found")
+        location = responses[0][1]["Location"]
+        self.assertTrue(location.startswith("/prediction-admin?"))
+        self.assertIn("scenario_date=2026-08-04", location)
+        self.assertIn("match_id=", location)
         self.assertEqual(len(captured), 1)
         scenario = next(iter(captured.values()))
         self.assertTrue(scenario["published"])
         self.assertEqual(len(scenario["roster"]), 12)
         self.assertEqual(scenario["roster"][0]["manual_total_override"], 1.5)
+
+    def test_admin_match_switch_updates_three_game_input_scope(self) -> None:
+        match = self.data["matches"][0]
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/prediction-admin",
+            query={"match_id": [str(match.get("match_id") or "")]},
+            form={},
+            files={},
+            current_user={"username": "admin", "role": "admin"},
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        _, competition_name, _, season_name, played_on = _prediction_day_scope(ctx, self.data)
+        self.assertEqual(competition_name, str(match.get("competition_name") or ""))
+        self.assertEqual(season_name, str(match.get("season") or ""))
+        self.assertEqual(played_on, str(match.get("played_on") or ""))
 
     def test_predictions_api_prefers_published_scenario_and_keeps_legacy_fields(self) -> None:
         roster = [

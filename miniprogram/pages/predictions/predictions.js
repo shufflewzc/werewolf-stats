@@ -74,7 +74,10 @@ Page({
     rosterSource: "none",
     modelMetadata: {},
     scenario: null,
-    canGeneratePredictionCard: false
+    canGeneratePredictionCard: false,
+    switchingDay: false,
+    switchingPlayedOn: "",
+    switchDayError: ""
   },
 
   onLoad(options) {
@@ -84,12 +87,15 @@ Page({
   },
 
   onShow() {
-    this.loadData({
-      playedOn: this.initialPlayedOn,
-      matchId: this.initialMatchId
+    const selectedPlayedOn = this.data.selectedDay && this.data.selectedDay.played_on;
+    const loadPromise = this.loadData({
+      playedOn: this.initialPlayedOn || selectedPlayedOn || "",
+      matchId: this.initialMatchId,
+      keepContent: Boolean(this.data.days.length)
     });
     this.initialPlayedOn = "";
     this.initialMatchId = "";
+    return loadPromise;
   },
 
   onPullDownRefresh() {
@@ -110,7 +116,26 @@ Page({
   },
 
   async loadData(options = {}) {
-    this.setData({ loading: true, error: "" });
+    const requestId = Number(this.predictionRequestId || 0) + 1;
+    const requestedPlayedOn = String(options.playedOn || "").trim();
+    const keepContent = Boolean(options.keepContent && this.data.days.length);
+    this.predictionRequestId = requestId;
+    if (keepContent) {
+      this.setData({
+        switchingDay: true,
+        switchingPlayedOn: requestedPlayedOn,
+        switchDayError: "",
+        error: ""
+      });
+    } else {
+      this.setData({
+        loading: true,
+        error: "",
+        switchingDay: false,
+        switchingPlayedOn: "",
+        switchDayError: ""
+      });
+    }
     try {
       const selectedScope = getRequiredScope();
       if (!selectedScope) {
@@ -124,18 +149,24 @@ Page({
           predictionHasMore: false,
           bandSummary: [],
           notice: "",
-          canGeneratePredictionCard: false
+          canGeneratePredictionCard: false,
+          switchingDay: false,
+          switchingPlayedOn: "",
+          switchDayError: ""
         }));
-        return;
+        return false;
       }
       const paramsWithPaging = {
         ...scopeParams(selectedScope),
-        played_on: options.playedOn || "",
+        played_on: requestedPlayedOn,
         match_id: options.matchId || "",
         limit: PAGE_SIZE,
         offset: 0
       };
       const payload = await request("/api/predictions", paramsWithPaging, options);
+      if (requestId !== this.predictionRequestId) {
+        return false;
+      }
       const predictions = (payload.predictions || []).map((item, index) => decoratePrediction(item, index));
       const pagination = payload.pagination || {};
       const predictionIds = predictions.map((item) => String(item.player_id || "").trim());
@@ -167,22 +198,45 @@ Page({
         rosterSource: payload.roster_source || "none",
         modelMetadata: payload.model_metadata || {},
         scenario: payload.scenario || null,
-        canGeneratePredictionCard
+        canGeneratePredictionCard,
+        switchingDay: false,
+        switchingPlayedOn: "",
+        switchDayError: ""
       });
+      return true;
     } catch (error) {
-      this.setData({
-        loading: false,
-        error: error.message || "胜率预测加载失败"
-      });
+      if (requestId !== this.predictionRequestId) {
+        return false;
+      }
+      const message = error.message || "胜率预测加载失败";
+      if (keepContent) {
+        this.setData({
+          switchingDay: false,
+          switchingPlayedOn: "",
+          switchDayError: message
+        });
+      } else {
+        this.setData({
+          loading: false,
+          error: message
+        });
+      }
+      return false;
     }
   },
 
   chooseDay(event) {
-    const playedOn = event.currentTarget.dataset.playedOn;
-    if (!playedOn || (this.data.selectedDay && this.data.selectedDay.played_on === playedOn)) {
-      return;
+    const currentDataset = (event.currentTarget && event.currentTarget.dataset) || {};
+    const targetDataset = (event.target && event.target.dataset) || {};
+    const playedOn = String(currentDataset.playedOn || targetDataset.playedOn || "").trim();
+    const selectedPlayedOn = this.data.selectedDay && this.data.selectedDay.played_on;
+    if (!playedOn || this.data.switchingPlayedOn === playedOn) {
+      return Promise.resolve(false);
     }
-    this.loadData({ playedOn });
+    if (selectedPlayedOn === playedOn && !this.data.switchingDay) {
+      return Promise.resolve(false);
+    }
+    return this.loadData({ playedOn, keepContent: true });
   },
 
   openPlayer(event) {

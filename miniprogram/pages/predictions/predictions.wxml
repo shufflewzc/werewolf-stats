@@ -48,21 +48,28 @@
       <view class="section">
         <view class="section-head">
           <text class="section-title">选择比赛日</text>
-          <text class="section-note">{{days.length}} 天</text>
+          <text class="section-note" wx:if="{{switchingDay}}">正在切换</text>
+          <text class="section-note" wx:else>{{days.length}} 天</text>
         </view>
-        <scroll-view class="match-strip" scroll-x="true" wx:if="{{days.length}}">
-          <view
-            class="match-chip {{selectedDay && selectedDay.played_on === item.played_on ? 'is-active' : ''}}"
-            wx:for="{{days}}"
-            wx:key="played_on"
-            data-played-on="{{item.played_on}}"
-            hover-class="tap-chip-hover"
-            bindtap="chooseDay"
-          >
-            <text class="match-chip-title">{{item.played_on || "未定日期"}}</text>
-            <text class="match-chip-copy">{{item.match_count || 0}} 场 · {{item.player_entry_count || 0}} 人次</text>
+        <block wx:if="{{days.length}}">
+          <scroll-view class="match-strip" scroll-x="true">
+            <view
+              class="match-chip {{selectedDay && selectedDay.played_on === item.played_on ? 'is-active' : ''}} {{switchingPlayedOn === item.played_on ? 'is-pending' : ''}}"
+              wx:for="{{days}}"
+              wx:key="played_on"
+              data-played-on="{{item.played_on}}"
+              hover-class="tap-chip-hover"
+              bindtap="chooseDay"
+            >
+              <text class="match-chip-title">{{item.played_on || "未定日期"}}</text>
+              <text class="match-chip-copy" wx:if="{{switchingPlayedOn === item.played_on}}">切换中…</text>
+              <text class="match-chip-copy" wx:else>{{item.match_count || 0}} 场 · {{item.player_entry_count || 0}} 人次</text>
+            </view>
+          </scroll-view>
+          <view class="empty-inline switch-day-error" wx:if="{{switchDayError}}">
+            <text>{{switchDayError}}</text>
           </view>
-        </scroll-view>
+        </block>
         <view class="empty-card" wx:else>
           <text class="empty-title">暂无可预测比赛日</text>
           <text class="empty-copy">录入当天赛程和名单后，这里会显示比赛日预测入口。</text>

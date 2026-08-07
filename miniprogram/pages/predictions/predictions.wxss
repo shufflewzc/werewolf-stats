@@ -23,6 +23,18 @@
   border-color: #111827;
 }
 
+.match-chip.is-pending {
+  color: #78350f;
+  background: #fffbeb;
+  border-color: #d4a72c;
+  box-shadow: 0 0 0 3rpx rgba(212, 167, 44, 0.16);
+}
+
+.match-chip.is-active.is-pending {
+  color: #ffffff;
+  background: #111827;
+}
+
 .match-chip-title,
 .match-chip-copy {
   display: block;
@@ -44,6 +56,11 @@
 
 .match-chip.is-active .match-chip-copy {
   color: rgba(255, 255, 255, 0.72);
+}
+
+.switch-day-error {
+  margin-top: 16rpx;
+  color: #b91c1c;
 }
 
 .selected-match,

@@ -232,7 +232,39 @@ function checkCustomStageLabels() {
   if (source.includes("组常规赛榜")) {
     fail("小程序排行榜仍包含硬编码的常规赛榜标题。");
   }
-  ok("小程序自定义赛段名称检查通过。");
+
+  const { stageLabel } = require(path.join(MINIPROGRAM_DIR, "utils", "format.js"));
+  if (stageLabel({ stage_label: " 积分循环赛 ", stage: "regular_season" }) !== "积分循环赛") {
+    fail("小程序赛段名称没有优先使用 stage_label。");
+  }
+  if (stageLabel({ stage: "regular_season" }) !== "regular_season") {
+    fail("小程序赛段名称缺少 stage 兼容回退。");
+  }
+  if (stageLabel({}, "赛段未设置") !== "赛段未设置") {
+    fail("小程序赛段名称缺少空值文案回退。");
+  }
+
+  const templateChecks = [
+    ["match-detail/match-detail.wxml", 'match.stage_label || match.stage || "赛程"'],
+    ["day-detail/day-detail.wxml", 'match.stage_label || match.stage || "赛段未设置"'],
+    ["team-detail/team-detail.wxml", 'item.stage_label || item.stage || "赛段未设置"'],
+    ["player-detail/player-detail.wxml", 'item.stage_label || item.stage || "赛段未设置"']
+  ];
+  for (const [relativePath, expected] of templateChecks) {
+    const template = fs.readFileSync(path.join(MINIPROGRAM_DIR, "pages", relativePath), "utf8");
+    if (!template.includes(expected)) {
+      fail(`${relativePath} 没有按 stage_label、stage、默认文案的顺序展示赛段。`);
+    }
+  }
+
+  const matchDetailSource = fs.readFileSync(
+    path.join(MINIPROGRAM_DIR, "pages", "match-detail", "match-detail.js"),
+    "utf8"
+  );
+  if (!matchDetailSource.includes('stageLabel(match, "")')) {
+    fail("比赛详情分享标题没有使用 stage_label 赛段名称。");
+  }
+  ok("小程序自定义赛段名称与兼容回退检查通过。");
 }
 
 function printReport() {

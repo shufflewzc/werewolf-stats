@@ -12,7 +12,7 @@ from competition_meta import (
     stage_label_for_season_entry,
     stage_options_for_season_entry,
 )
-from web.features import matches as matches_feature
+from web.features import competitions, match_page, matches as matches_feature
 from web.features.series_manage import (
     build_stage_window_form_values,
     collect_stage_labels_from_form,
@@ -352,6 +352,129 @@ class StageLabelTests(unittest.TestCase):
             details["player-1"]["history"][0]["stage_label"],
             "积分循环赛",
         )
+
+    def test_match_detail_api_exposes_explicit_stage_label(self):
+        data = {
+            "players": [
+                {
+                    "player_id": "player-1",
+                    "display_name": "测试选手",
+                }
+            ],
+            "teams": [
+                {
+                    "team_id": "team-1",
+                    "name": "测试战队",
+                }
+            ],
+            "matches": [
+                {
+                    "match_id": "match-1",
+                    "competition_name": "示例赛事广州站",
+                    "season": "S1",
+                    "stage": "regular_season",
+                    "round": 1,
+                    "game_no": 2,
+                    "played_on": "2026-08-01",
+                    "winning_camp": "villagers",
+                    "scoring_rule": {
+                        "version": 1,
+                        "score_model": "standard",
+                        "components": [],
+                    },
+                    "players": [
+                        {
+                            "seat": 1,
+                            "player_id": "player-1",
+                            "team_id": "team-1",
+                            "role": "预言家",
+                            "camp": "villagers",
+                            "result": "win",
+                            "points_earned": 5,
+                        }
+                    ],
+                }
+            ],
+        }
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/matches/match-1",
+            query={},
+            form={},
+            files={},
+            current_user=None,
+            now_label="now",
+        )
+        with patch.object(
+            match_page, "load_validated_data", return_value=data
+        ), patch.object(
+            match_page,
+            "resolve_stage_label_for_scope",
+            return_value="积分循环赛",
+        ), patch.object(
+            match_page, "build_match_score_predictions", return_value=[]
+        ):
+            payload = match_page.build_match_api_payload(ctx, "match-1")
+
+        self.assertEqual(payload["match"]["stage_label"], "积分循环赛")
+        self.assertEqual(payload["match"]["stage"], "积分循环赛")
+
+    def test_schedule_serializers_keep_stage_key_and_custom_label(self):
+        match = {
+            "match_id": "match-1",
+            "competition_name": "示例赛事广州站",
+            "season": "S1",
+            "stage": "regular_season",
+            "round": 1,
+            "game_no": 2,
+            "played_on": "2026-08-01",
+            "table_label": "一号桌",
+            "format": "预女猎白",
+            "winning_camp": "villagers",
+            "duration_minutes": 45,
+            "players": [
+                {
+                    "seat": 1,
+                    "player_id": "player-1",
+                    "team_id": "team-1",
+                    "role": "预言家",
+                    "result": "win",
+                    "points_earned": 5,
+                }
+            ],
+        }
+        schedule = competitions._serialize_schedule_day_section(
+            {"regular_season": "积分循环赛"},
+            "2026-08-01",
+            [match],
+            {"team-1": {"name": "测试战队"}},
+            "示例赛事广州站",
+            "S1",
+            "广州",
+            "sample",
+        )
+        schedule_match = schedule["rows"][0]
+        self.assertEqual(schedule_match["stage"], "regular_season")
+        self.assertEqual(schedule_match["stage_label"], "积分循环赛")
+
+        with patch.object(
+            competitions,
+            "resolve_stage_options_for_scope",
+            return_value={"regular_season": "积分循环赛"},
+        ):
+            day = competitions._serialize_day_match_competition_section(
+                {"teams": [], "players": [], "matches": [match]},
+                "2026-08-01",
+                "示例赛事广州站",
+                "S1",
+                [match],
+                [],
+                {"player-1": {"display_name": "测试选手"}},
+                {"team-1": {"name": "测试战队"}},
+            )
+        day_match = day["matches"][0]
+        self.assertEqual(day_match["stage"], "regular_season")
+        self.assertEqual(day_match["stage_label"], "积分循环赛")
 
 
 if __name__ == "__main__":

@@ -2181,13 +2181,17 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         selected_series_slug,
     )
 
+    stage_label = resolve_stage_label_for_scope(
+        data, competition_name, season_name, match_stage
+    )
     match_payload = {
         "match_id": match_id,
         "competition": competition_name,
         "season": season_name,
-        "stage": resolve_stage_label_for_scope(
-            data, competition_name, season_name, match.get("stage")
-        ),
+        # Keep the legacy display-valued field for older clients while exposing
+        # the explicit field used by current mini-program views.
+        "stage": stage_label,
+        "stage_label": stage_label,
         "round": match.get("round") or 0,
         "game_no": match.get("game_no") or 0,
         "played_on": match.get("played_on") or "",

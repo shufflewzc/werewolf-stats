@@ -1,8 +1,19 @@
 const { request } = require("../../utils/api");
+const { stageLabel } = require("../../utils/format");
 const { createPagedState, nextPagedState } = require("../../utils/paging");
 const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
+
+function decorateCompetition(item) {
+  return {
+    ...item,
+    matches: (item.matches || []).map((match) => ({
+      ...match,
+      stage_label: stageLabel(match, "赛段未设置")
+    }))
+  };
+}
 
 Page({
   data: {
@@ -105,7 +116,7 @@ Page({
         playerTotalCount: pagedPlayers.totalCount,
         playerVisibleCount: pagedPlayers.visibleCount,
         playerHasMore: pagedPlayers.hasMore,
-        competitions: dayPayload.competitions || [],
+        competitions: (dayPayload.competitions || []).map(decorateCompetition),
         predictions,
         visiblePredictions: predictions,
         predictionTotalCount: Number(predictionPagination.total || predictions.length),

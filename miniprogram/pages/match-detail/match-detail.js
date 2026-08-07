@@ -1,4 +1,5 @@
 const { request } = require("../../utils/api");
+const { compactText, stageLabel } = require("../../utils/format");
 const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, scopeParams } = require("../../utils/scope");
 
 function decorateBadges(item) {
@@ -64,7 +65,11 @@ Page({
   onShareAppMessage() {
     const match = this.data.match || {};
     return {
-      title: `${match.competition || "狼人杀赛事"} · 第${match.round || "--"}轮第${match.game_no || "--"}局`,
+      title: compactText([
+        match.competition || "狼人杀赛事",
+        stageLabel(match, ""),
+        `第${match.round || "--"}轮第${match.game_no || "--"}局`
+      ]),
       path: appendScopeToPath(
         `/pages/match-detail/match-detail?match_id=${encodeURIComponent(this.data.matchId)}`,
         this.data.selectedScope
@@ -90,7 +95,11 @@ Page({
         this.setData({ loading: false, error: payload.error || "没有找到对应的比赛" });
         return;
       }
-      const match = payload.match || {};
+      const rawMatch = payload.match || {};
+      const match = {
+        ...rawMatch,
+        stage_label: stageLabel(rawMatch, "赛程")
+      };
       wx.setNavigationBarTitle({
         title: match.played_on ? `${match.played_on} 比赛` : "比赛详情"
       });

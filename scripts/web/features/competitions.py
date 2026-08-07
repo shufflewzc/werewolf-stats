@@ -3128,6 +3128,7 @@ def _serialize_day_match_competition_section(
             {
                 "match_id": match["match_id"],
                 "season_name": season_name,
+                "stage": str(match.get("stage") or "").strip(),
                 "stage_label": stage_label(match),
                 "round": int(match["round"]),
                 "game_no": int(match["game_no"]),
@@ -4408,7 +4409,11 @@ def _serialize_schedule_day_section(
                 "match_id": match["match_id"],
                 "detail_href": match_detail_path,
                 "season_name": match["season"],
-                "stage_label": stage_options.get(match["stage"], match["stage"]),
+                "stage": str(match.get("stage") or "").strip(),
+                "stage_label": stage_options.get(
+                    str(match.get("stage") or "").strip(),
+                    str(match.get("stage") or "").strip() or "未设置",
+                ),
                 "round_label": f"第 {match['round']} 轮",
                 "game_label": f"第 {match['game_no']} 局",
                 "group_label": str(match.get("group_label") or team_names or "未设置"),

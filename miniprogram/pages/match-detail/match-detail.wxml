@@ -2,7 +2,7 @@
   <view class="hero">
     <text class="eyebrow">{{match.competition || selectedScope.competition || "比赛详情"}}{{match.season ? " · " + match.season : ""}}</text>
     <text class="title">{{match.played_on || "单场比赛"}} · 第{{match.round || "--"}}轮第{{match.game_no || "--"}}局</text>
-    <text class="copy">{{match.stage || "赛程"}} · {{match.winning_camp || "胜负待定"}}{{match.table_label ? " · " + match.table_label : ""}}</text>
+    <text class="copy">{{match.stage_label || match.stage || "赛程"}} · {{match.winning_camp || "胜负待定"}}{{match.table_label ? " · " + match.table_label : ""}}</text>
     <view class="hero-groups" wx:if="{{groupLabels.length}}">
       <text class="hero-group" wx:for="{{groupLabels}}" wx:key="*this">{{item}}</text>
     </view>

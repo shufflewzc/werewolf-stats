@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { isFollowed, toggleFollow } = require("../../utils/follows");
-const { take } = require("../../utils/format");
+const { stageLabel, take } = require("../../utils/format");
 const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 function parsePercent(value) {
@@ -49,6 +49,7 @@ function decorateRecentMatch(item) {
   const isLoss = result === "负" || result === "loss";
   return {
     ...item,
+    stage_label: stageLabel(item, "赛段未设置"),
     resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral"),
     resultText: item.result_label || (isWin ? "胜" : (isLoss ? "负" : item.result || "--"))
   };

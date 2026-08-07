@@ -129,7 +129,7 @@
         <view class="list-card match-card tap-card {{item.resultClass}}" hover-class="tap-card-hover" wx:for="{{matches}}" wx:key="match_id" data-match-id="{{item.match_id}}" bindtap="openMatch">
           <view class="list-main">
             <text class="list-title">{{item.played_on}} · 第{{item.round}}轮第{{item.game_no}}局</text>
-            <text class="list-meta">{{item.stage_label}} · {{item.result}} · {{item.identitySummaryText}}</text>
+            <text class="list-meta">{{item.stage_label || item.stage || "赛段未设置"}} · {{item.result}} · {{item.identitySummaryText}}</text>
           </view>
           <view class="list-score">
             <text class="score-value">{{item.points}}</text>

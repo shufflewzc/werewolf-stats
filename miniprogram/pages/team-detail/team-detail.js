@@ -1,5 +1,5 @@
 const { request, assetUrl } = require("../../utils/api");
-const { take } = require("../../utils/format");
+const { stageLabel, take } = require("../../utils/format");
 const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
 
 function decorateMatch(item) {
@@ -9,6 +9,7 @@ function decorateMatch(item) {
     || Object.prototype.hasOwnProperty.call(item || {}, "role_summary");
   return {
     ...item,
+    stage_label: stageLabel(item, "赛段未设置"),
     resultClass: isWin ? "is-win" : (isLoss ? "is-loss" : "is-neutral"),
     identitySummaryText: item.identity_summary || item.role_summary || (hasIdentityField ? "身份缺失" : "接口未更新")
   };

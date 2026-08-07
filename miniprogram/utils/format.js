@@ -11,8 +11,21 @@ function compactText(parts, separator = " · ") {
   return parts.filter(Boolean).join(separator);
 }
 
+function stageLabel(item, fallback = "赛段") {
+  const source = item || {};
+  const values = [source.stage_label, source.stage, fallback];
+  for (let index = 0; index < values.length; index += 1) {
+    const value = String(values[index] || "").trim();
+    if (value) {
+      return value;
+    }
+  }
+  return "";
+}
+
 module.exports = {
   compactText,
   metricValue,
+  stageLabel,
   take
 };

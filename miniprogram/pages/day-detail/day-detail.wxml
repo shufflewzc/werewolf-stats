@@ -131,7 +131,7 @@
           <text class="competition-copy">{{item.season_name || "赛季未设置"}}</text>
           <text class="competition-copy">{{item.copy}}</text>
           <view class="match-card" wx:for="{{item.matches}}" wx:for-item="match" wx:key="match_id">
-            <text class="match-title">{{match.stage_label}} · 第{{match.round}}轮第{{match.game_no}}局</text>
+            <text class="match-title">{{match.stage_label || match.stage || "赛段未设置"}} · 第{{match.round}}轮第{{match.game_no}}局</text>
             <text class="match-meta">{{match.meta_text || "待补录"}}</text>
             <view class="match-groups" wx:if="{{match.group_labels && match.group_labels.length}}">
               <text class="match-group" wx:for="{{match.group_labels}}" wx:for-item="group" wx:key="*this">{{group}}</text>

@@ -58,6 +58,7 @@ load_users = legacy.load_users
 load_validated_data = legacy.load_validated_data
 invalidate_validated_data_cache = legacy.invalidate_validated_data_cache
 is_admin_user = legacy.is_admin_user
+is_non_profile_player_id = legacy.is_non_profile_player_id
 MATCH_SCORE_COMPONENT_FIELDS = legacy.MATCH_SCORE_COMPONENT_FIELDS
 MATCH_SCORE_MODEL_OPTIONS = legacy.MATCH_SCORE_MODEL_OPTIONS
 PARTICIPATION_MODE_INDIVIDUAL = legacy.PARTICIPATION_MODE_INDIVIDUAL
@@ -538,7 +539,7 @@ def build_dimension_import_panel(
             <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </div>
         </div>
-        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。个人参赛阶段允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写个人参赛阶段记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
+        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。个人维度表中的 NPC 行不区分大小写并会自动跳过，不影响其他选手和战队维度导入。个人参赛阶段允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写个人参赛阶段记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
         </div>
@@ -2731,14 +2732,16 @@ def build_player_dimension_stats_from_rows(
     parsed_rows: list[dict[str, object]] = []
     for index, row in enumerate(rows, start=2):
         player_name = get_excel_row_value(row, "选手姓名", "player_name")
+        if not player_name:
+            raise ValueError(f"单日选手个人维度数据 第 {index} 行缺少选手姓名。")
+        if is_non_profile_player_id(player_name):
+            continue
         team_name = get_excel_row_value(row, "所属战队", "战队", "team_name")
         played_on = normalize_excel_serial_date(
             get_excel_row_value(row, "比赛日期", "played_on"),
             f"单日选手个人维度数据 第 {index} 行的比赛日期",
         )
         seat = parse_excel_optional_int(get_excel_row_value(row, "座位号", "seat"), 0)
-        if not player_name:
-            raise ValueError(f"单日选手个人维度数据 第 {index} 行缺少选手姓名。")
         team = None
         if team_name:
             team = legacy.find_team_by_name_in_scope(
@@ -2891,9 +2894,17 @@ def import_dimension_stats_from_excel(
         imported_team_rows,
         ("competition_name", "season_name", "played_on", "team_id", "seat"),
     )
+    skipped_npc_rows = sum(
+        1
+        for row in player_sheet_rows
+        if is_non_profile_player_id(
+            get_excel_row_value(row, "选手姓名", "player_name")
+        )
+    )
     summary = (
         f"维度数据导入完成：选手 {len(imported_player_rows)} 条，战队 {len(imported_team_rows)} 条。"
-        " 已按赛事、赛季、日期和主键逐条新增/更新，未删除本 Excel 之外的旧维度数据。"
+        + (f" 已自动跳过 NPC {skipped_npc_rows} 条。" if skipped_npc_rows else "")
+        + " 已按赛事、赛季、日期和主键逐条新增/更新，未删除本 Excel 之外的旧维度数据。"
     )
     return next_player_rows, next_team_rows, summary
 

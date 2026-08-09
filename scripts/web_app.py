@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import traceback
+import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 from email.parser import BytesParser
@@ -7057,6 +7058,10 @@ def build_placeholder_team(
     }
 
 
+def normalize_team_name_key(value: object) -> str:
+    return unicodedata.normalize("NFKC", str(value or "")).strip().casefold()
+
+
 def normalize_team_stage_groups(team: dict[str, Any] | None) -> list[dict[str, str]]:
     normalized_rows: list[dict[str, str]] = []
     seen_stages: set[str] = set()
@@ -7090,9 +7095,10 @@ def find_team_by_name_in_scope(
     normalized_team_name = team_name.strip()
     if not normalized_team_name:
         return None
+    team_name_key = normalize_team_name_key(normalized_team_name)
     for team in data["teams"]:
         if (
-            str(team.get("name") or "").strip() == normalized_team_name
+            normalize_team_name_key(team.get("name")) == team_name_key
             and str(team.get("competition_name") or "").strip() == competition_name.strip()
             and str(team.get("season_name") or "").strip() == season_name.strip()
         ):
@@ -7125,7 +7131,11 @@ def find_player_by_name_in_scope(
             or str(player_team.get("season_name") or "").strip() != season_name.strip()
         ):
             continue
-        if normalized_team_name and str(player_team.get("name") or "").strip() != normalized_team_name:
+        if (
+            normalized_team_name
+            and normalize_team_name_key(player_team.get("name"))
+            != normalize_team_name_key(normalized_team_name)
+        ):
             continue
         return player
     return None
@@ -7352,7 +7362,7 @@ def resolve_match_entities(
             team_lookup_by_id[team_id] = team
         if team_name:
             team_by_scope_name.setdefault(
-                (competition_name, season_name, team_name),
+                (competition_name, season_name, normalize_team_name_key(team_name)),
                 team,
             )
 
@@ -7366,7 +7376,7 @@ def resolve_match_entities(
                 (
                     str(player_team.get("competition_name") or "").strip(),
                     str(player_team.get("season_name") or "").strip(),
-                    str(player_team.get("name") or "").strip(),
+                    normalize_team_name_key(player_team.get("name")),
                     player_name,
                 ),
                 player,
@@ -7407,7 +7417,9 @@ def resolve_match_entities(
                 continue
             team = None
             if team_name:
-                team = team_by_scope_name.get((competition_name, season_name, team_name))
+                team = team_by_scope_name.get(
+                    (competition_name, season_name, normalize_team_name_key(team_name))
+                )
                 if not team:
                     placeholder_team_id = build_cached_team_serial(competition_name, season_name)
                     team = build_placeholder_team(
@@ -7449,7 +7461,7 @@ def resolve_match_entities(
                         (
                             competition_name,
                             season_name,
-                            str(team.get("name") or "").strip(),
+                            normalize_team_name_key(team.get("name")),
                             player_name,
                         )
                     )
@@ -16228,15 +16240,17 @@ def validate_team_creation(
         return "战队简称不能为空。"
     if not competition_name.strip() or not season_name.strip():
         return "请先选择当前战队所属的赛事和赛季。"
+    team_name_key = normalize_team_name_key(team_name)
+    short_name_key = normalize_team_name_key(short_name)
     if any(
-        team["name"] == team_name
+        normalize_team_name_key(team.get("name")) == team_name_key
         and str(team.get("competition_name") or "").strip() == competition_name.strip()
         and str(team.get("season_name") or "").strip() == season_name.strip()
         for team in teams
     ):
         return "同一赛事赛季内已经存在同名战队。"
     if any(
-        team["short_name"] == short_name
+        normalize_team_name_key(team.get("short_name")) == short_name_key
         and str(team.get("competition_name") or "").strip() == competition_name.strip()
         and str(team.get("season_name") or "").strip() == season_name.strip()
         for team in teams

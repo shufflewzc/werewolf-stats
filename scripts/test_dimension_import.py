@@ -85,6 +85,29 @@ class DimensionImportTests(unittest.TestCase):
         self.assertEqual(team_rows, [])
         self.assertIn("已自动跳过 NPC 4 条", message)
 
+    def test_dimension_import_matches_team_name_case_insensitively(self):
+        self.data["teams"][0]["name"] = "深圳锦鲤Club"
+        rows = [
+            {
+                "比赛日期": "2026-08-09",
+                "所属战队": "深圳锦鲤CLUB",
+                "座位号": "5",
+                "选手姓名": "真实选手",
+                "当日积分": "0.5",
+            }
+        ]
+
+        parsed = matches.build_player_dimension_stats_from_rows(
+            self.data,
+            self.competition_name,
+            self.season_name,
+            rows,
+        )
+
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["team_id"], "team-1")
+        self.assertEqual(parsed[0]["player_id"], "player-1")
+
 
 if __name__ == "__main__":
     unittest.main()

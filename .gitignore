@@ -16,6 +16,7 @@ data/*.db
 data/*.db-wal
 data/*.db-shm
 data/backups/
+data/import-jobs/
 assets/players/uploads/
 assets/teams/uploads/
 tmp/

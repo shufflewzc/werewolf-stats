@@ -920,7 +920,11 @@ def build_players_frontend_page(ctx: RequestContext) -> str:
 """
 
 
-def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
+def build_players_api_payload(
+    ctx: RequestContext,
+    *,
+    paginate_results: bool = True,
+) -> dict[str, Any]:
     data = load_validated_data()
     scope = resolve_catalog_scope(ctx, data)
     selected_competition = scope["selected_competition"]
@@ -1021,11 +1025,20 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
         ]
         if item
     ) or f"{DEFAULT_REGION_NAME}赛区汇总"
+    player_aliases = {
+        str(player.get("player_id") or ""): [
+            str(alias or "").strip()
+            for alias in player.get("aliases", [])
+            if str(alias or "").strip()
+        ]
+        for player in data.get("players", [])
+    }
     players = [
         {
             "rank": index + 1,
             "player_id": row["player_id"],
             "display_name": row["display_name"],
+            "aliases": player_aliases.get(row["player_id"], []),
             "is_star_player": bool(row.get("is_star_player")),
             "team_name": row.get("team_name") or row.get("current_team_name") or "未绑定战队",
             "photo": row.get("photo") or DEFAULT_PLAYER_PHOTO,
@@ -1048,7 +1061,16 @@ def build_players_api_payload(ctx: RequestContext) -> dict[str, Any]:
         for index, row in enumerate(displayed_rows)
     ]
     top_player = players[0] if players else None
-    paged_players, player_pagination = paginate_api_items(players, ctx, max_limit=100)
+    if paginate_results:
+        paged_players, player_pagination = paginate_api_items(players, ctx, max_limit=100)
+    else:
+        paged_players = players
+        player_pagination = {
+            "offset": 0,
+            "limit": len(players),
+            "total": len(players),
+            "has_more": False,
+        }
     return {
         "generated_at": china_now_label(),
         "scope": {

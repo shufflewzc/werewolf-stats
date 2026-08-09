@@ -12012,12 +12012,17 @@ def build_search_api_payload(ctx: RequestContext, keyword: str) -> dict[str, Any
     def matches(*values: Any) -> bool:
         return needle in " ".join(str(value or "") for value in values).casefold()
 
-    players_payload = build_players_api_payload(ctx)
+    players_payload = build_players_api_payload(ctx, paginate_results=False)
     teams_payload = build_teams_api_payload(ctx)
     guilds_payload = build_guilds_api_payload(ctx)
     results: list[dict[str, Any]] = []
     for player in players_payload.get("players", []):
-        if matches(player.get("display_name"), player.get("player_id"), player.get("team_name")):
+        if matches(
+            player.get("display_name"),
+            player.get("player_id"),
+            player.get("team_name"),
+            *(player.get("aliases") or []),
+        ):
             results.append({
                 "key": f"player:{player['player_id']}",
                 "type": "player",

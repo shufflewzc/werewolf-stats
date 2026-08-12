@@ -58,6 +58,10 @@ proxy_set_header X-Real-IP $remote_addr;
 应放在站点的 TLS `server` 作用域。公开 HTML 只缓存匿名 GET/HEAD，
 携带登录 Cookie 的后台页面会绕过缓存。
 
+`werewolf-default-server.conf` 应作为独立站点启用，用于在 TLS 握手或
+HTTP 请求阶段拒绝非正式域名的流量。公开页面和 API 同时限制单 IP
+请求速率与并发数，并直接拒绝已确认会造成资源耗尽的爬虫。
+
 公开只读 API 默认由 Nginx `limit_req` 限流，避免每次读取都写数据库。
 登录、小程序绑定等敏感接口仍使用 PostgreSQL 共享限流。
 只有不使用 Nginx 时才设置 `REQUEST_RATE_LIMIT_PUBLIC_API_ENABLED=1`。

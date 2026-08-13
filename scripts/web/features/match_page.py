@@ -1526,7 +1526,6 @@ def _prediction_day_scope(
             data,
             selected_competition,
             include_non_ongoing=True,
-            selected_season=form_value(ctx.query, "scenario_season").strip() or None,
         )
         if selected_competition
         else []
@@ -1545,6 +1544,137 @@ def _prediction_day_scope(
     except ValueError:
         played_on = legacy.china_today_label()
     return jcds_competitions, selected_competition, season_names, selected_season, played_on
+
+
+def _prediction_season_teams(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+) -> list[dict[str, Any]]:
+    return sorted(
+        [
+            team
+            for team in data.get("teams", [])
+            if str(team.get("competition_name") or "").strip() == competition_name
+            and str(team.get("season_name") or "").strip() == season_name
+        ],
+        key=lambda team: (
+            str(team.get("name") or team.get("team_id") or "").casefold(),
+            str(team.get("team_id") or ""),
+        ),
+    )
+
+
+def _prediction_season_players(
+    data: dict[str, Any],
+    competition_name: str,
+    season_name: str,
+) -> list[dict[str, str]]:
+    players_by_id = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip()
+    }
+    season_teams = _prediction_season_teams(data, competition_name, season_name)
+    teams_by_id = {
+        str(team.get("team_id") or "").strip(): team
+        for team in season_teams
+        if str(team.get("team_id") or "").strip()
+    }
+    candidate_ids: set[str] = set()
+    team_id_by_player: dict[str, str] = {}
+
+    for team in season_teams:
+        team_id = str(team.get("team_id") or "").strip()
+        for player_id in team.get("members", []) or []:
+            normalized_player_id = str(player_id or "").strip()
+            if not normalized_player_id:
+                continue
+            candidate_ids.add(normalized_player_id)
+            team_id_by_player.setdefault(normalized_player_id, team_id)
+
+    for player_id, player in players_by_id.items():
+        team_id = str(player.get("team_id") or "").strip()
+        if team_id in teams_by_id:
+            candidate_ids.add(player_id)
+            team_id_by_player[player_id] = team_id
+
+    scoped_matches = sorted(
+        [
+            match
+            for match in data.get("matches", [])
+            if get_match_competition_name(match) == competition_name
+            and str(match.get("season") or "").strip() == season_name
+        ],
+        key=lambda match: (
+            str(match.get("played_on") or ""),
+            int(match.get("round") or 0),
+            int(match.get("game_no") or 0),
+            str(match.get("match_id") or ""),
+        ),
+    )
+    for match in scoped_matches:
+        for participant in match.get("players", []) or []:
+            player_id = str(participant.get("player_id") or "").strip()
+            player_name = str(participant.get("player_name") or "").strip()
+            if (
+                not player_id
+                or legacy.is_non_profile_player_id(player_id)
+                or legacy.is_non_profile_player_id(player_name)
+            ):
+                continue
+            candidate_ids.add(player_id)
+            team_id = str(participant.get("team_id") or "").strip()
+            if team_id in teams_by_id:
+                team_id_by_player[player_id] = team_id
+
+    dimension_rows = sorted(
+        [
+            row
+            for row in data.get("season_player_dimension_stats", [])
+            if str(row.get("competition_name") or "").strip() == competition_name
+            and str(row.get("season_name") or "").strip() == season_name
+        ],
+        key=lambda row: (
+            str(row.get("played_on") or ""),
+            int(row.get("seat") or 0),
+        ),
+    )
+    for row in dimension_rows:
+        player_id = str(row.get("player_id") or "").strip()
+        if not player_id or legacy.is_non_profile_player_id(player_id):
+            continue
+        candidate_ids.add(player_id)
+        team_id = str(row.get("team_id") or "").strip()
+        if team_id in teams_by_id:
+            team_id_by_player[player_id] = team_id
+
+    candidates: list[dict[str, str]] = []
+    for player_id in candidate_ids:
+        player = players_by_id.get(player_id)
+        if not player or legacy.is_non_profile_player_id(player_id):
+            continue
+        player_name = str(player.get("display_name") or player_id).strip()
+        if not player_name or legacy.is_non_profile_player_id(player_name):
+            continue
+        team_id = team_id_by_player.get(player_id, "")
+        team = teams_by_id.get(team_id, {})
+        candidates.append(
+            {
+                "player_id": player_id,
+                "player_name": player_name,
+                "team_id": team_id,
+                "team_name": str(team.get("name") or "").strip(),
+            }
+        )
+    return sorted(
+        candidates,
+        key=lambda item: (
+            item["player_name"].casefold(),
+            item["team_name"].casefold(),
+            item["player_id"],
+        ),
+    )
 
 
 def _prediction_day_scenario_admin_html(
@@ -1568,28 +1698,33 @@ def _prediction_day_scenario_admin_html(
     )
     roster = list((scenario or {}).get("roster") or [])[:12]
     roster.extend({} for _ in range(12 - len(roster)))
-    team_lookup = {
-        str(team.get("team_id") or ""): team for team in data.get("teams", [])
+    season_players = _prediction_season_players(
+        data, selected_competition, selected_season
+    )
+    season_players_by_id = {
+        player["player_id"]: player for player in season_players
     }
+    season_players_by_name: dict[str, list[dict[str, str]]] = {}
+    for player in season_players:
+        season_players_by_name.setdefault(player["player_name"].casefold(), []).append(player)
     player_options = []
-    player_team_map: dict[str, str] = {}
-    for player in sorted(
-        data.get("players", []),
-        key=lambda item: str(item.get("display_name") or item.get("player_id") or ""),
-    ):
-        player_name = str(player.get("display_name") or player.get("player_id") or "").strip()
-        if not player_name:
-            continue
-        team = team_lookup.get(str(player.get("team_id") or ""), {})
-        team_name = str(team.get("name") or "").strip()
-        player_team_map[player_name] = team_name
-        player_options.append(f'<option value="{escape(player_name)}"></option>')
+    player_choice_map: dict[str, dict[str, str]] = {}
+    for player in season_players:
+        choice_label = " · ".join(
+            [
+                player["player_name"],
+                player["team_name"] or "未分队",
+                player["player_id"],
+            ]
+        )
+        player_choice_map[choice_label] = player
+        player_options.append(f'<option value="{escape(choice_label)}"></option>')
+    season_teams = _prediction_season_teams(
+        data, selected_competition, selected_season
+    )
     team_options = "".join(
         f'<option value="{escape(str(team.get("name") or team.get("team_id") or ""))}"></option>'
-        for team in sorted(
-            data.get("teams", []),
-            key=lambda item: str(item.get("name") or item.get("team_id") or ""),
-        )
+        for team in season_teams
     )
     competition_options = "".join(
         f'<option value="{escape(item)}"{" selected" if item == selected_competition else ""}>{escape(item)}</option>'
@@ -1601,19 +1736,49 @@ def _prediction_day_scenario_admin_html(
     )
     rows = []
     for index, row in enumerate(roster, start=1):
+        stored_player_id = str(row.get("player_id") or "").strip()
+        stored_player_name = str(row.get("player_name") or "").strip()
+        season_player = season_players_by_id.get(stored_player_id)
+        if not season_player and stored_player_name:
+            same_name_players = season_players_by_name.get(stored_player_name.casefold(), [])
+            if len(same_name_players) == 1:
+                season_player = same_name_players[0]
+        player_id = season_player["player_id"] if season_player else ""
+        player_name = season_player["player_name"] if season_player else stored_player_name
+        team_name = (
+            season_player["team_name"]
+            if season_player and season_player["team_name"]
+            else str(row.get("team_name") or "").strip()
+        )
+        if season_player:
+            player_status = (
+                f'赛季档案 · {season_player["team_name"] or "未分队"} · '
+                f'{season_player["player_id"]}'
+            )
+            player_status_class = "text-success"
+        elif player_name:
+            player_status = "临时选手 · 不会创建正式档案"
+            player_status_class = "text-warning"
+        else:
+            player_status = "从当前赛季联想选择，或直接输入临时选手"
+            player_status_class = "text-secondary"
         override = row.get("manual_total_override")
         override_value = "" if override in (None, "") else _format_setting_number(override)
         rows.append(
             f"""
             <tr>
               <td>{index}</td>
-              <td><input class="form-control scenario-player-input" list="prediction-player-options" name="scenario_player_{index}" data-row="{index}" value="{escape(str(row.get('player_name') or ''))}" autocomplete="off" required></td>
-              <td><input class="form-control" list="prediction-team-options" name="scenario_team_{index}" id="scenario-team-{index}" value="{escape(str(row.get('team_name') or ''))}" autocomplete="off" required></td>
+              <td>
+                <input type="hidden" name="scenario_player_id_{index}" id="scenario-player-id-{index}" value="{escape(player_id)}">
+                <input class="form-control scenario-player-input" list="prediction-player-options" name="scenario_player_{index}" data-row="{index}" value="{escape(player_name)}" autocomplete="off" required>
+                <div class="small mt-1 scenario-player-status {player_status_class}" id="scenario-player-status-{index}">{escape(player_status)}</div>
+              </td>
+              <td><input class="form-control" list="prediction-team-options" name="scenario_team_{index}" id="scenario-team-{index}" value="{escape(team_name)}" autocomplete="off" required{' readonly' if season_player and season_player['team_name'] else ''}></td>
               <td><input class="form-control" type="number" min="-10" max="30" step="0.5" name="scenario_override_{index}" value="{escape(override_value)}" placeholder="自动"></td>
             </tr>
             """
         )
-    map_json = json.dumps(player_team_map, ensure_ascii=False).replace("</", "<\\/")
+    choice_map_json = json.dumps(player_choice_map, ensure_ascii=False).replace("</", "<\\/")
     status_copy = (
         f"已发布 · {escape(str((scenario or {}).get('updated_at') or ''))} · 操作者 {escape(str((scenario or {}).get('updated_by') or ''))}"
         if scenario and scenario.get("published")
@@ -1638,14 +1803,14 @@ def _prediction_day_scenario_admin_html(
         <div>
           <div class="eyebrow mb-2">Three-game Scenario</div>
           <h2 class="section-title mb-2">比赛日三局预测</h2>
-          <p class="section-copy mb-0">固定录入12人一次，发布后系统以每局4神、4民、4狼随机模拟三局；陌生名称不会创建正式档案。</p>
+          <p class="section-copy mb-0">先确认赛季，再从该赛季档案联想选手。临时选手仍可直接填写，但不会创建正式档案；发布后系统以每局4神、4民、4狼随机模拟三局。</p>
         </div>
         <span class="chip">{status_copy}</span>
       </div>
       <form method="get" action="/prediction-admin" class="row g-3 align-items-end mb-4">
         {selected_match_input}
-        <div class="col-12 col-lg-4"><label class="form-label">赛事</label><select class="form-select" name="scenario_competition">{competition_options}</select></div>
-        <div class="col-12 col-lg-3"><label class="form-label">赛季</label><select class="form-select" name="scenario_season">{season_options}</select></div>
+        <div class="col-12 col-lg-4"><label class="form-label">赛事</label><select class="form-select" name="scenario_competition" onchange="this.form.elements.scenario_season.disabled=true;this.form.submit()">{competition_options}</select></div>
+        <div class="col-12 col-lg-3"><label class="form-label">赛季</label><select class="form-select" name="scenario_season" onchange="this.form.submit()">{season_options}</select></div>
         <div class="col-12 col-lg-3"><label class="form-label">比赛日</label><input class="form-control" type="date" name="scenario_date" value="{escape(played_on)}"></div>
         <div class="col-12 col-lg-2"><button class="btn btn-outline-dark w-100" type="submit">切换录入场次</button></div>
       </form>
@@ -1671,11 +1836,28 @@ def _prediction_day_scenario_admin_html(
       </form>
       <script>
         (() => {{
-          const teamByPlayer = {map_json};
+          const playersByChoice = {choice_map_json};
           document.querySelectorAll('.scenario-player-input').forEach((input) => {{
-            input.addEventListener('change', () => {{
+            input.addEventListener('input', () => {{
+              const hiddenInput = document.getElementById(`scenario-player-id-${{input.dataset.row}}`);
               const teamInput = document.getElementById(`scenario-team-${{input.dataset.row}}`);
-              if (teamInput && teamByPlayer[input.value]) teamInput.value = teamByPlayer[input.value];
+              const status = document.getElementById(`scenario-player-status-${{input.dataset.row}}`);
+              const selected = playersByChoice[input.value];
+              if (selected) {{
+                hiddenInput.value = selected.player_id;
+                input.value = selected.player_name;
+                if (selected.team_name) teamInput.value = selected.team_name;
+                teamInput.readOnly = Boolean(selected.team_name);
+                status.textContent = `赛季档案 · ${{selected.team_name || '未分队'}} · ${{selected.player_id}}`;
+                status.className = 'small mt-1 scenario-player-status text-success';
+                return;
+              }}
+              hiddenInput.value = '';
+              teamInput.readOnly = false;
+              status.textContent = input.value.trim()
+                ? '临时选手 · 不会创建正式档案'
+                : '从当前赛季联想选择，或直接输入临时选手';
+              status.className = `small mt-1 scenario-player-status ${{input.value.trim() ? 'text-warning' : 'text-secondary'}}`;
             }});
           }});
         }})();
@@ -1833,7 +2015,6 @@ def _handle_prediction_day_scenario_admin(
         data,
         competition_name,
         include_non_ongoing=True,
-        selected_season=season_name or None,
     )
     try:
         date.fromisoformat(played_on)
@@ -1871,19 +2052,31 @@ def _handle_prediction_day_scenario_admin(
             selected_match_id,
         )
 
-    players_by_name: dict[str, list[dict[str, Any]]] = {}
-    for player in data.get("players", []):
-        player_name = str(player.get("display_name") or player.get("player_id") or "").strip()
-        if player_name:
-            players_by_name.setdefault(player_name.casefold(), []).append(player)
+    season_players = _prediction_season_players(data, competition_name, season_name)
+    players_by_id = {player["player_id"]: player for player in season_players}
+    players_by_name: dict[str, list[dict[str, str]]] = {}
+    players_by_choice: dict[str, dict[str, str]] = {}
+    for player in season_players:
+        players_by_name.setdefault(player["player_name"].casefold(), []).append(player)
+        choice_label = " · ".join(
+            [
+                player["player_name"],
+                player["team_name"] or "未分队",
+                player["player_id"],
+            ]
+        )
+        players_by_choice[choice_label] = player
     teams_by_name: dict[str, list[dict[str, Any]]] = {}
-    for team in data.get("teams", []):
+    for team in _prediction_season_teams(data, competition_name, season_name):
         team_name = str(team.get("name") or team.get("team_id") or "").strip()
         if team_name:
-            teams_by_name.setdefault(team_name.casefold(), []).append(team)
+            teams_by_name.setdefault(legacy.normalize_team_name_key(team_name), []).append(team)
     roster = []
     seen_players: set[str] = set()
     for index in range(1, 13):
+        submitted_player_id = form_value(
+            ctx.form, f"scenario_player_id_{index}"
+        ).strip()
         player_name = form_value(ctx.form, f"scenario_player_{index}").strip()
         team_name = form_value(ctx.form, f"scenario_team_{index}").strip()
         if not player_name or not team_name:
@@ -1892,12 +2085,83 @@ def _handle_prediction_day_scenario_admin(
                 "400 Bad Request",
                 get_prediction_admin_page(ctx, "12名选手和战队必须全部填写。"),
             )
-        matched_players = players_by_name.get(player_name.casefold(), [])
-        player = matched_players[0] if len(matched_players) == 1 else {}
-        matched_teams = teams_by_name.get(team_name.casefold(), [])
-        team = matched_teams[0] if len(matched_teams) == 1 else {}
-        player_id = str(player.get("player_id") or "").strip()
-        team_id = str(team.get("team_id") or "").strip()
+        if legacy.is_non_profile_player_id(submitted_player_id):
+            return legacy.start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_prediction_admin_page(ctx, "NPC 不参与胜率预测，请选择正式选手或填写其他临时选手。"),
+            )
+
+        player = players_by_id.get(submitted_player_id) if submitted_player_id else None
+        if submitted_player_id and not player:
+            return legacy.start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_prediction_admin_page(
+                    ctx,
+                    f"第 {index} 行选手档案不属于当前赛事赛季，请重新选择。",
+                ),
+            )
+        if not player and legacy.is_non_profile_player_id(player_name):
+            return legacy.start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_prediction_admin_page(ctx, "NPC 不参与胜率预测，请选择正式选手或填写其他临时选手。"),
+            )
+        if not player:
+            player = players_by_choice.get(player_name)
+        if not player:
+            matched_players = players_by_name.get(player_name.casefold(), [])
+            if len(matched_players) == 1:
+                player = matched_players[0]
+            elif len(matched_players) > 1:
+                return legacy.start_response_html(
+                    start_response,
+                    "400 Bad Request",
+                    get_prediction_admin_page(
+                        ctx,
+                        f"选手“{player_name}”在当前赛季有多个同名档案，请从联想列表选择具体档案。",
+                    ),
+                )
+
+        if player:
+            player_id = player["player_id"]
+            player_name = player["player_name"]
+            team_id = player["team_id"]
+            if player["team_name"]:
+                team_name = player["team_name"]
+            else:
+                matched_teams = teams_by_name.get(
+                    legacy.normalize_team_name_key(team_name), []
+                )
+                if len(matched_teams) != 1:
+                    return legacy.start_response_html(
+                        start_response,
+                        "400 Bad Request",
+                        get_prediction_admin_page(
+                            ctx,
+                            f"选手“{player_name}”填写的战队不属于当前赛事赛季。",
+                        ),
+                    )
+                team_id = str(matched_teams[0].get("team_id") or "").strip()
+                team_name = str(matched_teams[0].get("name") or "").strip()
+        else:
+            matched_teams = teams_by_name.get(
+                legacy.normalize_team_name_key(team_name), []
+            )
+            if len(matched_teams) != 1:
+                return legacy.start_response_html(
+                    start_response,
+                    "400 Bad Request",
+                    get_prediction_admin_page(
+                        ctx,
+                        f"临时选手“{player_name}”填写的战队不属于当前赛事赛季。",
+                    ),
+                )
+            team_id = str(matched_teams[0].get("team_id") or "").strip()
+            team_name = str(matched_teams[0].get("name") or "").strip()
+            player_id = ""
+
         duplicate_key = f"id:{player_id}" if player_id else f"name:{player_name.casefold()}"
         if duplicate_key in seen_players:
             return legacy.start_response_html(

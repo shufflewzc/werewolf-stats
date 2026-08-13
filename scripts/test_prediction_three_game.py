@@ -11,6 +11,9 @@ import web_app
 from web.features.match_page import (
     _handle_prediction_day_scenario_admin,
     _prediction_day_scope,
+    _prediction_day_scenario_admin_html,
+    _prediction_season_players,
+    _prediction_season_teams,
     normalize_prediction_day_scenario,
     prediction_day_scenario_key,
 )
@@ -34,6 +37,23 @@ class ThreeGamePredictionTests(unittest.TestCase):
             for entry in web_app.load_series_catalog(cls.data)
             if entry["series_slug"] == "jcds"
         }
+        cls.season_players = [
+            player
+            for player in _prediction_season_players(
+                cls.data, SEED_COMPETITION, SEED_SEASON
+            )
+            if player["team_name"]
+        ]
+        cls.season_teams = _prediction_season_teams(
+            cls.data, SEED_COMPETITION, SEED_SEASON
+        )
+        cls.season_team_names = [
+            str(team.get("name") or "").strip()
+            for team in cls.season_teams
+            if str(team.get("name") or "").strip()
+        ]
+        if len(cls.season_players) < 12 or not cls.season_team_names:
+            raise AssertionError("三局预测测试需要至少12名赛季选手和1支赛季战队")
         team_lookup = {team["team_id"]: team for team in cls.data["teams"]}
         cls.roster = []
         for index, player in enumerate(cls.data["players"][:12], start=1):
@@ -212,7 +232,167 @@ class ThreeGamePredictionTests(unittest.TestCase):
         self.assertEqual(len(scenario["roster"]), 12)
         self.assertNotIn("matches", scenario)
 
-    def scenario_context(self, *, duplicate: bool = False, override: str = ""):
+    def test_season_player_candidates_merge_scope_sources_and_skip_npc(self) -> None:
+        data = {
+            "players": [
+                {"player_id": "member", "display_name": "成员选手", "team_id": "team-s1"},
+                {"player_id": "match-only", "display_name": "比赛选手", "team_id": ""},
+                {"player_id": "dimension-only", "display_name": "维度选手", "team_id": ""},
+                {"player_id": "other-season", "display_name": "其他赛季", "team_id": "team-s2"},
+                {"player_id": "nPc", "display_name": "机器账号", "team_id": "team-s1"},
+            ],
+            "teams": [
+                {
+                    "team_id": "team-s1",
+                    "name": "S1战队",
+                    "competition_name": "测试赛事",
+                    "season_name": "S1",
+                    "members": ["member", "nPc"],
+                },
+                {
+                    "team_id": "team-s2",
+                    "name": "S2战队",
+                    "competition_name": "测试赛事",
+                    "season_name": "S2",
+                    "members": ["other-season"],
+                },
+            ],
+            "matches": [
+                {
+                    "match_id": "scope-match",
+                    "competition_name": "测试赛事",
+                    "season": "S1",
+                    "played_on": "2026-08-01",
+                    "round": 1,
+                    "game_no": 1,
+                    "players": [
+                        {
+                            "player_id": "match-only",
+                            "player_name": "比赛选手",
+                            "team_id": "team-s1",
+                        },
+                        {"player_id": "NPC", "player_name": "npc", "team_id": "team-s1"},
+                    ],
+                }
+            ],
+            "season_player_dimension_stats": [
+                {
+                    "competition_name": "测试赛事",
+                    "season_name": "S1",
+                    "played_on": "2026-08-02",
+                    "player_id": "dimension-only",
+                    "team_id": "team-s1",
+                    "seat": 1,
+                }
+            ],
+        }
+        candidates = _prediction_season_players(data, "测试赛事", "S1")
+        self.assertEqual(
+            {item["player_id"] for item in candidates},
+            {"member", "match-only", "dimension-only"},
+        )
+        self.assertTrue(all(item["team_name"] == "S1战队" for item in candidates))
+
+    def test_admin_html_only_embeds_selected_season_choices(self) -> None:
+        data = deepcopy(self.data)
+        data["teams"].append(
+            {
+                "team_id": "other-season-team",
+                "name": "其他赛季战队",
+                "short_name": "其他",
+                "logo": "",
+                "competition_name": SEED_COMPETITION,
+                "season_name": "其他赛季",
+                "members": ["other-season-player"],
+            }
+        )
+        data["players"].append(
+            {
+                "player_id": "other-season-player",
+                "display_name": "只属于其他赛季的选手",
+                "team_id": "other-season-team",
+                "photo": "",
+            }
+        )
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/prediction-admin",
+            query={
+                "scenario_competition": [SEED_COMPETITION],
+                "scenario_season": [SEED_SEASON],
+                "scenario_date": ["2026-08-04"],
+            },
+            form={},
+            files={},
+            current_user={"username": "admin", "role": "admin"},
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios", return_value={}
+        ):
+            html = _prediction_day_scenario_admin_html(ctx, data)
+        self.assertIn(self.season_players[0]["player_id"], html)
+        self.assertIn('name="scenario_player_id_12"', html)
+        self.assertNotIn("只属于其他赛季的选手", html)
+        self.assertNotIn("其他赛季战队", html)
+        self.assertIn("临时选手", html)
+
+    def test_admin_html_resolves_legacy_unique_name_to_profile_id(self) -> None:
+        player = next(
+            candidate
+            for candidate in self.season_players
+            if sum(
+                other["player_name"].casefold() == candidate["player_name"].casefold()
+                for other in self.season_players
+            )
+            == 1
+        )
+        played_on = "2026-08-04"
+        scenario = normalize_prediction_day_scenario(
+            {
+                "competition_name": SEED_COMPETITION,
+                "season_name": SEED_SEASON,
+                "played_on": played_on,
+                "roster": [
+                    {
+                        "player_name": player["player_name"],
+                        "team_name": player["team_name"],
+                    }
+                ],
+            }
+        )
+        key = prediction_day_scenario_key(SEED_COMPETITION, SEED_SEASON, played_on)
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/prediction-admin",
+            query={
+                "scenario_competition": [SEED_COMPETITION],
+                "scenario_season": [SEED_SEASON],
+                "scenario_date": [played_on],
+            },
+            form={},
+            files={},
+            current_user={"username": "admin", "role": "admin"},
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios",
+            return_value={key: scenario},
+        ):
+            html = _prediction_day_scenario_admin_html(ctx, self.data)
+        self.assertIn(
+            f'id="scenario-player-id-1" value="{player["player_id"]}"',
+            html,
+        )
+        self.assertIn(f"赛季档案 · {player['team_name']} · {player['player_id']}", html)
+
+    def scenario_context(
+        self,
+        *,
+        duplicate: bool = False,
+        override: str = "",
+        formal_players: list[dict[str, str]] | None = None,
+    ):
         match_id = str(self.data["matches"][0].get("match_id") or "")
         form = {
             "scenario_competition": [SEED_COMPETITION],
@@ -221,18 +401,69 @@ class ThreeGamePredictionTests(unittest.TestCase):
             "match_id": [match_id],
         }
         for index in range(1, 13):
-            form[f"scenario_player_{index}"] = ["重复选手" if duplicate else f"发布选手{index}"]
-            form[f"scenario_team_{index}"] = [f"发布战队{index}"]
+            formal_player = formal_players[index - 1] if formal_players else None
+            form[f"scenario_player_id_{index}"] = [
+                formal_player["player_id"] if formal_player else ""
+            ]
+            form[f"scenario_player_{index}"] = [
+                formal_player["player_name"]
+                if formal_player
+                else ("重复选手" if duplicate else f"发布选手{index}")
+            ]
+            form[f"scenario_team_{index}"] = [
+                formal_player["team_name"]
+                if formal_player
+                else self.season_team_names[(index - 1) % len(self.season_team_names)]
+            ]
             form[f"scenario_override_{index}"] = [override if index == 1 else ""]
         return web_app.RequestContext(
             method="POST",
             path="/prediction-admin",
-            query={},
+            query={
+                "scenario_competition": [SEED_COMPETITION],
+                "scenario_season": [SEED_SEASON],
+                "scenario_date": ["2026-08-04"],
+            },
             form=form,
             files={},
             current_user={"username": "admin", "display_name": "管理员", "role": "admin"},
             now_label="2026-08-04 12:00:00 中国时间",
         )
+
+    def same_name_profile_fixture(
+        self,
+    ) -> tuple[dict, list[dict[str, str]]]:
+        data = deepcopy(self.data)
+        team_ids = [str(team.get("team_id") or "") for team in self.season_teams[:2]]
+        self.assertEqual(len(team_ids), 2)
+        duplicate_ids = ["test-same-name-profile-a", "test-same-name-profile-b"]
+        for player_id, team_id in zip(duplicate_ids, team_ids):
+            data["players"].append(
+                {
+                    "player_id": player_id,
+                    "display_name": "同名测试选手",
+                    "team_id": team_id,
+                    "photo": "",
+                }
+            )
+            team = next(
+                item for item in data["teams"] if item.get("team_id") == team_id
+            )
+            team.setdefault("members", []).append(player_id)
+        candidates = _prediction_season_players(
+            data, SEED_COMPETITION, SEED_SEASON
+        )
+        duplicates = [
+            player for player in candidates if player["player_id"] in duplicate_ids
+        ]
+        selected_ids = set(duplicate_ids)
+        duplicates.extend(
+            player
+            for player in candidates
+            if player["player_id"] not in selected_ids
+            and player["player_name"] != "同名测试选手"
+        )
+        return data, duplicates[:12]
 
     def test_admin_publish_rejects_duplicate_players(self) -> None:
         statuses = []
@@ -289,6 +520,114 @@ class ThreeGamePredictionTests(unittest.TestCase):
         self.assertEqual(len(scenario["roster"]), 12)
         self.assertEqual(scenario["roster"][0]["manual_total_override"], 1.5)
 
+    def test_admin_publish_uses_selected_season_profile_identity(self) -> None:
+        responses = []
+        captured = {}
+        ctx = self.scenario_context(formal_players=self.season_players[:12])
+        ctx.form["scenario_player_1"] = ["被篡改的姓名"]
+        ctx.form["scenario_team_1"] = ["被篡改的战队"]
+
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios", return_value={}
+        ), patch(
+            "web.features.match_page.save_prediction_day_scenarios",
+            side_effect=lambda payload: captured.update(payload),
+        ), patch("web.features.match_page.legacy.audit_action"):
+            _handle_prediction_day_scenario_admin(
+                ctx,
+                lambda status, headers: responses.append(status),
+                self.data,
+                "save_day_scenario",
+            )
+        self.assertEqual(responses[0], "302 Found")
+        roster = next(iter(captured.values()))["roster"]
+        self.assertEqual(roster[0]["player_id"], self.season_players[0]["player_id"])
+        self.assertEqual(roster[0]["player_name"], self.season_players[0]["player_name"])
+        self.assertEqual(roster[0]["team_name"], self.season_players[0]["team_name"])
+
+    def test_admin_publish_allows_distinct_same_name_profiles_by_id(self) -> None:
+        data, selected = self.same_name_profile_fixture()
+        responses = []
+        captured = {}
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios", return_value={}
+        ), patch(
+            "web.features.match_page.save_prediction_day_scenarios",
+            side_effect=lambda payload: captured.update(payload),
+        ), patch("web.features.match_page.legacy.audit_action"):
+            _handle_prediction_day_scenario_admin(
+                self.scenario_context(formal_players=selected),
+                lambda status, headers: responses.append(status),
+                data,
+                "save_day_scenario",
+            )
+        self.assertEqual(responses[0], "302 Found")
+        roster = next(iter(captured.values()))["roster"]
+        self.assertEqual(
+            {roster[0]["player_id"], roster[1]["player_id"]},
+            {"test-same-name-profile-a", "test-same-name-profile-b"},
+        )
+
+    def test_admin_publish_rejects_ambiguous_name_without_profile_id(self) -> None:
+        data, selected = self.same_name_profile_fixture()
+        selected = selected[:1] + selected[2:12]
+        selected.append(
+            next(
+                player
+                for player in self.season_players
+                if player["player_id"] not in {row["player_id"] for row in selected}
+            )
+        )
+        ctx = self.scenario_context(formal_players=selected)
+        ctx.form["scenario_player_id_1"] = [""]
+        statuses = []
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios", return_value={}
+        ), patch("web.features.match_page.save_prediction_day_scenarios") as save_mock:
+            _handle_prediction_day_scenario_admin(
+                ctx,
+                lambda status, headers: statuses.append(status),
+                data,
+                "save_day_scenario",
+            )
+        self.assertEqual(statuses[0], "400 Bad Request")
+        save_mock.assert_not_called()
+
+    def test_admin_publish_rejects_cross_season_profile_and_team(self) -> None:
+        profile_ctx = self.scenario_context(formal_players=self.season_players[:12])
+        profile_ctx.form["scenario_player_id_1"] = ["not-in-selected-season"]
+        team_ctx = self.scenario_context()
+        team_ctx.form["scenario_team_1"] = ["其他赛季战队"]
+        for ctx in (profile_ctx, team_ctx):
+            statuses = []
+            with patch(
+                "web.features.match_page.load_prediction_day_scenarios", return_value={}
+            ), patch("web.features.match_page.save_prediction_day_scenarios") as save_mock:
+                _handle_prediction_day_scenario_admin(
+                    ctx,
+                    lambda status, headers: statuses.append(status),
+                    self.data,
+                    "save_day_scenario",
+                )
+            self.assertEqual(statuses[0], "400 Bad Request")
+            save_mock.assert_not_called()
+
+    def test_admin_publish_rejects_npc_case_insensitively(self) -> None:
+        ctx = self.scenario_context()
+        ctx.form["scenario_player_1"] = ["nPc"]
+        statuses = []
+        with patch(
+            "web.features.match_page.load_prediction_day_scenarios", return_value={}
+        ), patch("web.features.match_page.save_prediction_day_scenarios") as save_mock:
+            _handle_prediction_day_scenario_admin(
+                ctx,
+                lambda status, headers: statuses.append(status),
+                self.data,
+                "save_day_scenario",
+            )
+        self.assertEqual(statuses[0], "400 Bad Request")
+        save_mock.assert_not_called()
+
     def test_admin_match_switch_updates_three_game_input_scope(self) -> None:
         match = self.data["matches"][0]
         ctx = web_app.RequestContext(
@@ -304,6 +643,32 @@ class ThreeGamePredictionTests(unittest.TestCase):
         self.assertEqual(competition_name, str(match.get("competition_name") or ""))
         self.assertEqual(season_name, str(match.get("season") or ""))
         self.assertEqual(played_on, str(match.get("played_on") or ""))
+
+    def test_admin_defaults_to_first_status_sorted_season(self) -> None:
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/prediction-admin",
+            query={},
+            form={},
+            files={},
+            current_user={"username": "admin", "role": "admin"},
+            now_label="2026-08-04 12:00:00 中国时间",
+        )
+        with patch(
+            "web.features.match_page.legacy.load_series_catalog",
+            return_value=[
+                {"competition_name": "测试赛事", "series_slug": "jcds"}
+            ],
+        ), patch(
+            "web.features.match_page.legacy.list_seasons",
+            return_value=["进行中赛季", "未开始赛季", "待排期赛季", "已结束赛季"],
+        ):
+            _, competition_name, seasons, season_name, _ = _prediction_day_scope(
+                ctx, {"matches": []}
+            )
+        self.assertEqual(competition_name, "测试赛事")
+        self.assertEqual(seasons[0], "进行中赛季")
+        self.assertEqual(season_name, "进行中赛季")
 
     def test_predictions_api_prefers_published_scenario_and_keeps_legacy_fields(self) -> None:
         roster = [

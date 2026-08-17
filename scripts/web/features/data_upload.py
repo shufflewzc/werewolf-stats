@@ -54,7 +54,14 @@ def available_targets(user: dict[str, Any] | None, data: dict[str, Any] | None =
     ]
 
 
-def create_token(user: dict[str, Any], name: str, expires_days: str, scope_mode: str, scope_keys: list[str]) -> tuple[str, dict[str, Any]]:
+def create_token(
+    user: dict[str, Any],
+    name: str,
+    expires_days: str,
+    scope_mode: str,
+    scope_keys: list[str],
+    note: str = "",
+) -> tuple[str, dict[str, Any]]:
     raw = TOKEN_PREFIX + secrets.token_urlsafe(32)
     now = legacy.china_now()
     days = int(expires_days) if expires_days in {"30", "90", "365"} else 0
@@ -62,6 +69,7 @@ def create_token(user: dict[str, Any], name: str, expires_days: str, scope_mode:
         "token_id": "dut_" + secrets.token_hex(8),
         "username": str(user.get("username") or ""),
         "name": name.strip()[:80] or "每日数据生成器",
+        "note": note.strip()[:300],
         "token_hash": sha256(raw.encode("utf-8")).hexdigest(),
         "scope_mode": "selected" if scope_mode == "selected" else "all",
         "scope_keys": sorted(set(scope_keys)) if scope_mode == "selected" else [],
@@ -74,6 +82,25 @@ def create_token(user: dict[str, Any], name: str, expires_days: str, scope_mode:
     tokens.append(record)
     save_tokens(tokens)
     return raw, record
+
+
+def update_token(username: str, token_id: str, name: str, note: str) -> bool:
+    tokens = load_tokens()
+    changed = False
+    for item in tokens:
+        if item.get("token_id") != token_id or item.get("username") != username:
+            continue
+        next_name = name.strip()[:80] or "每日数据生成器"
+        next_note = note.strip()[:300]
+        if item.get("name") != next_name or str(item.get("note") or "") != next_note:
+            item["name"] = next_name
+            item["note"] = next_note
+            item["updated_at"] = legacy.china_now_label()
+            changed = True
+        break
+    if changed:
+        save_tokens(tokens)
+    return changed
 
 
 def revoke_token(username: str, token_id: str) -> bool:
@@ -121,11 +148,56 @@ def target_allowed(record: dict[str, Any], competition: str, season: str) -> boo
 def token_panel(ctx, revealed_token: str = "") -> str:
     user = ctx.current_user
     targets = available_targets(user)
+    target_labels = {item["scope_key"]: item["label"] for item in targets}
     rows = []
     for token in reversed([item for item in load_tokens() if item.get("username") == user.get("username")]):
-        state = "已撤销" if token.get("revoked_at") else (f"有效至 {escape(token['expires_at'][:10])}" if token.get("expires_at") else "永不过期")
-        action = "" if token.get("revoked_at") else f'''<form method="post" action="/profile" class="d-inline"><input type="hidden" name="action" value="revoke_upload_token"><input type="hidden" name="token_id" value="{escape(token['token_id'])}"><button class="btn btn-sm btn-outline-danger" type="submit">撤销</button></form>'''
-        rows.append(f"<tr><td>{escape(token.get('name') or '')}</td><td>{escape(token.get('created_at') or '')}</td><td>{state}</td><td>{escape(token.get('last_used_at') or '尚未使用')}</td><td>{action}</td></tr>")
+        expires_at = str(token.get("expires_at") or "")
+        if token.get("revoked_at"):
+            state = '<span class="badge text-bg-secondary">已撤销</span>'
+        elif expires_at:
+            try:
+                expired = legacy.china_now() >= datetime.fromisoformat(expires_at)
+            except ValueError:
+                expired = True
+            state = f'<span class="badge text-bg-{"danger" if expired else "success"}">{"已过期" if expired else "使用中"}</span>'
+        else:
+            state = '<span class="badge text-bg-success">使用中</span>'
+        if token.get("scope_mode") == "all":
+            scope_label = "全部当前及未来有权赛季"
+        else:
+            scope_names = []
+            for key in token.get("scope_keys", []):
+                label = target_labels.get(key)
+                if not label:
+                    try:
+                        competition, season = json.loads(key)
+                        label = f"{competition} / {season}"
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        label = ""
+                if label:
+                    scope_names.append(label)
+            scope_label = "、".join(scope_names) or f"指定 {len(token.get('scope_keys', []))} 个赛季"
+        token_id = escape(token.get("token_id") or "")
+        form_id = f"edit-{token_id}"
+        revoke_action = "" if token.get("revoked_at") else f'''<form method="post" action="/profile" class="d-inline"><input type="hidden" name="action" value="revoke_upload_token"><input type="hidden" name="token_id" value="{token_id}"><button class="btn btn-sm btn-outline-danger" type="submit">撤销令牌</button></form>'''
+        rows.append(f'''
+        <div class="border rounded-3 p-3 mb-3">
+          <div class="d-flex flex-column flex-lg-row justify-content-between gap-2 mb-3">
+            <div><div class="d-flex align-items-center gap-2"><strong>{escape(token.get("name") or "")}</strong>{state}</div><small class="text-secondary font-monospace">{token_id}</small></div>
+            <div class="d-flex align-items-start gap-2"><button class="btn btn-sm btn-dark" type="submit" form="{form_id}">保存名称与备注</button>{revoke_action}</div>
+          </div>
+          <div class="row g-2 small text-secondary mb-3">
+            <div class="col-12"><strong class="text-body">权限范围：</strong>{escape(scope_label)}</div>
+            <div class="col-md-4"><strong class="text-body">创建时间：</strong>{escape(token.get("created_at") or "-")}</div>
+            <div class="col-md-4"><strong class="text-body">有效期：</strong>{escape(expires_at[:10] if expires_at else "永不过期")}</div>
+            <div class="col-md-4"><strong class="text-body">最后使用：</strong>{escape(token.get("last_used_at") or "尚未使用")}</div>
+          </div>
+          <form id="{form_id}" method="post" action="/profile" class="row g-3">
+            <input type="hidden" name="action" value="update_upload_token"><input type="hidden" name="token_id" value="{token_id}">
+            <div class="col-md-4"><label class="form-label">令牌名称</label><input class="form-control" name="token_name" maxlength="80" value="{escape(token.get("name") or "")}"></div>
+            <div class="col-md-8"><label class="form-label">备注</label><input class="form-control" name="token_note" maxlength="300" value="{escape(token.get("note") or "")}" placeholder="例如：赛场 Windows 电脑、京师 S2 专用"></div>
+          </form>
+        </div>''')
     target_options = "".join(f'<label class="form-check"><input class="form-check-input" type="checkbox" name="scope_key" value="{escape(item["scope_key"])}"><span class="form-check-label">{escape(item["label"])}</span></label>' for item in targets)
     revealed = f'''<div class="alert alert-warning"><strong>请立即复制，关闭页面后无法再次查看：</strong><div class="font-monospace text-break mt-2" id="upload-token-value">{escape(revealed_token)}</div></div>''' if revealed_token else ""
     return f'''
@@ -139,9 +211,10 @@ def token_panel(ctx, revealed_token: str = "") -> str:
         <div class="col-md-3"><label class="form-label">有效期</label><select class="form-select" name="expires_days"><option value="90">90 天</option><option value="30">30 天</option><option value="365">365 天</option><option value="never">永不过期</option></select></div>
         <div class="col-md-5"><label class="form-label">权限范围</label><select class="form-select" name="scope_mode" onchange="document.getElementById('upload-token-targets').hidden=this.value!=='selected'"><option value="all">全部有权赛季</option><option value="selected">指定赛季</option></select></div>
         <div class="col-12" id="upload-token-targets" hidden>{target_options or '<span class="text-secondary">暂无可管理赛季</span>'}</div>
+        <div class="col-12"><label class="form-label">备注</label><input class="form-control" name="token_note" maxlength="300" placeholder="记录使用设备、用途或赛季，不会包含令牌原文"></div>
         <div class="col-12"><button class="btn btn-dark" type="submit">创建令牌</button></div>
       </form>
-      <div class="table-responsive"><table class="table"><thead><tr><th>名称</th><th>创建时间</th><th>状态</th><th>最后使用</th><th></th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan="5" class="text-secondary">尚未创建令牌</td></tr>'}</tbody></table></div>
+      <div><h3 class="h6 mb-3">已创建令牌</h3>{''.join(rows) or '<div class="text-secondary">尚未创建令牌</div>'}</div>
     </section>'''
 
 
@@ -153,9 +226,20 @@ def handle_profile_action(ctx, start_response):
         allowed = {item["scope_key"] for item in available_targets(ctx.current_user)}
         if scope_mode == "selected" and (not keys or any(key not in allowed for key in keys)):
             return None, "请至少选择一个当前有权限的赛事赛季。", ""
-        raw, record = create_token(ctx.current_user, legacy.form_value(ctx.form, "token_name"), legacy.form_value(ctx.form, "expires_days"), scope_mode, keys)
-        legacy.audit_action(ctx, "data_upload_token.create", target_type="upload_token", target_id=record["token_id"], summary="创建数据生成器上传令牌", metadata={"scope_mode": record["scope_mode"], "scope_count": len(record["scope_keys"]), "expires_at": record["expires_at"]})
+        raw, record = create_token(ctx.current_user, legacy.form_value(ctx.form, "token_name"), legacy.form_value(ctx.form, "expires_days"), scope_mode, keys, legacy.form_value(ctx.form, "token_note"))
+        legacy.audit_action(ctx, "data_upload_token.create", target_type="upload_token", target_id=record["token_id"], summary="创建数据生成器上传令牌", metadata={"scope_mode": record["scope_mode"], "scope_count": len(record["scope_keys"]), "expires_at": record["expires_at"], "has_note": bool(record["note"])})
         return True, "上传令牌已创建。", raw
+    if action == "update_upload_token":
+        token_id = legacy.form_value(ctx.form, "token_id").strip()
+        changed = update_token(
+            str(ctx.current_user.get("username") or ""),
+            token_id,
+            legacy.form_value(ctx.form, "token_name"),
+            legacy.form_value(ctx.form, "token_note"),
+        )
+        if changed:
+            legacy.audit_action(ctx, "data_upload_token.update", target_type="upload_token", target_id=token_id, summary="更新数据生成器令牌名称或备注")
+        return changed, "令牌信息已更新。" if changed else "令牌信息未变更或令牌不存在。", ""
     if action == "revoke_upload_token":
         token_id = legacy.form_value(ctx.form, "token_id").strip()
         changed = revoke_token(str(ctx.current_user.get("username") or ""), token_id)

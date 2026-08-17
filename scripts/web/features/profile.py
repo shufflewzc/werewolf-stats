@@ -338,7 +338,7 @@ def handle_profile(ctx: RequestContext, start_response):
     data = load_validated_data()
     users = load_users()
     action = form_value(ctx.form, "action").strip() or "save_profile"
-    if action in {"create_upload_token", "revoke_upload_token"}:
+    if action in {"create_upload_token", "update_upload_token", "revoke_upload_token"}:
         from web.features.data_upload import handle_profile_action
         _, message, revealed = handle_profile_action(ctx, start_response)
         return start_response_html(

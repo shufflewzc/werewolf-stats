@@ -46,14 +46,36 @@ class DataUploadTokenTests(unittest.TestCase):
         )
 
     def test_raw_token_is_only_returned_and_hash_is_stored(self):
-        raw, record = data_upload.create_token(self.user, "测试", "90", "all", [])
+        raw, record = data_upload.create_token(self.user, "测试", "90", "all", [], "赛场电脑")
         self.assertTrue(raw.startswith(data_upload.TOKEN_PREFIX))
         self.assertNotEqual(record["token_hash"], raw)
+        self.assertEqual(record["note"], "赛场电脑")
         self.assertNotIn(raw, self.meta[data_upload.TOKEN_META_KEY])
         user, authenticated, error = data_upload.authenticate(self.context(raw))
         self.assertEqual(error, "")
         self.assertEqual(user["username"], "manager")
         self.assertEqual(authenticated["token_id"], record["token_id"])
+
+    def test_token_metadata_is_manageable_without_revealing_raw_token(self):
+        raw, record = data_upload.create_token(self.user, "原名称", "90", "all", [], "原备注")
+        original_hash = record["token_hash"]
+        self.assertTrue(data_upload.update_token("manager", record["token_id"], "赛场 Windows", "京师 S2 专用"))
+        updated = data_upload.load_tokens()[0]
+        self.assertEqual(updated["name"], "赛场 Windows")
+        self.assertEqual(updated["note"], "京师 S2 专用")
+        self.assertEqual(updated["token_hash"], original_hash)
+        self.assertFalse(data_upload.update_token("其他用户", record["token_id"], "不应更新", ""))
+
+        ctx = self.context(raw)
+        ctx.current_user = self.user
+        revealed_page = data_upload.token_panel(ctx, raw)
+        managed_page = data_upload.token_panel(ctx)
+        self.assertEqual(revealed_page.count(raw), 1)
+        self.assertNotIn(raw, managed_page)
+        self.assertNotIn(original_hash, managed_page)
+        self.assertIn("京师 S2 专用", managed_page)
+        self.assertIn("保存名称与备注", managed_page)
+        self.assertIn("撤销令牌", managed_page)
 
     def test_selected_scope_and_revoke(self):
         target = data_upload.available_targets(self.user)[0]

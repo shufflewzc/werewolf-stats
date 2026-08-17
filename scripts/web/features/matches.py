@@ -404,11 +404,10 @@ def build_excel_import_panel(
 ) -> str:
     current = values or {
         "group_label": "",
-        "competition_name": form_value(ctx.query, "competition").strip(),
-        "season": form_value(ctx.query, "season").strip(),
+        "match_id": form_value(ctx.query, "match_id").strip(),
     }
-    current.setdefault("competition_name", form_value(ctx.query, "competition").strip())
-    current.setdefault("season", form_value(ctx.query, "season").strip())
+    current.setdefault("group_label", "")
+    current.setdefault("match_id", form_value(ctx.query, "match_id").strip())
     try:
         data = load_validated_data()
         series_catalog = load_series_catalog(data)
@@ -422,16 +421,6 @@ def build_excel_import_panel(
     template_links = [
         f'<a class="btn btn-outline-dark" href="/assets/templates/{escape(generic_template_name)}">通用模板</a>'
     ]
-    dynamic_competition_field = build_match_competition_field(
-        current["competition_name"],
-        ctx.current_user,
-        prioritize_active=True,
-    )
-    dynamic_season_field = build_match_season_field(
-        current["competition_name"],
-        current["season"],
-        include_non_ongoing=True,
-    )
     seen_series_slugs: set[str] = set()
     for entry in series_catalog:
         series_slug = str(entry.get("series_slug") or "").strip()
@@ -457,19 +446,15 @@ def build_excel_import_panel(
       <form method="get" action="/matches/new" class="team-link-card shadow-sm p-3 mb-4">
         <input type="hidden" name="action" value="download_scoring_template">
         <div class="row g-3 align-items-end">
-          <div class="col-12 col-lg-5">
-            <label class="form-label">模板所属赛事</label>
-            {dynamic_competition_field}
-          </div>
-          <div class="col-12 col-lg-4">
-            <label class="form-label">模板所属赛季</label>
-            {dynamic_season_field}
+          <div class="col-12 col-lg-9">
+            <label class="form-label">比赛编号</label>
+            <input class="form-control" name="match_id" value="{escape(current['match_id'])}" placeholder="如 gz-s-260410-01" required>
           </div>
           <div class="col-12 col-lg-3">
-            <button type="submit" class="btn btn-dark w-100">生成当前规则模板</button>
+            <button type="submit" class="btn btn-dark w-100">生成该比赛规则模板</button>
           </div>
         </div>
-        <div class="small text-secondary mt-2">模板会锁定当前赛季计分规则版本，并按启用维度生成列和单局积分公式。</div>
+        <div class="small text-secondary mt-2">系统会按比赛编号读取对应赛事、赛季和该场比赛保存的计分规则。</div>
       </form>
       <form method="post" action="/matches/new" enctype="multipart/form-data">
         <input type="hidden" name="action" value="import_match_excel">
@@ -484,7 +469,7 @@ def build_excel_import_panel(
             <input class="form-control" type="file" name="match_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
           </div>
         </div>
-        <div class="small text-secondary mt-3">模板只用于补录已经批量创建好的比赛。Excel 只需填写唯一比赛编号，系统会自动读取对应赛事、赛季、日期和赛段。这里的分组如果填写，会统一写入本次上传的每场比赛；如果留空，系统才会读取 Excel 里的 `分组` 列。MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
+        <div class="small text-secondary mt-3">模板只用于补录已经批量创建好的比赛。Excel 每条比赛数据都必须填写唯一比赛编号，系统会自动读取对应赛事、赛季、日期和赛段，不需要在页面选择赛季。这里的分组如果填写，会统一写入本次上传的每场比赛；如果留空，系统才会读取 Excel 里的 `分组` 列。MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
           <button type="submit" class="btn btn-dark">上传并导入</button>
         </div>
@@ -1923,15 +1908,17 @@ def validate_template_metadata_scope(
     rows: list[dict[str, str]],
     metadata: dict[str, object] | None,
     data: dict[str, object],
-) -> None:
-    if not metadata:
-        return
-    template_rule = normalize_scoring_rule(metadata.get("scoring_rule"))
-    template_signature = {
-        "version": int(template_rule.get("version") or 1),
-        "score_model": str(template_rule.get("score_model") or ""),
-        "components": template_rule.get("components") or [],
-    }
+) -> dict[str, object] | None:
+    template_rule = (
+        normalize_scoring_rule(metadata.get("scoring_rule"))
+        if metadata
+        else None
+    )
+    template_signature = (
+        build_scoring_rule_signature(template_rule)
+        if template_rule is not None
+        else None
+    )
     existing_by_id = {
         str(match.get("match_id") or "").strip(): match
         for match in data.get("matches", [])
@@ -1939,6 +1926,8 @@ def validate_template_metadata_scope(
     }
     checked_match_ids: set[str] = set()
     scope_rule_cache: dict[tuple[str, str], dict[str, object]] = {}
+    matched_rules: dict[str, dict[str, object]] = {}
+    match_ids_by_signature: dict[str, list[str]] = {}
     for row in rows:
         match_id = str(row.get("match_id") or "").strip()
         if not match_id or match_id in checked_match_ids:
@@ -1947,28 +1936,58 @@ def validate_template_metadata_scope(
         existing_match = existing_by_id.get(match_id)
         if not existing_match:
             continue
-        match_rule_value = existing_match.get("scoring_rule")
-        if isinstance(match_rule_value, dict) and match_rule_value:
-            match_rule = normalize_scoring_rule(match_rule_value)
-        else:
-            scope_key = (
-                get_match_competition_name(existing_match),
-                str(existing_match.get("season") or "").strip(),
-            )
-            if scope_key not in scope_rule_cache:
-                scope_rule_cache[scope_key] = normalize_scoring_rule(
-                    resolve_scoring_rule_for_scope(data, *scope_key)
-                )
-            match_rule = scope_rule_cache[scope_key]
-        match_signature = {
-            "version": int(match_rule.get("version") or 1),
-            "score_model": str(match_rule.get("score_model") or ""),
-            "components": match_rule.get("components") or [],
-        }
-        if match_signature != template_signature:
+        match_rule = resolve_existing_match_scoring_rule(
+            data,
+            existing_match,
+            scope_rule_cache,
+        )
+        match_signature = build_scoring_rule_signature(match_rule)
+        signature_key = json.dumps(match_signature, ensure_ascii=False, sort_keys=True)
+        matched_rules.setdefault(signature_key, match_rule)
+        match_ids_by_signature.setdefault(signature_key, []).append(match_id)
+        if template_signature is not None and match_signature != template_signature:
             raise ValueError(
                 f"比赛 {match_id} 的计分规则与当前 Excel 模板不一致，请下载该比赛所属赛季的模板后再导入。"
             )
+    if len(match_ids_by_signature) > 1:
+        conflicting_matches = "；".join(
+            "、".join(match_ids[:3])
+            for match_ids in match_ids_by_signature.values()
+        )
+        raise ValueError(
+            "同一 Excel 中的比赛计分规则不兼容，请按规则拆分后再导入。"
+            f" 冲突比赛：{conflicting_matches}"
+        )
+    return next(iter(matched_rules.values()), template_rule)
+
+
+def build_scoring_rule_signature(scoring_rule: dict[str, object]) -> dict[str, object]:
+    normalized_rule = normalize_scoring_rule(scoring_rule)
+    return {
+        "version": int(normalized_rule.get("version") or 1),
+        "score_model": str(normalized_rule.get("score_model") or ""),
+        "components": normalized_rule.get("components") or [],
+    }
+
+
+def resolve_existing_match_scoring_rule(
+    data: dict[str, object],
+    match: dict[str, object],
+    scope_rule_cache: dict[tuple[str, str], dict[str, object]] | None = None,
+) -> dict[str, object]:
+    match_rule_value = match.get("scoring_rule")
+    if isinstance(match_rule_value, dict) and match_rule_value:
+        return normalize_scoring_rule(match_rule_value)
+    scope_key = (
+        get_match_competition_name(match),
+        str(match.get("season") or "").strip(),
+    )
+    cache = scope_rule_cache if scope_rule_cache is not None else {}
+    if scope_key not in cache:
+        cache[scope_key] = normalize_scoring_rule(
+            resolve_scoring_rule_for_scope(data, *scope_key)
+        )
+    return cache[scope_key]
 
 
 def hydrate_excel_rows_from_match_ids(
@@ -1999,6 +2018,42 @@ def hydrate_excel_rows_from_match_ids(
         row["game_no"] = str(existing_match.get("game_no") or "").strip()
         if not str(row.get("room_label") or row.get("table_label") or "").strip():
             row["room_label"] = str(existing_match.get("table_label") or "").strip()
+
+
+def validate_excel_match_row_consistency(rows: list[dict[str, str]]) -> None:
+    rows_by_match_id: dict[str, list[dict[str, str]]] = {}
+    for row in rows:
+        match_id = str(row.get("match_id") or "").strip()
+        if match_id:
+            rows_by_match_id.setdefault(match_id, []).append(row)
+    field_resolvers = (
+        ("分组", lambda row: str(row.get("group_label") or "").strip()),
+        (
+            "房间",
+            lambda row: str(row.get("room_label") or row.get("table_label") or "").strip(),
+        ),
+        ("板型", lambda row: str(row.get("format") or "").strip()),
+        ("时长", lambda row: str(row.get("duration_minutes") or "").strip()),
+        ("胜利阵营", lambda row: str(row.get("winning_camp") or "").strip()),
+        (
+            "不计战队总分",
+            lambda row: (
+                "是"
+                if parse_truthy_excel_value(row.get("exclude_from_team_scores", ""))
+                else "否"
+            )
+            if str(row.get("exclude_from_team_scores") or "").strip()
+            else "",
+        ),
+    )
+    for match_id, grouped_rows in rows_by_match_id.items():
+        for field_label, resolver in field_resolvers:
+            values = {resolver(row) for row in grouped_rows if resolver(row)}
+            if len(values) > 1:
+                raise ValueError(
+                    f"比赛 {match_id} 的{field_label}在多行中不一致："
+                    + "、".join(sorted(values)[:3])
+                )
 
 
 def parse_excel_int(value: str, field_label: str) -> int:
@@ -2529,23 +2584,24 @@ def import_matches_from_excel(
     data: dict[str, object],
     upload: UploadedFile,
     group_label_override: str = "",
+    result_metadata: dict[str, object] | None = None,
 ) -> tuple[list[dict[str, object]] | None, str]:
     started_at = time.perf_counter()
     try:
         template_metadata = read_scoring_template_metadata(upload)
-        scoring_rule_override = (
-            template_metadata.get("scoring_rule")
-            if isinstance(template_metadata, dict)
-            else None
-        )
         flat_rows = read_first_available_sheet_rows(upload, ["records", "比赛记录", "单局成绩表"])
         if flat_rows:
             hydrate_excel_rows_from_match_ids(
                 flat_rows,
                 data,
-                require_match_id=template_metadata is not None,
+                require_match_id=True,
             )
-            validate_template_metadata_scope(flat_rows, template_metadata, data)
+            validate_excel_match_row_consistency(flat_rows)
+            scoring_rule_override = validate_template_metadata_scope(
+                flat_rows,
+                template_metadata,
+                data,
+            )
             if any(any(key.startswith("seat1_") for key in row.keys()) for row in flat_rows):
                 parsed_matches = [
                     build_match_from_wide_excel_row(
@@ -2571,9 +2627,14 @@ def import_matches_from_excel(
             hydrate_excel_rows_from_match_ids(
                 match_rows,
                 data,
-                require_match_id=template_metadata is not None,
+                require_match_id=True,
             )
-            validate_template_metadata_scope(match_rows, template_metadata, data)
+            validate_excel_match_row_consistency(match_rows)
+            scoring_rule_override = validate_template_metadata_scope(
+                match_rows,
+                template_metadata,
+                data,
+            )
     except Exception as exc:
         return None, f"解析 Excel 失败：{exc}"
     if not parsed_matches and not match_rows:
@@ -2587,25 +2648,18 @@ def import_matches_from_excel(
 
     next_matches = [dict(match) for match in data["matches"]]
     existing_by_id = {match["match_id"]: match for match in next_matches}
-    created_count = 0
     updated_count = 0
     validated_scopes: set[tuple[str, str]] = set()
 
     source_matches = parsed_matches or []
-    parsed_records_import = bool(parsed_matches)
     if not source_matches:
         for row in match_rows:
             match_key = row.get("match_key", "").strip()
-            import_mode = (row.get("import_mode", "").strip() or "create").lower()
             match_id = row.get("match_id", "").strip()
-            if import_mode not in {"create", "update"}:
-                return None, f"match_key={match_key or '未填写'} 的 import_mode 只能是 create 或 update。"
-            if import_mode == "update" and not match_id:
-                return None, f"match_key={match_key or '未填写'} 更新已有比赛时必须填写 match_id。"
-            if import_mode == "update" and match_id not in existing_by_id:
-                return None, f"没有找到要更新的比赛：{match_id}。"
             if not match_key:
                 return None, "matches 工作表中的每一行都必须填写 match_key。"
+            if not match_id or match_id not in existing_by_id:
+                return None, f"没有找到要更新的比赛：{match_id or '未填写'}。"
             source_matches.append(
                 build_match_from_excel_rows(
                     row,
@@ -2614,6 +2668,22 @@ def import_matches_from_excel(
                     source_data=data,
                 )
             )
+
+    source_match_ids = [
+        str(match.get("match_id") or "").strip()
+        for match in source_matches
+        if isinstance(match, dict)
+    ]
+    duplicate_match_ids = sorted(
+        match_id
+        for match_id in set(source_match_ids)
+        if match_id and source_match_ids.count(match_id) > 1
+    )
+    if duplicate_match_ids:
+        return None, (
+            "Excel 中同一比赛编号出现了多条独立比赛记录，请合并后重试："
+            + "、".join(duplicate_match_ids[:5])
+        )
 
     team_score_flags = {
         str(match.get("match_id") or ""): bool(match.get("exclude_from_team_scores"))
@@ -2631,16 +2701,13 @@ def import_matches_from_excel(
         if group_label_override:
             current_match["group_label"] = group_label_override
         match_key = describe_excel_import_match(current_match)
-        import_mode = "update" if str(current_match.get("match_id") or "").strip() in existing_by_id else "create"
         match_id = str(current_match.get("match_id") or "").strip()
-        if parsed_records_import:
-            try:
-                existing_match = find_existing_match_for_excel_import(next_matches, current_match)
-            except ValueError as exc:
-                return None, f"{match_key} 导入失败：{exc}"
-            current_match = merge_excel_import_match(existing_match, current_match)
-            import_mode = "update"
-            match_id = existing_match["match_id"]
+        try:
+            existing_match = find_existing_match_for_excel_import(next_matches, current_match)
+        except ValueError as exc:
+            return None, f"{match_key} 导入失败：{exc}"
+        current_match = merge_excel_import_match(existing_match, current_match)
+        match_id = existing_match["match_id"]
         competition_name = str(current_match["competition_name"] or "").strip()
         season_name = str(current_match["season"] or "").strip()
         scope_key = (competition_name, season_name)
@@ -2664,7 +2731,40 @@ def import_matches_from_excel(
                 "match": current_match,
                 "match_key": match_key,
                 "match_id": match_id,
-                "import_mode": import_mode,
+            }
+        )
+
+    matched_match_ids = [
+        str(item.get("match_id") or "")
+        for item in prepared_matches
+        if str(item.get("match_id") or "")
+    ]
+    matched_scopes = sorted(
+        {
+            (
+                str(item["match"].get("competition_name") or ""),
+                str(item["match"].get("season") or ""),
+            )
+            for item in prepared_matches
+            if isinstance(item.get("match"), dict)
+        }
+    )
+    if result_metadata is not None:
+        result_metadata.update(
+            {
+                "matched_match_ids": matched_match_ids[:100],
+                "matched_scopes": [
+                    {
+                        "competition_name": competition_name,
+                        "season_name": season_name,
+                    }
+                    for competition_name, season_name in matched_scopes
+                ],
+                "scoring_rule_signature": (
+                    build_scoring_rule_signature(scoring_rule_override)
+                    if isinstance(scoring_rule_override, dict)
+                    else {}
+                ),
             }
         )
 
@@ -2684,23 +2784,18 @@ def import_matches_from_excel(
         if not isinstance(current_match, dict):
             continue
         match_key = str(item.get("match_key") or "未填写比赛")
-        import_mode = str(item.get("import_mode") or "create")
         match_id = str(item.get("match_id") or "").strip()
         award_error = validate_match_awards(current_match)
         if award_error:
             return None, f"{match_key} 导入失败：{award_error}"
         current_match = strip_excel_import_helper_fields(current_match)
 
-        if import_mode == "update":
-            for index, existing_match in enumerate(next_matches):
-                if existing_match["match_id"] == match_id:
-                    next_matches[index] = current_match
-                    existing_by_id[match_id] = current_match
-                    break
-            updated_count += 1
-        else:
-            next_matches.append(current_match)
-            created_count += 1
+        for index, existing_match in enumerate(next_matches):
+            if existing_match["match_id"] == match_id:
+                next_matches[index] = current_match
+                existing_by_id[match_id] = current_match
+                break
+        updated_count += 1
 
     print(
         json.dumps(
@@ -2716,10 +2811,7 @@ def import_matches_from_excel(
         ),
         flush=True,
     )
-    if parsed_records_import:
-        summary = f"Excel 导入完成：更新 {updated_count} 场已预创建比赛。"
-        return next_matches, summary
-    summary = f"Excel 导入完成：新增 {created_count} 场，更新 {updated_count} 场。"
+    summary = f"Excel 导入完成：更新 {updated_count} 场已预创建比赛。"
     return next_matches, summary
 
 
@@ -4574,7 +4666,14 @@ def run_match_excel_import_job(
         data = load_validated_data()
         before_players = deepcopy(data.get("players", []))
         before_teams = deepcopy(data.get("teams", []))
-        next_matches, import_message = import_matches_from_excel(ctx, data, upload, group_label)
+        import_result_metadata: dict[str, object] = {}
+        next_matches, import_message = import_matches_from_excel(
+            ctx,
+            data,
+            upload,
+            group_label,
+            result_metadata=import_result_metadata,
+        )
         if next_matches is None:
             update_import_batch(
                 import_batch_id,
@@ -4646,6 +4745,7 @@ def run_match_excel_import_job(
                 "created_players": len(created_player_ids),
                 "created_match_ids": created_match_ids[:100],
                 "updated_match_ids": updated_match_ids[:100],
+                **import_result_metadata,
             },
             ctx=ctx,
         )
@@ -4660,6 +4760,7 @@ def run_match_excel_import_job(
                 "match_count": len(normalized_matches),
                 "placeholder_player_ids": created_player_ids,
                 "async": True,
+                **import_result_metadata,
             },
         )
     except Exception as exc:
@@ -4676,18 +4777,46 @@ def handle_match_create(ctx: RequestContext, start_response):
         action = form_value(ctx.query, "action").strip()
         if action == "download_scoring_template":
             data = load_validated_data()
-            competition_name = (
-                form_value(ctx.query, "competition_name").strip()
-                or form_value(ctx.query, "competition").strip()
-            )
-            season_name = form_value(ctx.query, "season").strip()
+            match_id = form_value(ctx.query, "match_id").strip()
+            target_match = get_match_by_id(data.get("matches", []), match_id) if match_id else None
+            if match_id and target_match is None:
+                return start_response_html(
+                    start_response,
+                    "200 OK",
+                    get_match_create_page(
+                        ctx,
+                        alert=f"没有找到比赛编号：{match_id}。请先批量创建待补录比赛。",
+                        excel_form_values={"group_label": "", "match_id": match_id},
+                    ),
+                )
+            if target_match is not None:
+                competition_name = get_match_competition_name(target_match)
+                season_name = str(target_match.get("season") or "").strip()
+            else:
+                # Keep old bookmarked template URLs working. The new page only
+                # submits match_id and never asks the user to choose a season.
+                competition_name = (
+                    form_value(ctx.query, "competition_name").strip()
+                    or form_value(ctx.query, "competition").strip()
+                )
+                season_name = form_value(ctx.query, "season").strip()
+                if not competition_name and not season_name:
+                    return start_response_html(
+                        start_response,
+                        "200 OK",
+                        get_match_create_page(
+                            ctx,
+                            alert="请先填写要生成模板的比赛编号。",
+                            excel_form_values={"group_label": "", "match_id": ""},
+                        ),
+                    )
             if not can_manage_matches(ctx.current_user, data, competition_name):
                 return start_response_html(
                     start_response,
                     "403 Forbidden",
                     layout(
                         "没有权限",
-                        f'<div class="alert alert-danger">你没有权限下载 {escape(competition_name)} 的赛季模板。</div>',
+                        f'<div class="alert alert-danger">你没有权限下载 {escape(match_id or competition_name)} 的比赛模板。</div>',
                         ctx,
                     ),
                 )
@@ -4707,28 +4836,28 @@ def handle_match_create(ctx: RequestContext, start_response):
                         alert=competition_error or season_error,
                         excel_form_values={
                             "group_label": "",
-                            "competition_name": competition_name,
-                            "season": season_name,
+                            "match_id": match_id,
                         },
                     ),
                 )
-            scoring_rule = resolve_scoring_rule_for_scope(
-                data,
-                competition_name,
-                season_name,
+            scoring_rule = (
+                resolve_existing_match_scoring_rule(data, target_match)
+                if target_match is not None
+                else resolve_scoring_rule_for_scope(data, competition_name, season_name)
             )
             payload = build_dynamic_match_template_bytes(
                 competition_name,
                 season_name,
                 scoring_rule,
+                match_id,
             )
             version = int(scoring_rule.get("version") or 1)
             safe_scope = re.sub(
                 r"[^A-Za-z0-9_.-]+",
                 "-",
-                f"{competition_name}-{season_name}",
+                match_id or f"{competition_name}-{season_name}",
             ).strip("-")
-            filename = f"{safe_scope or 'season-scoring'}-template-v{version}.xlsx"
+            filename = f"{safe_scope or 'match-scoring'}-template-v{version}.xlsx"
             start_response(
                 "200 OK",
                 [

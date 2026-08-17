@@ -609,6 +609,7 @@ def build_dynamic_match_template_bytes(
     competition_name: str,
     season_name: str,
     scoring_rule: dict[str, object],
+    match_id: str = "",
 ) -> bytes:
     components = [
         (
@@ -642,6 +643,8 @@ def build_dynamic_match_template_bytes(
     ]
     sample_rows = build_sample_rows(competition_name, season_name, score_model)
     for row in sample_rows:
+        if match_id:
+            row["match_id"] = match_id
         for key, _label in components:
             row.setdefault(key, 0)
         row["points_earned"] = round(
@@ -651,6 +654,7 @@ def build_dynamic_match_template_bytes(
     metadata_rows = [
         {"meta_key": "competition_name", "meta_value": competition_name},
         {"meta_key": "season_name", "meta_value": season_name},
+        {"meta_key": "match_id", "meta_value": match_id},
         {
             "meta_key": "scoring_rule_version",
             "meta_value": str(scoring_rule.get("version") or 1),

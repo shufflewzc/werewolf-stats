@@ -131,6 +131,34 @@ class DataUploadTokenTests(unittest.TestCase):
             body = data_upload.handle_api(ctx, lambda _status, _headers: None)
         self.assertIn("与当前上传目标", json.loads(body[0])["results"]["match"]["message"])
 
+    def test_unified_preflight_marks_both_files_as_not_uploaded(self):
+        raw, _ = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["preflight-check"],
+        }
+        upload = web_app.UploadedFile("data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")
+        ctx.files = {"match_file": [upload], "dimension_file": [upload]}
+
+        def import_selected_scope(_ctx, _data, _upload, result_metadata=None):
+            result_metadata["matched_scopes"] = [{"competition_name": "赛事A", "season_name": "S2"}]
+            return self.data["matches"], "预检完成"
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(matches_feature, "import_matches_from_excel", side_effect=import_selected_scope),
+            patch.object(matches_feature, "import_dimension_stats_from_excel", return_value=(None, None, "dimension 预检失败")),
+        ):
+            body = data_upload.handle_api(ctx, lambda _status, _headers: None)
+        results = json.loads(body[0])["results"]
+        self.assertEqual(results["dimension"]["status"], "failed")
+        self.assertEqual(results["match"]["status"], "failed")
+        self.assertIn("尚未上传", results["match"]["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

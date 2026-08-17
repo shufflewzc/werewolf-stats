@@ -277,6 +277,12 @@ def handle_api(ctx, start_response):
                 results["match"] = {"status": "failed", "message": message}
                 validation_errors.append(message)
     if validation_errors:
+        for kind, upload in (("match", match_upload), ("dimension", dimension_upload)):
+            if upload is not None and kind not in results:
+                results[kind] = {
+                    "status": "failed",
+                    "message": "双文件统一预检未通过，本文件尚未上传；修正后请与失败文件一并重试。",
+                }
         payload = {"status": "failed", "results": results}
         return _json(start_response, "422 Unprocessable Entity", payload)
 

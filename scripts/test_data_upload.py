@@ -12,6 +12,7 @@ sys.path.insert(0, str(ROOT / "scripts"))
 
 import web_app
 from web.features import data_upload
+from web.features import matches as matches_feature
 
 
 class DataUploadTokenTests(unittest.TestCase):
@@ -20,8 +21,8 @@ class DataUploadTokenTests(unittest.TestCase):
         self.user = {"username": "manager", "role": "admin"}
         self.data = {
             "matches": [
-                {"competition_name": "赛事A", "season": "S1"},
-                {"competition_name": "赛事A", "season": "S2"},
+                {"match_id": "a-s1-260817-01", "competition_name": "赛事A", "season": "S1", "played_on": "2026-08-17", "round": 2, "game_no": 1, "stage": "regular_season", "table_label": "1号房"},
+                {"match_id": "a-s2-260817-01", "competition_name": "赛事A", "season": "S2", "played_on": "2026-08-17", "round": 1, "game_no": 1, "stage": "regular_season", "table_label": "1号房"},
             ]
         }
         self.patches = [
@@ -79,6 +80,56 @@ class DataUploadTokenTests(unittest.TestCase):
         self.assertEqual(response_status, ["200 OK"])
         self.assertEqual(len(payload["targets"]), 1)
         self.assertEqual(payload["targets"][0]["scope_key"], target["scope_key"])
+
+    def test_matches_api_filters_selected_season(self):
+        raw, _ = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.path = "/api/data-upload/matches"
+        ctx.query = {"competition_name": ["赛事A"], "season_name": ["S2"]}
+        body = data_upload.handle_api(ctx, lambda _status, _headers: None)
+        payload = json.loads(body[0])
+        self.assertEqual([item["match_id"] for item in payload["matches"]], ["a-s2-260817-01"])
+
+    def test_job_status_is_scoped_to_creating_token(self):
+        raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
+        batch = {"batch_id": "imp_test", "status": "succeeded", "summary": "完成", "completed_at": "now", "metadata": {"upload_token_id": record["token_id"]}}
+        ctx = self.context(raw)
+        ctx.path = "/api/data-upload/jobs/imp_test"
+        with patch.object(data_upload.legacy, "load_import_batches", return_value=[batch]):
+            body = data_upload.handle_api(ctx, lambda _status, _headers: None)
+        self.assertEqual(json.loads(body[0])["status"], "succeeded")
+
+        other_raw, _ = data_upload.create_token(self.user, "另一个令牌", "90", "all", [])
+        other_ctx = self.context(other_raw)
+        other_ctx.path = "/api/data-upload/jobs/imp_test"
+        with patch.object(data_upload.legacy, "load_import_batches", return_value=[batch]):
+            other_body = data_upload.handle_api(other_ctx, lambda _status, _headers: None)
+        self.assertIn("没有找到", json.loads(other_body[0])["error"])
+
+    def test_match_upload_must_belong_to_selected_target(self):
+        raw, _ = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["scope-check"],
+        }
+        ctx.files = {
+            "match_file": [web_app.UploadedFile("match.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")],
+        }
+
+        def import_other_scope(_ctx, _data, _upload, result_metadata=None):
+            result_metadata["matched_scopes"] = [{"competition_name": "赛事A", "season_name": "S1"}]
+            return self.data["matches"], "预检完成"
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(matches_feature, "import_matches_from_excel", side_effect=import_other_scope),
+        ):
+            body = data_upload.handle_api(ctx, lambda _status, _headers: None)
+        self.assertIn("与当前上传目标", json.loads(body[0])["results"]["match"]["message"])
 
 
 if __name__ == "__main__":

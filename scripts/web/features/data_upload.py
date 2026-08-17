@@ -176,10 +176,42 @@ def handle_api(ctx, start_response):
     ctx.current_user = user
     data = legacy.load_validated_data()
     permitted = [item for item in available_targets(user, data) if target_allowed(record, item["competition_name"], item["season_name"])]
-    if ctx.method == "GET":
+    if ctx.path == "/api/data-upload/targets" and ctx.method == "GET":
         return _json(start_response, "200 OK", {"targets": permitted, "token": {"name": record.get("name"), "expires_at": record.get("expires_at")}})
+    if ctx.path == "/api/data-upload/matches" and ctx.method == "GET":
+        competition = legacy.form_value(ctx.query, "competition_name").strip()
+        season = legacy.form_value(ctx.query, "season_name").strip()
+        if not target_allowed(record, competition, season) or not any(
+            item["competition_name"] == competition and item["season_name"] == season
+            for item in permitted
+        ):
+            return _json(start_response, "403 Forbidden", {"error": "令牌没有该赛事赛季的读取权限。"})
+        matches = [
+            {
+                "match_id": str(match.get("match_id") or ""),
+                "played_on": str(match.get("played_on") or ""),
+                "round": int(match.get("round") or 0),
+                "game_no": int(match.get("game_no") or 0),
+                "stage": str(match.get("stage") or ""),
+                "table_label": str(match.get("table_label") or ""),
+            }
+            for match in data.get("matches", [])
+            if str(match.get("competition_name") or "").strip() == competition
+            and str(match.get("season") or "").strip() == season
+        ]
+        matches.sort(key=lambda item: (item["played_on"], item["round"], item["game_no"], item["match_id"]))
+        return _json(start_response, "200 OK", {"competition_name": competition, "season_name": season, "matches": matches})
+    if ctx.path.startswith("/api/data-upload/jobs/") and ctx.method == "GET":
+        batch_id = ctx.path.rsplit("/", 1)[-1].strip()
+        batch = next((item for item in legacy.load_import_batches() if str(item.get("batch_id") or "") == batch_id), None)
+        metadata = (batch or {}).get("metadata") or {}
+        if not batch or metadata.get("upload_token_id") != record.get("token_id"):
+            return _json(start_response, "404 Not Found", {"error": "没有找到该上传批次。"})
+        return _json(start_response, "200 OK", {"batch_id": batch_id, "status": batch.get("status"), "summary": batch.get("summary") or "", "completed_at": batch.get("completed_at") or ""})
+    if ctx.path != "/api/data-upload":
+        return _json(start_response, "405 Method Not Allowed", {"error": "请求方法或路径不受支持。"})
     if ctx.method != "POST":
-        return _json(start_response, "405 Method Not Allowed", {"error": "只支持 GET 和 POST。"})
+        return _json(start_response, "405 Method Not Allowed", {"error": "上传只支持 POST。"})
 
     competition = legacy.form_value(ctx.form, "competition_name").strip()
     season = legacy.form_value(ctx.form, "season_name").strip()
@@ -217,10 +249,33 @@ def handle_api(ctx, start_response):
             results["dimension"] = {"status": "failed", "message": dimension_message}
             validation_errors.append(dimension_message)
     if match_upload and "match" not in results:
-        parsed, message = matches_feature.import_matches_from_excel(ctx, data, match_upload)
+        match_metadata: dict[str, Any] = {}
+        parsed, message = matches_feature.import_matches_from_excel(
+            ctx,
+            data,
+            match_upload,
+            result_metadata=match_metadata,
+        )
         if parsed is None:
             results["match"] = {"status": "failed", "message": message}
             validation_errors.append(message)
+        else:
+            matched_scopes = {
+                (
+                    str(item.get("competition_name") or "").strip(),
+                    str(item.get("season_name") or "").strip(),
+                )
+                for item in match_metadata.get("matched_scopes", [])
+                if isinstance(item, dict)
+            }
+            if matched_scopes != {(competition, season)}:
+                scope_labels = "、".join(
+                    f"{scope_competition}/{scope_season}"
+                    for scope_competition, scope_season in sorted(matched_scopes)
+                ) or "无法识别"
+                message = f"match 文件中的比赛属于 {scope_labels}，与当前上传目标 {competition}/{season} 不一致。"
+                results["match"] = {"status": "failed", "message": message}
+                validation_errors.append(message)
     if validation_errors:
         payload = {"status": "failed", "results": results}
         return _json(start_response, "422 Unprocessable Entity", payload)
@@ -238,7 +293,7 @@ def handle_api(ctx, start_response):
         if running:
             results["match"] = {"status": "failed", "message": "已有导入任务正在处理中，请稍后只重试 match 文件。"}
         else:
-            batch_id = legacy.create_import_batch(ctx=ctx, action="matches.import_excel", label="数据生成器上传比赛详情", filename=match_upload.filename, metadata={"background": True, "source": "daily-data-generator", "request_id": request_key}, payload_data=match_upload.data)
+            batch_id = legacy.create_import_batch(ctx=ctx, action="matches.import_excel", label="数据生成器上传比赛详情", filename=match_upload.filename, metadata={"background": True, "source": "daily-data-generator", "request_id": request_key, "upload_token_id": record.get("token_id")}, payload_data=match_upload.data)
             results["match"] = {"status": "queued", "message": "比赛数据已进入后台导入队列。", "batch_id": batch_id}
 
     overall = "succeeded" if all(item["status"] in {"succeeded", "queued"} for item in results.values()) else "partial"

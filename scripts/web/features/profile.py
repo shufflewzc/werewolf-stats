@@ -55,6 +55,7 @@ def get_profile_page(
     account_values: dict[str, str] | None = None,
     player_values: dict[str, Any] | None = None,
     guild_form_values: dict[str, str] | None = None,
+    revealed_upload_token: str = "",
 ) -> str:
     current_user = ctx.current_user
     if not current_user:
@@ -322,6 +323,8 @@ def get_profile_page(
     """
     body += management_center_html
 
+    from web.features.data_upload import token_panel
+    body += token_panel(ctx, revealed_upload_token)
     return layout("个人中心", body, ctx, alert=alert)
 
 def handle_profile(ctx: RequestContext, start_response):
@@ -335,6 +338,14 @@ def handle_profile(ctx: RequestContext, start_response):
     data = load_validated_data()
     users = load_users()
     action = form_value(ctx.form, "action").strip() or "save_profile"
+    if action in {"create_upload_token", "revoke_upload_token"}:
+        from web.features.data_upload import handle_profile_action
+        _, message, revealed = handle_profile_action(ctx, start_response)
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_profile_page(ctx, alert=message, revealed_upload_token=revealed),
+        )
     if action == "create_guild":
         if not user_has_permission(current_user, "guild_manage"):
             return start_response_html(

@@ -751,6 +751,7 @@ class RequestContext:
     remote_addr: str = ""
     request_id: str = ""
     session_token: str = ""
+    authorization: str = ""
 
 
 class RequestBodyTooLarge(ValueError):
@@ -16962,6 +16963,7 @@ def build_context(environ: dict[str, Any]) -> RequestContext:
         remote_addr=get_client_ip(environ),
         request_id=build_request_id(environ),
         session_token=session_token,
+        authorization=str(environ.get("HTTP_AUTHORIZATION") or ""),
     )
 
 
@@ -19350,6 +19352,9 @@ def app(environ, start_response):
             return handle_match_day_api(ctx, start_response, played_on)
         if path == "/api/schedule":
             return handle_schedule_api(ctx, start_response)
+        if path == "/api/data-upload/targets" or path == "/api/data-upload":
+            from web.features.data_upload import handle_api
+            return handle_api(ctx, start_response)
         if path == "/login":
             return handle_login(ctx, start_response)
         if path == "/web-login-complete":

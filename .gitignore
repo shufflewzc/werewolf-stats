@@ -26,3 +26,4 @@ tmp_web_app_stdout.log
 tmp_web_app_stderr.log
 ios/**/xcuserdata/
 *.xcuserstate
+/outputs

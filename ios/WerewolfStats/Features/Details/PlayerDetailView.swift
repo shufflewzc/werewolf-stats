@@ -119,7 +119,7 @@ struct PlayerDetailView: View {
             SectionHeading(title: "最近比赛")
             ForEach(matches) { match in
                 Button { router.navigate(to: .match(match.matchID)) } label: {
-                    HStack { VStack(alignment: .leading) { Text("\(match.playedOn ?? "") · 第\(match.round ?? 0)轮第\(match.gameNo ?? 0)局").font(.headline); Text("\(match.role ?? "未知角色") · \(match.resultLabel ?? "--")").font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(match.pointsEarned?.text ?? "--").font(.headline); Image(systemName: "chevron.right") }
+                    HStack { VStack(alignment: .leading) { Text("\(match.playedOn ?? "") · 第\(match.round ?? 0)轮第\(match.gameNo ?? 0)局").font(.headline); Text("\(match.displayStage) · \(match.role ?? "未知角色") · \(match.resultLabel ?? "--")").font(.caption).foregroundStyle(.secondary) }; Spacer(); Text(match.pointsEarned?.text ?? "--").font(.headline); Image(systemName: "chevron.right") }
                         .padding(12).background(Brand.card, in: RoundedRectangle(cornerRadius: 14))
                 }.buttonStyle(.plain)
             }
@@ -136,4 +136,3 @@ struct PlayerDetailView: View {
         catch { state = .failed(error.localizedDescription) }
     }
 }
-

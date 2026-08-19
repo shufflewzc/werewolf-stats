@@ -123,13 +123,57 @@ struct PowerRating: Codable, Hashable, Sendable {
 }
 
 struct CompetitionResponse: Codable, Sendable {
+    let view: String?
     let generatedAt: String?
     let hero: Hero?
     let metrics: [Metric]?
+    let cityGroups: [CompetitionCityGroup]?
     let cards: [CompetitionCard]
     enum CodingKeys: String, CodingKey {
-        case hero, metrics, cards
+        case view, hero, metrics, cards
         case generatedAt = "generated_at"
+        case cityGroups = "city_groups"
+    }
+}
+
+struct CompetitionCityGroup: Codable, Hashable, Identifiable, Sendable {
+    let regionName: String
+    let competitionCount: Int?
+    let latestPlayedOn: String?
+    let cards: [CompetitionCard]
+
+    var id: String { regionName }
+
+    enum CodingKeys: String, CodingKey {
+        case cards
+        case regionName = "region_name"
+        case competitionCount = "competition_count"
+        case latestPlayedOn = "latest_played_on"
+    }
+}
+
+extension CompetitionResponse {
+    var resolvedCityGroups: [CompetitionCityGroup] {
+        if let cityGroups, !cityGroups.isEmpty {
+            return cityGroups.filter { !$0.cards.isEmpty }
+        }
+
+        var order: [String] = []
+        var grouped: [String: [CompetitionCard]] = [:]
+        for card in cards {
+            let region = card.regionName.isEmpty ? "其他城市" : card.regionName
+            if grouped[region] == nil { order.append(region) }
+            grouped[region, default: []].append(card)
+        }
+        return order.map { region in
+            let regionCards = grouped[region] ?? []
+            return CompetitionCityGroup(
+                regionName: region,
+                competitionCount: regionCards.count,
+                latestPlayedOn: regionCards.compactMap(\.latestPlayedOn).max(),
+                cards: regionCards
+            )
+        }
     }
 }
 
@@ -323,12 +367,15 @@ struct ScheduleMatch: Codable, Hashable, Identifiable, Sendable {
     let matchID: String
     let playedOn: String?
     let stage: String?
+    let stageLabel: String?
     let round: Int?
     let gameNo: Int?
     let tableLabel: String?
     var id: String { matchID }
+    var displayStage: String { stageLabel?.nonempty ?? stage?.nonempty ?? "赛段未设置" }
     enum CodingKeys: String, CodingKey {
         case stage, round
+        case stageLabel = "stage_label"
         case matchID = "match_id"
         case playedOn = "played_on"
         case gameNo = "game_no"
@@ -510,11 +557,15 @@ struct RecentMatch: Codable, Hashable, Identifiable, Sendable {
     let round: Int?
     let gameNo: Int?
     let role: String?
+    let stage: String?
+    let stageLabel: String?
     let resultLabel: String?
     let pointsEarned: JSONScalar?
     var id: String { matchID }
+    var displayStage: String { stageLabel?.nonempty ?? stage?.nonempty ?? "赛段未设置" }
     enum CodingKeys: String, CodingKey {
-        case round, role
+        case round, role, stage
+        case stageLabel = "stage_label"
         case matchID = "match_id"
         case playedOn = "played_on"
         case gameNo = "game_no"
@@ -694,6 +745,7 @@ struct MatchDetail: Codable, Hashable, Sendable {
     let competition: String?
     let season: String?
     let stage: String?
+    let stageLabel: String?
     let round: Int?
     let gameNo: Int?
     let playedOn: String?
@@ -702,8 +754,10 @@ struct MatchDetail: Codable, Hashable, Sendable {
     let durationMinutes: Int?
     let winningCamp: String?
     let notes: String?
+    var displayStage: String { stageLabel?.nonempty ?? stage?.nonempty ?? "赛段未设置" }
     enum CodingKeys: String, CodingKey {
         case competition, season, stage, round, format, notes
+        case stageLabel = "stage_label"
         case matchID = "match_id"
         case gameNo = "game_no"
         case playedOn = "played_on"
@@ -796,6 +850,8 @@ struct PredictionsResponse: Codable, Sendable {
     let generatedAt: String?
     let days: [PredictionDay]?
     let selectedDay: PredictionDay?
+    let matches: [PredictionMatch]?
+    let selectedMatch: PredictionMatch?
     let predictions: [Prediction]
     let pagination: Pagination?
     let bandSummary: [PredictionBand]?
@@ -805,9 +861,10 @@ struct PredictionsResponse: Codable, Sendable {
     let modelMetadata: PredictionModelMetadata?
     let marketDefinitions: [PredictionMarket]?
     enum CodingKeys: String, CodingKey {
-        case days, predictions, pagination, notice, scenario
+        case days, matches, predictions, pagination, notice, scenario
         case generatedAt = "generated_at"
         case selectedDay = "selected_day"
+        case selectedMatch = "selected_match"
         case bandSummary = "band_summary"
         case rosterSource = "roster_source"
         case modelMetadata = "model_metadata"
@@ -818,8 +875,46 @@ struct PredictionsResponse: Codable, Sendable {
 struct PredictionDay: Codable, Hashable, Identifiable, Sendable {
     let playedOn: String
     let matchCount: Int?
+    let playerEntryCount: Int?
+    let matchIDs: [String]?
+    let label: String?
+    let scenarioPublished: Bool?
     var id: String { playedOn }
-    enum CodingKeys: String, CodingKey { case playedOn = "played_on"; case matchCount = "match_count" }
+    enum CodingKeys: String, CodingKey {
+        case label
+        case playedOn = "played_on"
+        case matchCount = "match_count"
+        case playerEntryCount = "player_entry_count"
+        case matchIDs = "match_ids"
+        case scenarioPublished = "scenario_published"
+    }
+}
+
+struct PredictionMatch: Codable, Hashable, Identifiable, Sendable {
+    let matchID: String
+    let competition: String?
+    let season: String?
+    let playedOn: String?
+    let stage: String?
+    let stageLabel: String?
+    let round: Int?
+    let gameNo: Int?
+    let tableLabel: String?
+    let playerCount: Int?
+    let label: String?
+
+    var id: String { matchID }
+    var displayStage: String { stageLabel?.nonempty ?? stage?.nonempty ?? "赛段未设置" }
+
+    enum CodingKeys: String, CodingKey {
+        case competition, season, stage, round, label
+        case matchID = "match_id"
+        case playedOn = "played_on"
+        case stageLabel = "stage_label"
+        case gameNo = "game_no"
+        case tableLabel = "table_label"
+        case playerCount = "player_count"
+    }
 }
 
 struct Prediction: Codable, Hashable, Identifiable, Sendable {
@@ -842,6 +937,7 @@ struct Prediction: Codable, Hashable, Identifiable, Sendable {
     let autoExpectedTotal: JSONScalar?
     let marketProbabilities: [PredictionMarket]?
     let manualOverrideApplied: Bool?
+    let isStarPlayer: Bool?
     var id: String { playerID }
     var scoreText: String { expectedTotal?.text ?? expectedPoints?.text ?? "--" }
     var canOpenProfile: Bool {
@@ -867,6 +963,35 @@ struct Prediction: Codable, Hashable, Identifiable, Sendable {
         case autoExpectedTotal = "auto_expected_total"
         case marketProbabilities = "market_probabilities"
         case manualOverrideApplied = "manual_override_applied"
+        case isStarPlayer = "is_star_player"
+    }
+}
+
+extension PredictionsResponse {
+    static let requiredShareMarketKeys = ["lt_0", "lt_5", "lt_10", "gt_10", "gt_15", "gt_18"]
+
+    var isPredictionShareReady: Bool {
+        guard let selectedDay, !selectedDay.playedOn.isEmpty,
+              predictions.count == 12,
+              Set(predictions.map(\.playerID)).count == 12,
+              predictions.allSatisfy({ !$0.playerID.isEmpty })
+        else { return false }
+
+        return predictions.allSatisfy { prediction in
+            let markets = Set((prediction.marketProbabilities ?? []).compactMap { market in
+                (!(market.display ?? "").isEmpty || market.probability != nil) ? market.key : nil
+            })
+            return Self.requiredShareMarketKeys.allSatisfy { key in
+                markets.contains(key)
+            }
+        }
+    }
+}
+
+private extension String {
+    var nonempty: String? {
+        let value = trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.isEmpty ? nil : value
     }
 }
 

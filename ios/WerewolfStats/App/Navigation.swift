@@ -36,6 +36,7 @@ enum AppRoute: Hashable {
     case predictions(playedOn: String?, matchID: String?)
     case compare(kind: EntityKind, leftID: String?)
     case share(playerID: String)
+    case predictionShare(playedOn: String)
 }
 
 @MainActor
@@ -76,6 +77,7 @@ struct AppDestinations: ViewModifier {
             case .predictions(let playedOn, let matchID): PredictionsView(initialDay: playedOn, initialMatchID: matchID)
             case .compare(let kind, let leftID): CompareView(kind: kind, initialLeftID: leftID)
             case .share(let playerID): ShareCardView(playerID: playerID)
+            case .predictionShare(let playedOn): PredictionShareCardView(playedOn: playedOn)
             }
         }
     }

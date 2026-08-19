@@ -145,26 +145,39 @@ final class LoopbackHTTPFixtureServer: @unchecked Sendable {
 
 enum LeaderboardUITestFixture {
     static func responses() throws -> [String: LoopbackHTTPFixtureServer.Response] {
-        [
+        return [
             "/api/competitions": try .json(competitionResponse),
             "/api/dashboard": try .json(dashboardResponse)
         ]
     }
 
     private static var competitionResponse: [String: Any] {
-        [
+        let guangzhou: [String: Any] = [
+            "competition_name": "排行榜 UI 测试赛",
+            "region_name": "广州",
+            "series_name": "京城大师赛",
+            "summary": "确定性排行榜 fixture",
+            "seasons": ["2026 测试赛季"],
+            "team_count": 50,
+            "player_count": 80,
+            "match_count": 100,
+            "competition_href": "/competitions?series=ui-test"
+        ]
+        let shenzhen: [String: Any] = [
+            "competition_name": "深圳 UI 测试赛",
+            "region_name": "深圳",
+            "series_name": "深大联赛",
+            "seasons": ["S4"],
+            "competition_href": "/competitions?series=sz-test"
+        ]
+        return [
             "generated_at": "UI 测试数据",
-            "cards": [[
-                "competition_name": "排行榜 UI 测试赛",
-                "region_name": "广州",
-                "series_name": "京城大师赛",
-                "summary": "确定性排行榜 fixture",
-                "seasons": ["2026 测试赛季"],
-                "team_count": 50,
-                "player_count": 80,
-                "match_count": 100,
-                "competition_href": "/competitions?series=ui-test"
-            ]]
+            "view": "grouped",
+            "city_groups": [
+                ["region_name": "广州", "competition_count": 1, "latest_played_on": "2026-08-17", "cards": [guangzhou]],
+                ["region_name": "深圳", "competition_count": 1, "latest_played_on": "2026-08-18", "cards": [shenzhen]]
+            ],
+            "cards": [guangzhou, shenzhen]
         ]
     }
 
@@ -247,6 +260,46 @@ enum LeaderboardUITestFixture {
             "points_total": points,
             "win_rate": "50.0%",
             "matches_represented": rank + 2
+        ]
+    }
+}
+
+enum PredictionUITestFixture {
+    static func responses() throws -> [String: LoopbackHTTPFixtureServer.Response] {
+        var responses = try LeaderboardUITestFixture.responses()
+        responses["/api/predictions"] = try .json(predictionsResponse)
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2Y4sAAAAASUVORK5CYII=")!
+        responses["/api/miniprogram/share-code"] = .init(statusCode: 200, body: png)
+        return responses
+    }
+
+    private static var predictionsResponse: [String: Any] {
+        let markets = ["lt_0", "lt_5", "lt_10", "gt_10", "gt_15", "gt_18"].map { key in
+            ["key": key, "label": key, "display": "50.0%", "probability": 0.5] as [String: Any]
+        }
+        let predictions: [[String: Any]] = (1...12).map { index in
+            [
+                "rank": index,
+                "player_id": "prediction-player-\(index)",
+                "player_name": "预测选手\(index)",
+                "team_name": "测试战队",
+                "expected_total": String(format: "%.2f", Double(13 - index)),
+                "expected_points": String(format: "%.2f", Double(13 - index)),
+                "game_win_displays": ["50.0%", "50.0%", "50.0%"],
+                "expected_wins": 1.5,
+                "market_probabilities": markets
+            ]
+        }
+        return [
+            "days": [
+                ["played_on": "2026-08-17", "label": "2026-08-17", "match_count": 3, "player_entry_count": 12, "scenario_published": true],
+                ["played_on": "2026-08-16", "label": "2026-08-16", "match_count": 3, "player_entry_count": 12]
+            ],
+            "selected_day": ["played_on": "2026-08-17", "label": "2026-08-17 比赛日", "match_count": 3, "player_entry_count": 12],
+            "predictions": predictions,
+            "pagination": ["offset": 0, "limit": 30, "total": 12, "has_more": false],
+            "scenario": ["version": "ui-test", "published": true, "roster_size": 12],
+            "model_metadata": ["version": "ui-test-model", "simulations": 10_000]
         ]
     }
 }

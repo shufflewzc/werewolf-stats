@@ -34,7 +34,7 @@ struct DayDetailView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             SectionHeading(title: competition.competitionName, note: "\(competition.matches?.count ?? 0) 场")
                             ForEach(competition.matches ?? []) { match in
-                                Button { router.navigate(to: .match(match.matchID)) } label: { HStack { VStack(alignment: .leading) { Text("第\(match.round ?? 0)轮第\(match.gameNo ?? 0)局").font(.headline); Text(match.tableLabel ?? match.stage ?? "").font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right") }.padding(12).background(Brand.card, in: RoundedRectangle(cornerRadius: 14)) }.buttonStyle(.plain)
+                                Button { router.navigate(to: .match(match.matchID)) } label: { HStack { VStack(alignment: .leading) { Text("第\(match.round ?? 0)轮第\(match.gameNo ?? 0)局").font(.headline); Text([match.displayStage, match.tableLabel].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right") }.padding(12).background(Brand.card, in: RoundedRectangle(cornerRadius: 14)) }.buttonStyle(.plain)
                             }
                         }
                     }

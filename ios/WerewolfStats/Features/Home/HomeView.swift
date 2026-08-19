@@ -46,7 +46,6 @@ struct HomeView: View {
                     copy: app.selectedScope?.subtitle ?? payload.hero?.featuredLabel ?? ""
                 )
                 scopeCard
-                if let days = payload.matchDays, let latest = days.first { latestDay(latest) }
                 if let metrics = payload.metrics, !metrics.isEmpty { MetricGrid(metrics: Array(metrics.prefix(4))) }
                 searchSection
                 HomeLeaderboardView(payload: payload, selection: $leaderboardSelection) { row in
@@ -75,21 +74,6 @@ struct HomeView: View {
             Button("切换") { app.selectedTab = .competitions }.buttonStyle(.bordered)
         }
         .padding(16).background(Brand.card, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func latestDay(_ day: MatchDaySummary) -> some View {
-        Button { router.navigate(to: .day(day.playedOn)) } label: {
-            HStack {
-                VStack(alignment: .leading, spacing: 5) {
-                    Text("最近比赛日").font(.caption).foregroundStyle(.secondary)
-                    Text(day.playedOn).font(.title2.bold())
-                    Text("\(day.matchCount) 场 · 点击查看当日榜单").font(.subheadline).foregroundStyle(.secondary)
-                }
-                Spacer(); Image(systemName: "chevron.right")
-            }
-            .padding(16).background(Brand.paleGold.opacity(0.45), in: RoundedRectangle(cornerRadius: 16))
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var searchSection: some View {
@@ -163,7 +147,7 @@ struct HomeView: View {
                 SectionHeading(title: "赛程")
                 ForEach(matches) { match in
                     Button { router.navigate(to: .match(match.matchID)) } label: {
-                        HStack { VStack(alignment: .leading) { Text(match.playedOn ?? "待定").font(.headline); Text("第\(match.round ?? 0)轮第\(match.gameNo ?? 0)局 · \(match.tableLabel ?? "")").font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right") }
+                        HStack { VStack(alignment: .leading) { Text(match.playedOn ?? "待定").font(.headline); Text("\(match.displayStage) · 第\(match.round ?? 0)轮第\(match.gameNo ?? 0)局 · \(match.tableLabel ?? "")").font(.caption).foregroundStyle(.secondary) }; Spacer(); Image(systemName: "chevron.right") }
                             .padding(12).background(Brand.card, in: RoundedRectangle(cornerRadius: 14))
                     }.buttonStyle(.plain)
                 }

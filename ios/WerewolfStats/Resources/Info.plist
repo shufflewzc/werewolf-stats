@@ -17,11 +17,13 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.0</string>
+	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
-	<string>1</string>
+	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>仅在你主动保存战绩卡时，将图片添加到照片图库。</string>
+	<string>仅在你主动保存战绩卡或预测分享图时，将图片添加到照片图库。</string>
 	<key>UILaunchScreen</key>
 	<dict>
 		<key>UIColorName</key>

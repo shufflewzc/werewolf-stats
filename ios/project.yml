@@ -12,8 +12,8 @@ settings:
     IPHONEOS_DEPLOYMENT_TARGET: "17.0"
     TARGETED_DEVICE_FAMILY: "1"
     SUPPORTS_MACCATALYST: NO
-    MARKETING_VERSION: "1.0"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.1"
+    CURRENT_PROJECT_VERSION: "2"
     CODE_SIGN_STYLE: Automatic
     DEVELOPMENT_TEAM: 7DSUH6B44P
     ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
@@ -35,7 +35,10 @@ targets:
       path: WerewolfStats/Resources/Info.plist
       properties:
         CFBundleDisplayName: "一颗小草赛事"
-        NSPhotoLibraryAddUsageDescription: "仅在你主动保存战绩卡时，将图片添加到照片图库。"
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        ITSAppUsesNonExemptEncryption: false
+        NSPhotoLibraryAddUsageDescription: "仅在你主动保存战绩卡或预测分享图时，将图片添加到照片图库。"
         UILaunchScreen:
           UIColorName: LaunchBackground
         UIRequiresFullScreen: true

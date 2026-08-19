@@ -27,7 +27,10 @@ struct MatchDetailView: View {
                 BrandHero(
                     eyebrow: payload.match.playedOn ?? "比赛",
                     title: "第\(payload.match.round ?? 0)轮第\(payload.match.gameNo ?? 0)局",
-                    copy: "\(payload.match.stage ?? "") · \(payload.match.tableLabel ?? "") · \(payload.match.format ?? "")"
+                    copy: [payload.match.displayStage, payload.match.tableLabel, payload.match.format]
+                        .compactMap { $0 }
+                        .filter { !$0.isEmpty }
+                        .joined(separator: " · ")
                 )
                 if let metrics = payload.metrics { MetricGrid(metrics: metrics) }
                 VStack(alignment: .leading, spacing: 8) {
@@ -92,4 +95,3 @@ struct MatchDetailView: View {
         catch is CancellationError { return } catch { state = .failed(error.localizedDescription) }
     }
 }
-

@@ -18,6 +18,19 @@ final class ModelAndRoutingTests: XCTestCase {
         XCTAssertEqual(scope.season, "S2")
     }
 
+    func testGroupedCompetitionsUseCanonicalCityOrderAndLegacyFallback() throws {
+        let groupedJSON = #"{"view":"grouped","city_groups":[{"region_name":"深圳","competition_count":1,"latest_played_on":"2026-08-18","cards":[{"competition_name":"深大联赛","region_name":"深圳","series_name":"深大联赛","seasons":["S4"]}]},{"region_name":"广州","competition_count":1,"latest_played_on":"2026-08-17","cards":[{"competition_name":"飞行杯","region_name":"广州","series_name":"飞行杯","seasons":["S1"]}]}],"cards":[]}"#
+        let grouped = try JSONDecoder().decode(CompetitionResponse.self, from: Data(groupedJSON.utf8))
+        XCTAssertEqual(grouped.resolvedCityGroups.map(\.regionName), ["深圳", "广州"])
+        XCTAssertEqual(grouped.resolvedCityGroups.first?.cards.first?.competitionName, "深大联赛")
+
+        let legacyJSON = #"{"cards":[{"competition_name":"广州一赛","region_name":"广州","series_name":"A","seasons":[],"latest_played_on":"2026-08-01"},{"competition_name":"深圳赛","region_name":"深圳","series_name":"B","seasons":[],"latest_played_on":"2026-08-03"},{"competition_name":"广州二赛","region_name":"广州","series_name":"C","seasons":[],"latest_played_on":"2026-08-02"}]}"#
+        let legacy = try JSONDecoder().decode(CompetitionResponse.self, from: Data(legacyJSON.utf8))
+        XCTAssertEqual(legacy.resolvedCityGroups.map(\.regionName), ["广州", "深圳"])
+        XCTAssertEqual(legacy.resolvedCityGroups[0].cards.map(\.competitionName), ["广州一赛", "广州二赛"])
+        XCTAssertEqual(legacy.resolvedCityGroups[0].latestPlayedOn, "2026-08-02")
+    }
+
     @MainActor
     func testScopeAndFavoritesPersist() throws {
         let suite = "ModelAndRoutingTests.\(UUID().uuidString)"
@@ -67,6 +80,70 @@ final class ModelAndRoutingTests: XCTestCase {
         XCTAssertNoThrow(try decoder.decode(DayDetailResponse.self, from: Data(#"{}"#.utf8)))
         XCTAssertNoThrow(try decoder.decode(PredictionsResponse.self, from: Data(#"{"predictions":[]}"#.utf8)))
         XCTAssertNoThrow(try decoder.decode(SearchResponse.self, from: Data(#"{"results":[]}"#.utf8)))
+    }
+
+    func testPredictionLatestFieldsAndShareReadiness() throws {
+        let markets = PredictionsResponse.requiredShareMarketKeys.map { key in
+            ["key": key, "label": key, "display": "50.0%"]
+        }
+        let predictions: [[String: Any]] = (1...12).map { index in
+            [
+                "rank": index,
+                "player_id": "p\(index)",
+                "player_name": "选手\(index)",
+                "expected_total": "8.00",
+                "market_probabilities": markets,
+                "is_star_player": index == 1
+            ]
+        }
+        let object: [String: Any] = [
+            "selected_day": [
+                "played_on": "2026-08-16",
+                "label": "2026-08-16 比赛日",
+                "match_count": 3,
+                "player_entry_count": 12,
+                "match_ids": ["m1", "m2", "m3"],
+                "scenario_published": true
+            ],
+            "matches": [[
+                "match_id": "m1",
+                "stage": "regular_season",
+                "stage_label": "常规积分赛",
+                "game_no": 1
+            ]],
+            "predictions": predictions
+        ]
+        let payload = try JSONDecoder().decode(
+            PredictionsResponse.self,
+            from: JSONSerialization.data(withJSONObject: object)
+        )
+        XCTAssertEqual(payload.selectedDay?.playerEntryCount, 12)
+        XCTAssertEqual(payload.selectedDay?.matchIDs, ["m1", "m2", "m3"])
+        XCTAssertEqual(payload.matches?.first?.displayStage, "常规积分赛")
+        XCTAssertEqual(payload.predictions.first?.isStarPlayer, true)
+        XCTAssertTrue(payload.isPredictionShareReady)
+
+        var incomplete = object
+        incomplete["predictions"] = Array(predictions.dropLast())
+        let incompletePayload = try JSONDecoder().decode(
+            PredictionsResponse.self,
+            from: JSONSerialization.data(withJSONObject: incomplete)
+        )
+        XCTAssertFalse(incompletePayload.isPredictionShareReady)
+    }
+
+    func testStageLabelsPreferServerCopyAndFallbackToLegacyStage() throws {
+        let labeled = try JSONDecoder().decode(
+            MatchDetail.self,
+            from: Data(#"{"match_id":"m1","stage":"regular_season","stage_label":"S组常规赛"}"#.utf8)
+        )
+        XCTAssertEqual(labeled.displayStage, "S组常规赛")
+
+        let legacy = try JSONDecoder().decode(
+            ScheduleMatch.self,
+            from: Data(#"{"match_id":"m2","stage":"定级赛"}"#.utf8)
+        )
+        XCTAssertEqual(legacy.displayStage, "定级赛")
     }
 
     func testPaginationFixtureDecodes() throws {

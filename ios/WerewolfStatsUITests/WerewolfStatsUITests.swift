@@ -45,8 +45,8 @@ final class WerewolfStatsUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["home-predictions"].waitForExistence(timeout: 8))
         app.buttons["home-predictions"].tap()
-        XCTAssertTrue(app.navigationBars["胜率预测"].waitForExistence(timeout: 15))
-        app.navigationBars["胜率预测"].buttons.firstMatch.tap()
+        XCTAssertTrue(app.navigationBars["当天三局胜率预测"].waitForExistence(timeout: 15))
+        app.navigationBars["当天三局胜率预测"].buttons.firstMatch.tap()
 
         app.buttons["home-compare"].tap()
         XCTAssertTrue(app.navigationBars["选手对比"].waitForExistence(timeout: 15))
@@ -104,6 +104,42 @@ final class WerewolfStatsUITests: XCTestCase {
         XCTAssertTrue(retry.waitForExistence(timeout: 20))
         retry.tap()
         XCTAssertTrue(retry.waitForExistence(timeout: 20))
+    }
+
+    func testCompetitionsAreGroupedByCity() throws {
+        let server = try LoopbackHTTPFixtureServer(responses: LeaderboardUITestFixture.responses())
+        addTeardownBlock { server.stop() }
+        let app = XCUIApplication()
+        app.launchArguments += ["-resetUserDefaults", "YES", "-APIBaseURL", server.baseURL.absoluteString]
+        app.launch()
+        app.tabBars.buttons["赛事"].tap()
+
+        let guangzhou = app.buttons["competition-city-广州"]
+        let shenzhen = app.buttons["competition-city-深圳"]
+        XCTAssertTrue(guangzhou.waitForExistence(timeout: 10))
+        XCTAssertTrue(shenzhen.exists)
+        XCTAssertEqual(String(describing: guangzhou.value ?? ""), "已展开")
+        XCTAssertEqual(String(describing: shenzhen.value ?? ""), "已收起")
+
+        shenzhen.tap()
+        XCTAssertEqual(String(describing: shenzhen.value ?? ""), "已展开")
+        XCTAssertTrue(app.staticTexts["深圳 UI 测试赛"].waitForExistence(timeout: 5))
+    }
+
+    func testPredictionSharePosterMatchesMiniProgramEntry() throws {
+        let server = try LoopbackHTTPFixtureServer(responses: PredictionUITestFixture.responses())
+        addTeardownBlock { server.stop() }
+        let app = launchWithSelectedCompetition(apiBaseURL: server.baseURL)
+
+        app.buttons["home-predictions"].tap()
+        XCTAssertTrue(app.navigationBars["当天三局胜率预测"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["prediction-day-2026-08-17"].waitForExistence(timeout: 10))
+        let share = app.buttons["prediction-share-card"]
+        XCTAssertTrue(share.waitForExistence(timeout: 10))
+        share.tap()
+
+        XCTAssertTrue(app.navigationBars["当天预测分享图"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.descendants(matching: .any)["prediction-share-preview"].waitForExistence(timeout: 25))
     }
 
     func testLeaderboardMatchesMiniProgramSectionsAndFullServerOrder() throws {

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from copy import deepcopy
 from datetime import datetime, timedelta
 from hashlib import sha256
 from html import escape
@@ -315,6 +316,15 @@ def handle_api(ctx, start_response):
     dimension_upload = legacy.file_value(ctx.files, "dimension_file")
     results: dict[str, dict[str, Any]] = {}
     validation_errors = []
+    if match_upload and dimension_upload:
+        message = "上传必须先单独导入 match，等待比赛批次成功并创建新选手后，再单独上传 dimension。"
+        return _json(start_response, "409 Conflict", {
+            "status": "failed",
+            "results": {
+                "match": {"status": "failed", "message": message},
+                "dimension": {"status": "failed", "message": message},
+            },
+        })
     for kind, upload in (("match", match_upload), ("dimension", dimension_upload)):
         if upload is None:
             continue
@@ -324,6 +334,31 @@ def handle_api(ctx, start_response):
             validation_errors.append(issue)
     if not match_upload and not dimension_upload:
         return _json(start_response, "400 Bad Request", {"error": "请至少上传一个 Excel 文件。"})
+
+    match_batch_id = legacy.form_value(ctx.form, "match_batch_id").strip()
+    if dimension_upload:
+        match_batch = next(
+            (
+                item
+                for item in legacy.load_import_batches()
+                if str(item.get("batch_id") or "") == match_batch_id
+            ),
+            None,
+        )
+        batch_metadata = (match_batch or {}).get("metadata") or {}
+        valid_batch = (
+            match_batch
+            and str(match_batch.get("status") or "") == "succeeded"
+            and batch_metadata.get("upload_token_id") == record.get("token_id")
+            and batch_metadata.get("competition_name") == competition
+            and batch_metadata.get("season_name") == season
+        )
+        if not valid_batch:
+            message = "dimension 上传前必须先完成同一令牌、同一赛季的 match 导入。"
+            return _json(start_response, "409 Conflict", {
+                "status": "failed",
+                "results": {"dimension": {"status": "failed", "message": message}},
+            })
 
     next_player_rows = next_team_rows = None
     dimension_message = ""
@@ -336,7 +371,7 @@ def handle_api(ctx, start_response):
         match_metadata: dict[str, Any] = {}
         parsed, message = matches_feature.import_matches_from_excel(
             ctx,
-            data,
+            deepcopy(data),
             match_upload,
             result_metadata=match_metadata,
         )
@@ -383,7 +418,7 @@ def handle_api(ctx, start_response):
         if running:
             results["match"] = {"status": "failed", "message": "已有导入任务正在处理中，请稍后只重试 match 文件。"}
         else:
-            batch_id = legacy.create_import_batch(ctx=ctx, action="matches.import_excel", label="数据生成器上传比赛详情", filename=match_upload.filename, metadata={"background": True, "source": "daily-data-generator", "request_id": request_key, "upload_token_id": record.get("token_id")}, payload_data=match_upload.data)
+            batch_id = legacy.create_import_batch(ctx=ctx, action="matches.import_excel", label="数据生成器上传比赛详情", filename=match_upload.filename, metadata={"background": True, "source": "daily-data-generator", "request_id": request_key, "upload_token_id": record.get("token_id"), "competition_name": competition, "season_name": season}, payload_data=match_upload.data)
             results["match"] = {"status": "queued", "message": "比赛数据已进入后台导入队列。", "batch_id": batch_id}
 
     overall = "succeeded" if all(item["status"] in {"succeeded", "queued"} for item in results.values()) else "partial"

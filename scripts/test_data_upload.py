@@ -153,7 +153,41 @@ class DataUploadTokenTests(unittest.TestCase):
             body = data_upload.handle_api(ctx, lambda _status, _headers: None)
         self.assertIn("与当前上传目标", json.loads(body[0])["results"]["match"]["message"])
 
-    def test_unified_preflight_marks_both_files_as_not_uploaded(self):
+    def test_match_is_queued_with_target_metadata_without_mutating_cached_data(self):
+        raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["match-first"],
+        }
+        ctx.files = {
+            "match_file": [web_app.UploadedFile("match.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")],
+        }
+
+        def preflight(_ctx, copied_data, _upload, result_metadata=None):
+            copied_data["matches"][0]["preflight_only"] = True
+            result_metadata["matched_scopes"] = [{"competition_name": "赛事A", "season_name": "S2"}]
+            return copied_data["matches"], "预检完成"
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(matches_feature, "import_matches_from_excel", side_effect=preflight),
+            patch.object(data_upload.legacy, "load_import_batches", return_value=[]),
+            patch.object(data_upload.legacy, "create_import_batch", return_value="imp_match") as create_batch,
+            patch.object(data_upload.legacy, "audit_action"),
+        ):
+            payload = json.loads(data_upload.handle_api(ctx, lambda _status, _headers: None)[0])
+
+        self.assertEqual(payload["results"]["match"]["status"], "queued")
+        self.assertNotIn("preflight_only", self.data["matches"][0])
+        metadata = create_batch.call_args.kwargs["metadata"]
+        self.assertEqual(metadata["upload_token_id"], record["token_id"])
+        self.assertEqual((metadata["competition_name"], metadata["season_name"]), ("赛事A", "S2"))
+
+    def test_double_file_upload_is_rejected_in_favor_of_match_first(self):
         raw, _ = data_upload.create_token(self.user, "全部", "90", "all", [])
         ctx = self.context(raw)
         ctx.method = "POST"
@@ -166,20 +200,53 @@ class DataUploadTokenTests(unittest.TestCase):
         upload = web_app.UploadedFile("data.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")
         ctx.files = {"match_file": [upload], "dimension_file": [upload]}
 
-        def import_selected_scope(_ctx, _data, _upload, result_metadata=None):
-            result_metadata["matched_scopes"] = [{"competition_name": "赛事A", "season_name": "S2"}]
-            return self.data["matches"], "预检完成"
-
-        with (
-            patch.object(matches_feature, "validate_excel_upload", return_value=""),
-            patch.object(matches_feature, "import_matches_from_excel", side_effect=import_selected_scope),
-            patch.object(matches_feature, "import_dimension_stats_from_excel", return_value=(None, None, "dimension 预检失败")),
-        ):
-            body = data_upload.handle_api(ctx, lambda _status, _headers: None)
+        body = data_upload.handle_api(ctx, lambda _status, _headers: None)
         results = json.loads(body[0])["results"]
         self.assertEqual(results["dimension"]["status"], "failed")
         self.assertEqual(results["match"]["status"], "failed")
-        self.assertIn("尚未上传", results["match"]["message"])
+        self.assertIn("先单独导入 match", results["match"]["message"])
+
+    def test_dimension_requires_owned_successful_match_batch(self):
+        raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["dimension-after-match"],
+            "match_batch_id": ["imp_owned"],
+        }
+        upload = web_app.UploadedFile("dimension.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")
+        ctx.files = {"dimension_file": [upload]}
+        successful_batch = {
+            "batch_id": "imp_owned",
+            "status": "succeeded",
+            "metadata": {
+                "upload_token_id": record["token_id"],
+                "competition_name": "赛事A",
+                "season_name": "S2",
+            },
+        }
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(data_upload.legacy, "load_import_batches", return_value=[]),
+        ):
+            rejected = json.loads(data_upload.handle_api(ctx, lambda _status, _headers: None)[0])
+        self.assertIn("必须先完成", rejected["results"]["dimension"]["message"])
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(data_upload.legacy, "load_import_batches", return_value=[successful_batch]),
+            patch.object(matches_feature, "import_dimension_stats_from_excel", return_value=([{"player_id": "p1"}], [{"team_id": "t1"}], "dimension 完成")),
+            patch.object(data_upload, "save_season_dimension_stats") as save_dimension,
+            patch.object(data_upload.legacy, "invalidate_validated_data_cache"),
+            patch.object(data_upload.legacy, "audit_action"),
+        ):
+            accepted = json.loads(data_upload.handle_api(ctx, lambda _status, _headers: None)[0])
+        self.assertEqual(accepted["results"]["dimension"]["status"], "succeeded")
+        save_dimension.assert_called_once()
 
 
 if __name__ == "__main__":

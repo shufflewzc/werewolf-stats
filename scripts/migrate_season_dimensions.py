@@ -746,7 +746,12 @@ def create_target_backup(args: argparse.Namespace) -> tuple[str, dict[str, Any]]
 def archive_data_revision(pg_restore: str, path: Path) -> int:
     result = run_pg_restore(
         pg_restore,
-        ["--data-only", "--table=data_revisions", str(path)],
+        [
+            "--data-only",
+            "--table=data_revisions",
+            "--file=-",
+            str(path),
+        ],
     )
     copy_match = re.search(r"(?m)^repository\t([0-9]+)\t", result.stdout)
     insert_match = re.search(

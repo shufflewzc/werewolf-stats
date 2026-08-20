@@ -3443,10 +3443,31 @@ def build_nav_group_label(label: str) -> str:
     return f'<span class="nav-group-label">{escape(label)}</span>'
 
 
+def build_console_return_url(ctx: RequestContext) -> str:
+    def context_value(*keys: str) -> str:
+        for source in (ctx.query, ctx.form):
+            for key in keys:
+                value = form_value(source, key).strip()
+                if value:
+                    return value
+        return ""
+
+    params = {
+        key: value
+        for key, value in {
+            "competition": context_value("competition", "scenario_competition"),
+            "season": context_value("season", "scenario_season"),
+        }.items()
+        if value
+    }
+    return "/console" + (f"?{urlencode(params)}" if params else "")
+
+
 def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
     is_admin_layout = is_management_path(ctx.path)
     body_class = "app-admin" if is_admin_layout else "app-public"
     user_html = ""
+    has_console_access = False
     nav_links = []
     admin_nav_links: list[str] = []
     if ctx.current_user:
@@ -3486,6 +3507,25 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                 build_nav_link("战队认领", "/team-center", ctx.path == "/team-center"),
             ]
         )
+
+        has_scope_account_access = user_has_any_scope_admin_grant(ctx.current_user)
+        if has_scope_account_access or is_admin_user(ctx.current_user):
+            admin_nav_links.append(build_nav_group_label("账号与权限"))
+        if has_scope_account_access:
+            admin_nav_links.append(
+                build_nav_link(
+                    "赛区账号",
+                    "/console/accounts",
+                    ctx.path == "/console/accounts",
+                )
+            )
+        if is_admin_user(ctx.current_user):
+            admin_nav_links.append(
+                build_nav_link("平台账号", "/accounts", ctx.path == "/accounts")
+            )
+            admin_nav_links.append(
+                build_nav_link("权限控制", "/permissions", ctx.path == "/permissions")
+            )
 
         can_search_matches = user_has_any_scoped_capability(
             ctx.current_user,
@@ -3595,14 +3635,6 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                     ctx.path == "/series-manage",
                 )
             )
-        if user_has_any_scope_admin_grant(ctx.current_user):
-            admin_nav_links.append(
-                build_nav_link(
-                    "赛区账号",
-                    "/console/accounts",
-                    ctx.path == "/console/accounts",
-                )
-            )
         if is_admin_user(ctx.current_user):
             admin_nav_links.append(build_nav_group_label("系统管理"))
             admin_nav_links.append(
@@ -3629,12 +3661,6 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
             )
             admin_nav_links.append(
                 build_nav_link("战队成就规则", "/team-achievement-rules", ctx.path == "/team-achievement-rules")
-            )
-            admin_nav_links.append(
-                build_nav_link("平台账号", "/accounts", ctx.path == "/accounts")
-            )
-            admin_nav_links.append(
-                build_nav_link("权限控制", "/permissions", ctx.path == "/permissions")
             )
             admin_nav_links.append(
                 build_nav_link("战队管理", "/team-admin", ctx.path == "/team-admin")
@@ -3673,6 +3699,11 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
     admin_return_link = (
         '<a class="admin-return-link" href="/dashboard">返回公开首页</a>'
         if is_admin_layout
+        else ""
+    )
+    console_return_link = (
+        f'<a class="btn btn-outline-dark btn-sm" href="{escape(build_console_return_url(ctx))}">返回控制台</a>'
+        if is_admin_layout and ctx.path != "/console" and has_console_access
         else ""
     )
     admin_status = ""
@@ -3739,7 +3770,10 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                 <h1>{escape(title)}</h1>
                 <div class="small text-secondary">{escape(get_user_region_label(ctx.current_user) or "未绑定地区")}</div>
               </div>
-              {user_html}
+              <div class="admin-topbar-actions d-flex flex-wrap align-items-center gap-2">
+                {console_return_link}
+                {user_html}
+              </div>
             </div>
             {alert_html}
             {body}
@@ -6367,10 +6401,13 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       body.app-admin .admin-sidebar {{
         position: sticky;
         top: 0;
+        height: calc(100vh - 1rem);
+        max-height: calc(100vh - 1rem);
         min-height: calc(100vh - 1rem);
         display: flex;
         flex-direction: column;
         gap: 1rem;
+        overflow: hidden;
         padding: 1rem;
         background: var(--admin-surface);
         border: 1px solid var(--admin-line);
@@ -6386,6 +6423,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         flex: 1 1 auto;
         min-height: 0;
         flex-direction: column;
+        overflow: hidden;
       }}
       body.app-admin .admin-sidebar-menu > summary {{
         display: none;
@@ -6398,7 +6436,10 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       }}
       body.app-admin .admin-sidebar-nav {{
         flex: 1 1 auto;
+        min-height: 0;
         overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-gutter: stable;
         padding-right: 0.15rem;
       }}
       body.app-admin .admin-sidebar .nav-group-label {{
@@ -6443,6 +6484,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
       body.app-admin .admin-topbar .account-actions {{
         justify-content: flex-end;
       }}
+      body.app-admin .admin-topbar-actions {{
+        justify-content: flex-end;
+      }}
       @media (max-width: 991.98px) {{
         body.app-admin .admin-layout {{
           display: block;
@@ -6451,9 +6495,12 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         body.app-admin .admin-sidebar {{
           position: relative;
           top: auto;
+          height: auto;
+          max-height: none;
           min-height: auto;
           margin-bottom: 1rem;
           gap: 0.7rem;
+          overflow: visible;
           padding: 0.8rem;
         }}
         body.app-admin .admin-sidebar-brand {{
@@ -6461,6 +6508,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         }}
         body.app-admin .admin-sidebar-menu {{
           display: block;
+          overflow: visible;
         }}
         body.app-admin .admin-sidebar-menu > summary {{
           display: flex;
@@ -6507,6 +6555,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           flex-direction: column;
         }}
         body.app-admin .admin-topbar .account-actions {{
+          justify-content: flex-start;
+        }}
+        body.app-admin .admin-topbar-actions {{
           justify-content: flex-start;
         }}
         .dashboard-hero .hero-layout,

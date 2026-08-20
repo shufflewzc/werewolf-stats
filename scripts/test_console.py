@@ -228,6 +228,31 @@ class ConsoleFeatureTests(unittest.TestCase):
         self.assertNotIn("上传比赛数据", html)
         self.assertIn("sz-s4-260814-02", html)
 
+    def test_scope_switcher_embeds_every_series_season_for_client_cascade(self):
+        ctx = self.context(path="/console")
+        html = console._scope_switcher(
+            ctx,
+            self.data,
+            ["深圳联赛", "北京联赛"],
+            "深圳联赛",
+            "S4",
+            action="/console",
+            allow_all=False,
+        )
+
+        self.assertIn('data-console-competition-select', html)
+        self.assertIn('data-console-season-select', html)
+        self.assertIn(
+            '&quot;深圳联赛&quot;:[&quot;S4&quot;]',
+            html,
+        )
+        self.assertIn(
+            '&quot;北京联赛&quot;:[&quot;S2&quot;]',
+            html,
+        )
+        self.assertIn('competitionSelect.addEventListener("change"', html)
+        self.assertIn('seasonSelect.replaceChildren()', html)
+
     def test_recent_imports_require_matching_action_permission_for_every_scope(self):
         upload_user = {
             "username": "shenzhen-importer",

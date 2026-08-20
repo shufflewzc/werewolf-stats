@@ -22,6 +22,7 @@ from __future__ import annotations
 
 from datetime import date
 from html import escape
+import json
 from typing import Any, Callable, Iterable
 from urllib.parse import quote, urlencode
 
@@ -445,6 +446,15 @@ def _scope_switcher(
     action: str,
     allow_all: bool,
 ) -> str:
+    season_map = {
+        competition_name: _seasons_for_competition(data, competition_name)
+        for competition_name in competition_names
+    }
+    serialized_season_map = escape(
+        json.dumps(season_map, ensure_ascii=False, separators=(",", ":")),
+        quote=True,
+    )
+    empty_season_label = "全部赛季" if allow_all else "请选择赛季"
     competition_options = []
     if allow_all:
         competition_options.append(
@@ -456,7 +466,7 @@ def _scope_switcher(
             f'<option value="{escape(competition_name)}"{selected}>{escape(_scope_label_for_competition(data, competition_name))}</option>'
         )
     season_options = [
-        f'<option value=""{" selected" if not selected_season else ""}>{"全部赛季" if allow_all else "请选择赛季"}</option>'
+        f'<option value=""{" selected" if not selected_season else ""}>{empty_season_label}</option>'
     ]
     for season_name in _seasons_for_competition(data, selected_competition):
         selected = " selected" if season_name == selected_season else ""
@@ -464,19 +474,61 @@ def _scope_switcher(
             f'<option value="{escape(season_name)}"{selected}>{escape(season_name)}</option>'
         )
     return f"""
-    <form method="get" action="{escape(action)}" class="row g-2 align-items-end" data-console-scope-form>
+    <form method="get" action="{escape(action)}" class="row g-2 align-items-end" data-console-scope-form data-console-season-map="{serialized_season_map}" data-console-season-empty-label="{escape(empty_season_label)}" data-console-allow-all="{'true' if allow_all else 'false'}">
       <div class="col-12 col-lg-7">
         <label class="form-label" for="console-competition">系列赛</label>
-        <select class="form-select" id="console-competition" name="competition">{''.join(competition_options)}</select>
+        <select class="form-select" id="console-competition" name="competition" data-console-competition-select>{''.join(competition_options)}</select>
       </div>
       <div class="col-8 col-lg-3">
         <label class="form-label" for="console-season">赛季</label>
-        <select class="form-select" id="console-season" name="season"{' disabled' if not selected_competition else ''}>{''.join(season_options)}</select>
+        <select class="form-select" id="console-season" name="season" data-console-season-select{' disabled' if not selected_competition else ''}>{''.join(season_options)}</select>
       </div>
       <div class="col-4 col-lg-2 d-grid">
         <button class="btn btn-dark" type="submit">切换</button>
       </div>
     </form>
+    <script>
+      (function() {{
+        document.querySelectorAll("[data-console-scope-form]").forEach(function(form) {{
+          if (form.dataset.consoleScopeBound === "true") return;
+          form.dataset.consoleScopeBound = "true";
+          const competitionSelect = form.querySelector("[data-console-competition-select]");
+          const seasonSelect = form.querySelector("[data-console-season-select]");
+          if (!competitionSelect || !seasonSelect) return;
+
+          let seasonMap = {{}};
+          try {{
+            seasonMap = JSON.parse(form.dataset.consoleSeasonMap || "{{}}");
+          }} catch (_error) {{
+            seasonMap = {{}};
+          }}
+
+          competitionSelect.addEventListener("change", function() {{
+            const competitionName = competitionSelect.value;
+            const seasons = Array.isArray(seasonMap[competitionName])
+              ? seasonMap[competitionName]
+              : [];
+            const allowAll = form.dataset.consoleAllowAll === "true";
+            const emptyLabel = form.dataset.consoleSeasonEmptyLabel || "请选择赛季";
+            seasonSelect.replaceChildren();
+
+            const emptyOption = document.createElement("option");
+            emptyOption.value = "";
+            emptyOption.textContent = emptyLabel;
+            seasonSelect.appendChild(emptyOption);
+            seasons.forEach(function(seasonName) {{
+              const option = document.createElement("option");
+              option.value = seasonName;
+              option.textContent = seasonName;
+              seasonSelect.appendChild(option);
+            }});
+
+            seasonSelect.disabled = !competitionName;
+            seasonSelect.value = allowAll ? "" : (seasons[0] || "");
+          }});
+        }});
+      }})();
+    </script>
     """
 
 

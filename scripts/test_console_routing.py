@@ -358,6 +358,48 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             self.assertIn(f'href="{path}"', html)
         self.assertNotIn('href="/accounts"', html)
         self.assertNotIn('href="/permissions"', html)
+        self.assertLess(
+            html.index('href="/console/accounts"'),
+            html.index('href="/console/matches"'),
+        )
+
+    def test_admin_sidebar_is_viewport_bound_with_independent_navigation_scroll(self):
+        user = make_user(is_scope_admin=True)
+        html = web_app.layout(
+            "控制台",
+            "<p>body</p>",
+            make_context("/console", user=user),
+        )
+
+        self.assertIn("height: calc(100vh - 1rem);", html)
+        self.assertIn("scrollbar-gutter: stable;", html)
+        self.assertIn("overscroll-behavior: contain;", html)
+        self.assertIn("height: auto;", html)
+
+    def test_common_operation_page_has_console_return_with_scope_preserved(self):
+        user = make_user("match_schedule_manage")
+        html = web_app.layout(
+            "新增比赛",
+            "<p>body</p>",
+            make_context(
+                "/console/matches/create",
+                user=user,
+                query={"competition": ["深圳联赛"], "season": ["S4"]},
+            ),
+        )
+
+        self.assertIn("返回控制台", html)
+        self.assertIn(
+            'href="/console?competition=%E6%B7%B1%E5%9C%B3%E8%81%94%E8%B5%9B&amp;season=S4"',
+            html,
+        )
+
+        overview = web_app.layout(
+            "控制台",
+            "<p>body</p>",
+            make_context("/console", user=user),
+        )
+        self.assertNotIn(">返回控制台</a>", overview)
 
     def test_all_console_paths_use_admin_layout(self):
         user = make_user(is_scope_admin=True)

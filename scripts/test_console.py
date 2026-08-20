@@ -348,6 +348,32 @@ class ConsoleFeatureTests(unittest.TestCase):
             ["current-beijing-batch"],
         )
 
+    def test_recent_imports_show_every_matched_season(self):
+        batches = [
+            {
+                "batch_id": "multi-season",
+                "action": "matches.import_excel",
+                "label": "比赛结果 Excel 导入",
+                "status": "succeeded",
+                "created_at": "2026-08-20 12:00",
+                "created_by": "shenzhen-result-editor",
+                "metadata": {
+                    "permission_scope_keys": ["深圳市::sz-league"],
+                    "matched_scopes": [
+                        {"competition_name": "深圳联赛", "season_name": "S3"},
+                        {"competition_name": "深圳联赛", "season_name": "S4"},
+                    ],
+                },
+            }
+        ]
+        with patch.object(console, "load_import_batches", return_value=batches):
+            html = console.get_console_page(self.context(path="/console"))
+
+        self.assertIn("赛事 / 赛季", html)
+        self.assertIn("深圳联赛", html)
+        self.assertIn("/ S3", html)
+        self.assertIn("/ S4", html)
+
     def test_filter_parameters_survive_pagination(self):
         expanded = []
         for index in range(12):

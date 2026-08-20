@@ -2000,6 +2000,7 @@ IDEMPOTENCY_PROTECTED_POST_PATHS = {
     "/console/matches/create",
     "/console/matches/batch-create",
     "/console/imports",
+    "/console/imports/data",
     "/console/imports/matches",
     "/console/imports/dimensions",
     "/console/imports/assets",
@@ -3590,20 +3591,17 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                     ),
                 ]
             )
-        if can_import_matches:
+        if can_import_matches or can_import_dimensions:
             admin_nav_links.append(
                 build_nav_link(
-                    "比赛结果上传",
-                    "/console/imports/matches",
-                    ctx.path == "/console/imports/matches",
-                )
-            )
-        if can_import_dimensions:
-            admin_nav_links.append(
-                build_nav_link(
-                    "维度数据上传",
-                    "/console/imports/dimensions",
-                    ctx.path == "/console/imports/dimensions",
+                    "比赛与维度上传",
+                    "/console/imports/data",
+                    ctx.path
+                    in {
+                        "/console/imports/data",
+                        "/console/imports/matches",
+                        "/console/imports/dimensions",
+                    },
                 )
             )
         if can_import_assets:
@@ -20563,6 +20561,10 @@ def app(environ, start_response):
         console_operation_permissions = {
             "/console/matches/create": {"match_schedule_manage"},
             "/console/matches/batch-create": {"match_schedule_manage"},
+            "/console/imports/data": {
+                "match_import_manage",
+                "dimension_data_manage",
+            },
             "/console/imports/matches": {"match_import_manage"},
             "/console/imports/dimensions": {"dimension_data_manage"},
             "/console/imports/assets": {"season_asset_manage"},

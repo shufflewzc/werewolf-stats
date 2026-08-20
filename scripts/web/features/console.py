@@ -10,7 +10,7 @@ Route semantics expected from the compatibility dispatcher in ``web_app.py``:
     Open the focused single-match creation task.
 ``GET /console/matches/batch-create``
     Open the focused schedule batch-creation task.
-``GET /console/imports[/matches|/dimensions|/assets]``
+``GET /console/imports[/data|/assets]``
     Open the matching upload task or the import activity hub.
 
 This module owns the first two handlers.  The remaining paths are stable task
@@ -61,6 +61,7 @@ CONSOLE_ROUTE_SEMANTICS = {
     "/console/matches/create": "single_match_create",
     "/console/matches/batch-create": "batch_schedule_create",
     "/console/imports": "import_activity",
+    "/console/imports/data": "match_dimension_import",
     "/console/imports/matches": "match_import",
     "/console/imports/dimensions": "dimension_import",
     "/console/imports/assets": "season_asset_import",
@@ -579,17 +580,21 @@ def build_operation_task_links(
                 _task_link("批量创建赛程", "一次创建多场待补录比赛。", href("/console/matches/batch-create")),
             ]
         )
-    if competition_name and _has_scope_permission(
-        user, data, competition_name, "match_import_manage"
-    ):
+    can_import_matches = bool(
+        competition_name
+        and _has_scope_permission(user, data, competition_name, "match_import_manage")
+    )
+    can_import_dimensions = bool(
+        competition_name
+        and _has_scope_permission(user, data, competition_name, "dimension_data_manage")
+    )
+    if can_import_matches or can_import_dimensions:
         links.append(
-            _task_link("上传比赛数据", "先预检工作簿，再确认排队导入。", href("/console/imports/matches"))
-        )
-    if competition_name and _has_scope_permission(
-        user, data, competition_name, "dimension_data_manage"
-    ):
-        links.append(
-            _task_link("上传维度数据", "核对目标赛季后导入个人和战队维度。", href("/console/imports/dimensions"))
+            _task_link(
+                "上传比赛与维度数据",
+                "先导入比赛结果，成功后再上传对应赛季维度。",
+                href("/console/imports/data"),
+            )
         )
     if competition_name and _has_scope_permission(
         user, data, competition_name, "season_asset_manage"
@@ -644,11 +649,17 @@ def _operation_toolbar_links(
         links.append(
             f'<a class="btn btn-outline-dark" href="{escape(href("/console/matches/batch-create"))}">批量创建</a>'
         )
-    if competition_name and _has_scope_permission(
-        user, data, competition_name, "match_import_manage"
-    ):
+    can_import_matches = bool(
+        competition_name
+        and _has_scope_permission(user, data, competition_name, "match_import_manage")
+    )
+    can_import_dimensions = bool(
+        competition_name
+        and _has_scope_permission(user, data, competition_name, "dimension_data_manage")
+    )
+    if can_import_matches or can_import_dimensions:
         links.append(
-            f'<a class="btn btn-outline-dark" href="{escape(href("/console/imports/matches"))}">上传比赛</a>'
+            f'<a class="btn btn-outline-dark" href="{escape(href("/console/imports/data"))}">上传比赛与维度</a>'
         )
     return ''.join(links)
 
@@ -669,6 +680,40 @@ def _batch_competitions(batch: dict[str, Any]) -> set[str]:
             if isinstance(item, dict):
                 names.add(str(item.get("competition_name") or "").strip())
     return {name for name in names if name}
+
+
+def _batch_scope_labels(batch: dict[str, Any]) -> list[tuple[str, str]]:
+    metadata = batch.get("metadata")
+    if not isinstance(metadata, dict):
+        return []
+    labels: list[tuple[str, str]] = []
+
+    def add_scope(raw: object) -> None:
+        if not isinstance(raw, dict):
+            return
+        competition_name = str(
+            raw.get("competition_name") or raw.get("competition") or ""
+        ).strip()
+        season_name = str(raw.get("season_name") or raw.get("season") or "").strip()
+        label = (competition_name, season_name)
+        if any(label) and label not in labels:
+            labels.append(label)
+
+    for key in ("matched_scopes", "scopes"):
+        raw_scopes = metadata.get(key)
+        if isinstance(raw_scopes, list):
+            for raw_scope in raw_scopes:
+                add_scope(raw_scope)
+    add_scope(metadata)
+    preflight = metadata.get("preflight")
+    if isinstance(preflight, dict):
+        payload = preflight.get("payload")
+        if isinstance(payload, dict):
+            raw_scopes = payload.get("matched_scopes")
+            if isinstance(raw_scopes, list):
+                for raw_scope in raw_scopes:
+                    add_scope(raw_scope)
+    return labels
 
 
 def _batch_scope_keys(batch: dict[str, Any]) -> set[str]:
@@ -799,11 +844,18 @@ def get_console_page(ctx: RequestContext, alert: str = "") -> str:
 
     batch_rows = []
     for item in recent_batches:
+        scope_labels = _batch_scope_labels(item)
+        scope_html = "".join(
+            f'<div>{escape(competition_name or "未记录赛事")}'
+            f'<span class="small text-secondary"> / {escape(season_name or "未记录赛季")}</span></div>'
+            for competition_name, season_name in scope_labels
+        ) or '<span class="small text-secondary">未记录</span>'
         batch_rows.append(
             f"""
             <tr>
               <td><code>{escape(str(item.get('batch_id') or ''))}</code></td>
               <td>{escape(str(item.get('label') or item.get('action') or '导入任务'))}</td>
+              <td>{scope_html}</td>
               <td>{escape(_import_status_label(str(item.get('status') or '')))}</td>
               <td class="small text-secondary">{escape(str(item.get('created_at') or ''))}</td>
             </tr>
@@ -857,7 +909,7 @@ def get_console_page(ctx: RequestContext, alert: str = "") -> str:
             <div><h2 class="h5 mb-1">最近导入</h2><p class="small text-secondary mb-0">显示当前账号可见的任务。</p></div>
             <a class="btn btn-sm btn-outline-dark" href="/console/imports">导入记录</a>
           </div>
-          <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>批次</th><th>类型</th><th>状态</th><th>创建时间</th></tr></thead><tbody>{''.join(batch_rows) or '<tr><td colspan="4" class="text-secondary">暂无导入记录。</td></tr>'}</tbody></table></div>
+          <div class="table-responsive"><table class="table table-sm align-middle mb-0"><thead><tr><th>批次</th><th>类型</th><th>赛事 / 赛季</th><th>状态</th><th>创建时间</th></tr></thead><tbody>{''.join(batch_rows) or '<tr><td colspan="5" class="text-secondary">暂无导入记录。</td></tr>'}</tbody></table></div>
         </section>
       </div>
     </div>

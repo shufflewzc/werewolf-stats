@@ -52,6 +52,7 @@ build_scoped_path = legacy.build_scoped_path
 calculate_score_breakdown_total = legacy.calculate_score_breakdown_total
 can_manage_matches = legacy.can_manage_matches
 can_manage_competition_action = legacy.can_manage_competition_action
+user_has_any_scoped_capability = legacy.user_has_any_scoped_capability
 canonicalize_match_ids = legacy.canonicalize_match_ids
 create_import_batch = legacy.create_import_batch
 default_scoring_rule = legacy.default_scoring_rule
@@ -586,6 +587,49 @@ def build_dimension_import_panel(
     """
 
 
+def build_match_dimension_upload_workflow(
+    *,
+    can_import_matches: bool,
+    can_import_dimensions: bool,
+) -> str:
+    match_status = "可操作" if can_import_matches else "当前账号无比赛结果上传权限"
+    dimension_status = "可操作" if can_import_dimensions else "当前账号无维度数据上传权限"
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="mb-3">
+        <h2 class="section-title mb-2">上传顺序</h2>
+        <p class="section-copy mb-0">同一批数据必须先完成比赛结果导入，并等待任务显示成功，再上传对应赛事赛季的维度数据。</p>
+      </div>
+      <div class="row g-3">
+        <div class="col-12 col-lg-6">
+          <div class="team-link-card shadow-sm p-3 h-100">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <div class="eyebrow mb-2">步骤 1</div>
+                <h3 class="h5 mb-2">上传比赛结果</h3>
+              </div>
+              <span class="chip">{escape(match_status)}</span>
+            </div>
+            <p class="small text-secondary mb-0">按比赛编号匹配已有比赛，完成预检、确认和后台导入。请在导入记录中确认任务已成功。</p>
+          </div>
+        </div>
+        <div class="col-12 col-lg-6">
+          <div class="team-link-card shadow-sm p-3 h-100">
+            <div class="d-flex justify-content-between align-items-start gap-3">
+              <div>
+                <div class="eyebrow mb-2">步骤 2</div>
+                <h3 class="h5 mb-2">上传维度数据</h3>
+              </div>
+              <span class="chip">{escape(dimension_status)}</span>
+            </div>
+            <p class="small text-secondary mb-0">选择与比赛结果相同的赛事和赛季，再上传个人、战队维度工作簿；不要与比赛结果同时提交。</p>
+          </div>
+        </div>
+      </div>
+    </section>
+    """
+
+
 def build_dimension_stats_day_rows(data: dict[str, object]) -> list[dict[str, object]]:
     grouped: dict[tuple[str, str, str], dict[str, object]] = {}
     player_names = {
@@ -917,7 +961,7 @@ def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str
           <h2 class="section-title mb-2">已导入比赛日</h2>
           <p class="section-copy mb-0">共 {len(visible_rows)} 个比赛日；删除只影响这一天的赛季维度补充数据，不会删除比赛记录、队员或战队档案。</p>
         </div>
-        <a class="btn btn-dark" href="/console/imports/dimensions">返回维度上传</a>
+        <a class="btn btn-dark" href="/console/imports/data#dimension-data-upload">返回维度上传</a>
       </div>
       <div class="table-responsive">
         <table class="table align-middle">
@@ -1121,6 +1165,42 @@ def import_batch_scope_keys(item: dict[str, object]) -> list[str]:
     )
 
 
+def import_batch_scope_labels(item: dict[str, object]) -> list[tuple[str, str]]:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    if not isinstance(metadata, dict):
+        return []
+
+    scopes: list[tuple[str, str]] = []
+
+    def add_scope(raw: object) -> None:
+        if not isinstance(raw, dict):
+            return
+        competition_name = str(
+            raw.get("competition_name") or raw.get("competition") or ""
+        ).strip()
+        season_name = str(raw.get("season_name") or raw.get("season") or "").strip()
+        scope = (competition_name, season_name)
+        if any(scope) and scope not in scopes:
+            scopes.append(scope)
+
+    for key in ("matched_scopes", "scopes"):
+        raw_scopes = metadata.get(key)
+        if isinstance(raw_scopes, list):
+            for raw_scope in raw_scopes:
+                add_scope(raw_scope)
+    add_scope(metadata)
+
+    preflight = metadata.get("preflight")
+    if isinstance(preflight, dict):
+        payload = preflight.get("payload")
+        if isinstance(payload, dict):
+            raw_scopes = payload.get("matched_scopes")
+            if isinstance(raw_scopes, list):
+                for raw_scope in raw_scopes:
+                    add_scope(raw_scope)
+    return scopes
+
+
 def import_batch_action_permission(item: dict[str, object]) -> str:
     return {
         "matches.import_excel": "match_import_manage",
@@ -1178,6 +1258,12 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
             ]
             if part
         )
+        scope_labels = import_batch_scope_labels(item)
+        scope_html = "".join(
+            f'<div><span class="fw-semibold">{escape(competition_name or "未记录赛事")}</span>'
+            f'<div class="small text-secondary">{escape(season_name or "未记录赛季")}</div></div>'
+            for competition_name, season_name in scope_labels
+        ) or '<span class="small text-secondary">未记录</span>'
         rollback_form = ""
         can_rollback = can_rollback_import_batch(ctx, item)
         if status == "succeeded" and can_rollback:
@@ -1199,6 +1285,7 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
                 <div class="small text-secondary">{escape(str(item.get('summary') or ''))}</div>
                 {f'<div class="small text-secondary">{escape(metadata_copy)}</div>' if metadata_copy else ''}
               </td>
+              <td>{scope_html}</td>
               <td class="small text-secondary">
                 <div>{escape(str(item.get('created_at') or ''))}</div>
                 <div>{escape(str(item.get('created_by') or ''))}</div>
@@ -1219,8 +1306,8 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
       </div>
       <div class="table-responsive">
         <table class="table align-middle">
-          <thead><tr><th>批次</th><th>状态</th><th>摘要</th><th>创建</th><th>操作</th></tr></thead>
-          <tbody>{''.join(rows) or '<tr><td colspan="5" class="text-secondary">暂无导入记录。</td></tr>'}</tbody>
+          <thead><tr><th>批次</th><th>状态</th><th>摘要</th><th>赛事 / 赛季</th><th>创建</th><th>操作</th></tr></thead>
+          <tbody>{''.join(rows) or '<tr><td colspan="6" class="text-secondary">暂无导入记录。</td></tr>'}</tbody>
         </table>
       </div>
       {"<script>window.setTimeout(() => window.location.reload(), 3000);</script>" if has_running_batch else ""}
@@ -4788,7 +4875,10 @@ def get_match_create_page(
         )
         current["score_model"] = str(scoring_rule.get("score_model") or "standard")
         current["scoring_rule"] = scoring_rule
-    if current.get("competition_name"):
+    if current.get("competition_name") and ctx.path in {
+        "/matches/new",
+        "/console/matches/create",
+    }:
         data = load_validated_data()
         if ctx.current_user and not can_manage_competition_action(
             ctx.current_user,
@@ -4835,22 +4925,33 @@ def get_match_create_page(
             batch_panel_html,
             alert=alert,
         )
-    if ctx.path == "/console/imports/matches":
-        return _console_operation_page(
-            ctx,
-            "比赛数据上传",
-            "数据上传",
-            "先按比赛编号生成对应规则模板，再上传文件进行预检和确认。",
-            excel_panel_html,
-            alert=alert,
+    if ctx.path in {
+        "/console/imports/data",
+        "/console/imports/matches",
+        "/console/imports/dimensions",
+    }:
+        can_import_matches = user_has_any_scoped_capability(
+            ctx.current_user,
+            {"match_import_manage"},
         )
-    if ctx.path == "/console/imports/dimensions":
+        can_import_dimensions = user_has_any_scoped_capability(
+            ctx.current_user,
+            {"dimension_data_manage"},
+        )
+        upload_panels = build_match_dimension_upload_workflow(
+            can_import_matches=can_import_matches,
+            can_import_dimensions=can_import_dimensions,
+        )
+        if can_import_matches:
+            upload_panels += f'<div id="match-result-upload">{excel_panel_html}</div>'
+        if can_import_dimensions:
+            upload_panels += f'<div id="dimension-data-upload">{dimension_panel_html}</div>'
         return _console_operation_page(
             ctx,
-            "维度数据上传",
+            "比赛与维度数据上传",
             "数据上传",
-            "导入当前系列赛赛季的选手与战队维度数据，并集中管理已导入比赛日。",
-            dimension_panel_html,
+            "在同一页完成比赛结果和赛季维度上传；两个任务分别预检、确认和执行。",
+            upload_panels,
             alert=alert,
         )
     if ctx.path == "/console/imports/assets":
@@ -6025,6 +6126,27 @@ def handle_match_create(ctx: RequestContext, start_response):
 
     data = load_validated_data()
     action = form_value(ctx.form, "action").strip()
+    unified_upload_permission = {
+        "import_match_excel": "match_import_manage",
+        "import_dimension_excel": "dimension_data_manage",
+    }.get(action)
+    if (
+        ctx.path == "/console/imports/data"
+        and unified_upload_permission
+        and not user_has_any_scoped_capability(
+            ctx.current_user,
+            {unified_upload_permission},
+        )
+    ):
+        return start_response_html(
+            start_response,
+            "403 Forbidden",
+            layout(
+                "没有权限",
+                '<div class="alert alert-danger">当前账号没有执行这类数据上传的权限。</div>',
+                ctx,
+            ),
+        )
     if action == "rollback_import_batch":
         if not is_admin_user(ctx.current_user):
             return start_response_html(

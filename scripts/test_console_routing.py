@@ -92,6 +92,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             "/console/matches/create",
             "/console/matches/batch-create",
             "/console/imports",
+            "/console/imports/data",
             "/console/imports/matches",
             "/console/imports/dimensions",
             "/console/imports/assets",
@@ -128,6 +129,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             "/console/matches/create",
             "/console/matches/batch-create",
             "/console/imports",
+            "/console/imports/data",
             "/console/imports/matches",
             "/console/imports/dimensions",
             "/console/imports/assets",
@@ -174,6 +176,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             "/console/matches/create",
             "/console/matches/batch-create",
             "/console/imports",
+            "/console/imports/data",
             "/console/imports/matches",
             "/console/imports/dimensions",
             "/console/imports/assets",
@@ -276,6 +279,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
                     "/console/matches/batch-create",
                 },
                 {
+                    "/console/imports/data",
                     "/console/imports/matches",
                     "/console/imports/dimensions",
                     "/console/imports/assets",
@@ -285,9 +289,10 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             ),
             (
                 make_user("match_import_manage"),
-                {"/console/matches", "/console/imports/matches", "/console/imports"},
+                {"/console/matches", "/console/imports/data", "/console/imports"},
                 {
                     "/console/matches/create",
+                    "/console/imports/matches",
                     "/console/imports/dimensions",
                     "/console/imports/assets",
                     "/prediction-admin",
@@ -296,10 +301,11 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             ),
             (
                 make_user("dimension_data_manage"),
-                {"/console/matches", "/console/imports/dimensions", "/console/imports"},
+                {"/console/matches", "/console/imports/data", "/console/imports"},
                 {
                     "/console/matches/create",
                     "/console/imports/matches",
+                    "/console/imports/dimensions",
                     "/console/imports/assets",
                     "/prediction-admin",
                     "/console/accounts",
@@ -310,6 +316,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
                 {"/console/matches", "/console/imports/assets", "/console/imports"},
                 {
                     "/console/matches/create",
+                    "/console/imports/data",
                     "/console/imports/matches",
                     "/console/imports/dimensions",
                     "/prediction-admin",
@@ -321,6 +328,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
                 {"/console/matches", "/console/imports"},
                 {
                     "/console/matches/create",
+                    "/console/imports/data",
                     "/console/imports/matches",
                     "/console/imports/dimensions",
                     "/console/imports/assets",
@@ -347,8 +355,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             "/console/matches",
             "/console/matches/create",
             "/console/matches/batch-create",
-            "/console/imports/matches",
-            "/console/imports/dimensions",
+            "/console/imports/data",
             "/console/imports/assets",
             "/console/imports",
             "/prediction-admin",
@@ -358,6 +365,8 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             self.assertIn(f'href="{path}"', html)
         self.assertNotIn('href="/accounts"', html)
         self.assertNotIn('href="/permissions"', html)
+        self.assertNotIn('href="/console/imports/matches"', html)
+        self.assertNotIn('href="/console/imports/dimensions"', html)
         self.assertLess(
             html.index('href="/console/accounts"'),
             html.index('href="/console/matches"'),
@@ -413,6 +422,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
             "/console/matches/create",
             "/console/matches/batch-create",
             "/console/imports",
+            "/console/imports/data",
             "/console/imports/matches",
             "/console/imports/dimensions",
             "/console/imports/assets",

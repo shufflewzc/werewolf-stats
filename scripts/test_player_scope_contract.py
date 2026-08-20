@@ -352,6 +352,117 @@ class PlayerScopeContractTests(unittest.TestCase):
             [("player-s2", "8.00", 1)],
         )
 
+    def test_equal_points_keep_win_rate_ranking_before_average_points(self) -> None:
+        self.data["players"].extend(
+            [
+                _player("player-win-rate", "胜率优先", "team-win-rate"),
+                _player("player-average", "场均更高", "team-average"),
+            ]
+        )
+        self.data["teams"].extend(
+            [
+                _team("team-win-rate", "胜率优先队", ENDED_SEASON, "player-win-rate"),
+                _team("team-average", "场均更高队", ENDED_SEASON, "player-average"),
+            ]
+        )
+        first_win = _match(
+            "match-win-rate-1",
+            ENDED_SEASON,
+            "player-win-rate",
+            "team-win-rate",
+            5,
+            "2025-08-02",
+        )
+        second_win = _match(
+            "match-win-rate-2",
+            ENDED_SEASON,
+            "player-win-rate",
+            "team-win-rate",
+            5,
+            "2025-08-03",
+        )
+        high_average_loss = _match(
+            "match-average-1",
+            ENDED_SEASON,
+            "player-average",
+            "team-average",
+            10,
+            "2025-08-04",
+        )
+        high_average_loss["winning_camp"] = "werewolves"
+        high_average_loss["players"][0]["result"] = "loss"
+        self.data["matches"].extend(
+            [first_win, second_win, high_average_loss]
+        )
+
+        ctx = self.context(
+            "/api/players",
+            scope_required="1",
+            competition=COMPETITION,
+            season=ENDED_SEASON,
+        )
+        list_status, list_payload = self.call(web_app.handle_players_api, ctx)
+        dashboard_status, dashboard_payload = self.call(
+            web_app.handle_dashboard_api,
+            self.context(
+                "/api/dashboard",
+                scope_required="1",
+                competition=COMPETITION,
+                season=ENDED_SEASON,
+            ),
+        )
+
+        self.assertEqual(list_status, "200 OK")
+        self.assertEqual(dashboard_status, "200 OK")
+        list_rows = {
+            row["player_id"]: row
+            for row in list_payload["players"]
+            if row["player_id"] in {"player-win-rate", "player-average"}
+        }
+        dashboard_rows = {
+            row["player_id"]: row
+            for row in dashboard_payload["leaderboards"]["players"]
+            if row["player_id"] in {"player-win-rate", "player-average"}
+        }
+        self.assertEqual(list_rows["player-win-rate"]["points_total"], "10.00")
+        self.assertEqual(list_rows["player-average"]["points_total"], "10.00")
+        self.assertEqual(list_rows["player-win-rate"]["win_rate"], "100.0%")
+        self.assertEqual(list_rows["player-average"]["win_rate"], "0.0%")
+        self.assertEqual(list_rows["player-win-rate"]["average_points"], "5.00")
+        self.assertEqual(list_rows["player-average"]["average_points"], "10.00")
+        self.assertLess(
+            list_rows["player-win-rate"]["rank"],
+            list_rows["player-average"]["rank"],
+        )
+        self.assertEqual(
+            list_rows["player-win-rate"]["rank"],
+            dashboard_rows["player-win-rate"]["rank"],
+        )
+        self.assertEqual(
+            list_rows["player-average"]["rank"],
+            dashboard_rows["player-average"]["rank"],
+        )
+        for player_id in ("player-win-rate", "player-average"):
+            detail_status, detail_payload = self.call(
+                web_app.handle_player_api,
+                self.context(
+                    f"/api/players/{player_id}",
+                    scope_required="1",
+                    competition=COMPETITION,
+                    season=ENDED_SEASON,
+                ),
+                player_id,
+            )
+            self.assertEqual(detail_status, "200 OK")
+            metrics = {
+                metric["label"]: metric["value"]
+                for metric in detail_payload["metrics"]
+            }
+            self.assertEqual(
+                metrics["排名"],
+                f"#{list_rows[player_id]['rank']}",
+            )
+
     def test_explicit_scope_without_marker_does_not_return_zero_game_players(self) -> None:
         self.data["matches"] = [
             match for match in self.data["matches"] if match["season"] != ONGOING_SEASON

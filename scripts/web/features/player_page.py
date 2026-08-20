@@ -1038,14 +1038,6 @@ def build_players_api_payload(
         if has_explicit_scope
         else visible_rows or player_rows
     )
-    displayed_rows.sort(
-        key=lambda row: (
-            -float(row.get("points_earned_total") or 0.0),
-            -float(row.get("average_points") or 0.0),
-            -int(row.get("games_played") or 0),
-            row.get("display_name") or "",
-        )
-    )
     power_ratings = _build_player_power_rating_map(
         displayed_rows,
         selected_competition,
@@ -1071,7 +1063,7 @@ def build_players_api_payload(
     }
     players = [
         {
-            "rank": index + 1,
+            "rank": int(row.get("rank") or index + 1),
             "player_id": row["player_id"],
             "display_name": row["display_name"],
             "aliases": player_aliases.get(row["player_id"], []),

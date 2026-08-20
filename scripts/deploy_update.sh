@@ -29,6 +29,7 @@ rollback_on_error() {
     sudo systemctl stop "$IMPORT_WORKER_SERVICE" >/dev/null 2>&1 || true
     git reset --hard "$PREVIOUS_COMMIT" || true
     sudo systemctl restart "$SERVICE_NAME" || true
+    sudo systemctl restart "$IMPORT_WORKER_SERVICE" || true
   fi
   exit "$exit_code"
 }

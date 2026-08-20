@@ -15,6 +15,7 @@ import web_app
 
 ROOT = Path(__file__).resolve().parents[1]
 POSTGRES_SCHEMA_PATH = ROOT / "scripts" / "postgres_schema.sql"
+DEPLOY_SCRIPT_PATH = ROOT / "scripts" / "deploy_update.sh"
 GRANULAR_SCOPE_PERMISSIONS = (
     "competition_catalog_manage",
     "competition_season_manage",
@@ -84,6 +85,27 @@ class PostgresV7ScopeMigrationContractTests(unittest.TestCase):
             "normalized_scope := region_name || '::' || series_slug",
             self.migration_sql,
         )
+        self.assertIn(
+            "substring(raw_scope FROM 1 FOR separator_at - 1)",
+            self.migration_sql,
+        )
+        self.assertIn(
+            "substring(raw_scope FROM separator_at + 2)",
+            self.migration_sql,
+        )
+        self.assertNotIn("substr(raw_scope FROM", self.migration_sql)
+
+
+class DeploymentRollbackContractTests(unittest.TestCase):
+    def test_failed_deploy_restarts_web_and_import_worker(self):
+        deploy_script = DEPLOY_SCRIPT_PATH.read_text(encoding="utf-8")
+        rollback = deploy_script[
+            deploy_script.index("rollback_on_error()") : deploy_script.index(
+                "trap rollback_on_error"
+            )
+        ]
+        self.assertIn('systemctl restart "$SERVICE_NAME"', rollback)
+        self.assertIn('systemctl restart "$IMPORT_WORKER_SERVICE"', rollback)
 
 
 class CustomSQLiteV6MigrationTests(unittest.TestCase):

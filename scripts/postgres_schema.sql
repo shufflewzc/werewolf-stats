@@ -123,8 +123,8 @@ BEGIN
             IF separator_at <= 1 THEN
                 CONTINUE;
             END IF;
-            region_name := BTRIM(substr(raw_scope FROM 1 FOR separator_at - 1));
-            series_slug := BTRIM(substr(raw_scope FROM separator_at + 2));
+            region_name := BTRIM(substring(raw_scope FROM 1 FOR separator_at - 1));
+            series_slug := BTRIM(substring(raw_scope FROM separator_at + 2));
             IF region_name = '' OR series_slug = '' THEN
                 CONTINUE;
             END IF;

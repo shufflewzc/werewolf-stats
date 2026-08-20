@@ -181,18 +181,28 @@ class DataUploadTokenTests(unittest.TestCase):
             "match_file": [web_app.UploadedFile("match.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")],
         }
 
-        def import_other_scope(_ctx, _data, _upload, result_metadata=None):
-            result_metadata["matched_scopes"] = [{"competition_name": "赛事A", "season_name": "S1"}]
-            return self.data["matches"], "预检完成"
-
         with (
             patch.object(matches_feature, "validate_excel_upload", return_value=""),
-            patch.object(matches_feature, "import_matches_from_excel", side_effect=import_other_scope),
+            patch.object(
+                matches_feature,
+                "preflight_match_excel_upload",
+                return_value=(
+                    {
+                        "summary": "预检完成",
+                        "matched_scopes": [
+                            {"competition_name": "赛事A", "season_name": "S1"}
+                        ],
+                    },
+                    [],
+                    [],
+                    {"赛事A"},
+                ),
+            ),
         ):
             body = data_upload.handle_api(ctx, lambda _status, _headers: None)
         self.assertIn("与当前上传目标", json.loads(body[0])["results"]["match"]["message"])
 
-    def test_match_is_queued_with_target_metadata_without_mutating_cached_data(self):
+    def test_match_is_preflighted_confirmed_and_queued_with_target_metadata(self):
         raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
         ctx = self.context(raw)
         ctx.method = "POST"
@@ -206,25 +216,49 @@ class DataUploadTokenTests(unittest.TestCase):
             "match_file": [web_app.UploadedFile("match.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", b"fake")],
         }
 
-        def preflight(_ctx, copied_data, _upload, result_metadata=None):
-            copied_data["matches"][0]["preflight_only"] = True
-            result_metadata["matched_scopes"] = [{"competition_name": "赛事A", "season_name": "S2"}]
-            return copied_data["matches"], "预检完成"
+        preview = {
+            "summary": "预检完成",
+            "counts": {"updated_matches": 1},
+            "matched_scopes": [
+                {"competition_name": "赛事A", "season_name": "S2"}
+            ],
+        }
 
         with (
             patch.object(matches_feature, "validate_excel_upload", return_value=""),
-            patch.object(matches_feature, "import_matches_from_excel", side_effect=preflight),
+            patch.object(
+                matches_feature,
+                "preflight_match_excel_upload",
+                return_value=(preview, [], ["预检提醒"], {"赛事A"}),
+            ) as inspect_match,
             patch.object(data_upload.legacy, "load_import_batches", return_value=[]),
-            patch.object(data_upload.legacy, "create_import_batch", return_value="imp_match") as create_batch,
+            patch.object(
+                matches_feature,
+                "create_import_upload_preflight",
+                return_value="imp_match",
+            ) as create_preflight,
+            patch.object(data_upload, "confirm_preflight") as confirm,
+            patch.object(data_upload.legacy, "create_import_batch") as legacy_create,
             patch.object(data_upload.legacy, "audit_action"),
         ):
             payload = json.loads(data_upload.handle_api(ctx, lambda _status, _headers: None)[0])
 
         self.assertEqual(payload["results"]["match"]["status"], "queued")
-        self.assertNotIn("preflight_only", self.data["matches"][0])
-        metadata = create_batch.call_args.kwargs["metadata"]
+        inspect_match.assert_called_once_with(ctx, self.data, ctx.files["match_file"][0], "")
+        self.assertEqual(create_preflight.call_args.kwargs["action"], "matches.import_excel")
+        self.assertEqual(create_preflight.call_args.kwargs["preview"], preview)
+        self.assertEqual(create_preflight.call_args.kwargs["warnings"], ["预检提醒"])
+        self.assertEqual(create_preflight.call_args.kwargs["competition_names"], {"赛事A"})
+        metadata = create_preflight.call_args.kwargs["action_metadata"]
         self.assertEqual(metadata["upload_token_id"], record["token_id"])
-        self.assertEqual((metadata["competition_name"], metadata["season_name"]), ("赛事A", "S2"))
+        self.assertEqual(
+            (metadata["competition_name"], metadata["season_name"]),
+            ("赛事A", "S2"),
+        )
+        confirm.assert_called_once()
+        self.assertEqual(confirm.call_args.args, ("imp_match",))
+        self.assertEqual(confirm.call_args.kwargs["actor"], "manager")
+        legacy_create.assert_not_called()
 
     def test_double_file_upload_is_rejected_in_favor_of_match_first(self):
         raw, _ = data_upload.create_token(self.user, "全部", "90", "all", [])

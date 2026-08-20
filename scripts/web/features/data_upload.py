@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from copy import deepcopy
 from datetime import datetime, timedelta
 from hashlib import sha256
 from html import escape
@@ -657,20 +656,28 @@ def handle_api(ctx, start_response):
 
     next_player_rows = next_team_rows = None
     dimension_message = ""
+    match_preview: dict[str, Any] = {}
+    match_warnings: list[str] = []
+    match_competition_names: set[str] = set()
     if dimension_upload and "dimension" not in results:
         next_player_rows, next_team_rows, dimension_message = matches_feature.import_dimension_stats_from_excel(ctx, data, dimension_upload, competition, season)
         if next_player_rows is None:
             results["dimension"] = {"status": "failed", "message": dimension_message}
             validation_errors.append(dimension_message)
     if match_upload and "match" not in results:
-        match_metadata: dict[str, Any] = {}
-        parsed, message = matches_feature.import_matches_from_excel(
+        (
+            match_preview,
+            match_errors,
+            match_warnings,
+            match_competition_names,
+        ) = matches_feature.preflight_match_excel_upload(
             ctx,
-            deepcopy(data),
+            data,
             match_upload,
-            result_metadata=match_metadata,
+            "",
         )
-        if parsed is None:
+        if match_errors:
+            message = "；".join(match_errors[:3])
             results["match"] = {"status": "failed", "message": message}
             validation_errors.append(message)
         else:
@@ -679,7 +686,7 @@ def handle_api(ctx, start_response):
                     str(item.get("competition_name") or "").strip(),
                     str(item.get("season_name") or "").strip(),
                 )
-                for item in match_metadata.get("matched_scopes", [])
+                for item in match_preview.get("matched_scopes", [])
                 if isinstance(item, dict)
             }
             if matched_scopes != {(competition, season)}:
@@ -713,8 +720,61 @@ def handle_api(ctx, start_response):
         if running:
             results["match"] = {"status": "failed", "message": "已有导入任务正在处理中，请稍后只重试 match 文件。"}
         else:
-            batch_id = legacy.create_import_batch(ctx=ctx, action="matches.import_excel", label="数据生成器上传比赛详情", filename=match_upload.filename, metadata={"background": True, "source": "daily-data-generator", "request_id": request_key, "upload_token_id": record.get("token_id"), "competition_name": competition, "season_name": season}, payload_data=match_upload.data)
-            results["match"] = {"status": "queued", "message": "比赛数据已进入后台导入队列。", "batch_id": batch_id}
+            try:
+                batch_id = matches_feature.create_import_upload_preflight(
+                    ctx,
+                    data,
+                    match_upload,
+                    action="matches.import_excel",
+                    preview=match_preview,
+                    action_metadata={
+                        "source": "daily-data-generator",
+                        "request_id": request_key,
+                        "upload_token_id": record.get("token_id"),
+                        "competition_name": competition,
+                        "season_name": season,
+                    },
+                    competition_names=match_competition_names or {competition},
+                    warnings=match_warnings,
+                )
+                confirm_preflight(
+                    batch_id,
+                    actor=str(user.get("username") or ""),
+                    creator_check=lambda actor, created_by, _job: actor == created_by,
+                    permission_check=lambda _actor, scope_key, permission_key: bool(
+                        legacy.user_has_scope_permission(
+                            user,
+                            scope_key,
+                            permission_key,
+                        )
+                    ),
+                    now_label=ctx.now_label,
+                )
+                results["match"] = {
+                    "status": "queued",
+                    "message": "比赛数据已通过预检并进入后台导入队列。",
+                    "batch_id": batch_id,
+                }
+            except PreflightError as exc:
+                results["match"] = {
+                    "status": "failed",
+                    "message": f"比赛导入预检确认失败：{exc}",
+                }
+            except Exception as exc:
+                legacy.emit_structured_log(
+                    "data_upload.match_enqueue_failed",
+                    "error",
+                    request_id=str(getattr(ctx, "request_id", "") or ""),
+                    username=str(user.get("username") or ""),
+                    competition_name=competition,
+                    season_name=season,
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                )
+                results["match"] = {
+                    "status": "failed",
+                    "message": "创建比赛导入任务失败，请稍后重试。",
+                }
 
     overall = "succeeded" if all(item["status"] in {"succeeded", "queued"} for item in results.values()) else "partial"
     payload = {"status": overall, "results": results}

@@ -6435,7 +6435,9 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display: block !important;
       }}
       body.app-admin .admin-sidebar-nav {{
-        flex: 1 1 auto;
+        flex: 0 1 auto;
+        height: max(12rem, calc(100vh - 13.5rem));
+        max-height: max(12rem, calc(100vh - 13.5rem));
         min-height: 0;
         overflow-y: auto;
         overscroll-behavior: contain;
@@ -6545,6 +6547,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           display: none !important;
         }}
         body.app-admin .admin-sidebar-nav {{
+          height: auto;
           max-height: min(64vh, 520px);
         }}
         body.app-admin .admin-main {{

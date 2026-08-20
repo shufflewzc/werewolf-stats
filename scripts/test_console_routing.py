@@ -374,6 +374,10 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
         self.assertIn("height: calc(100vh - 1rem);", html)
         self.assertIn("scrollbar-gutter: stable;", html)
         self.assertIn("overscroll-behavior: contain;", html)
+        self.assertIn(
+            "height: max(12rem, calc(100vh - 13.5rem));",
+            html,
+        )
         self.assertIn("height: auto;", html)
 
     def test_common_operation_page_has_console_return_with_scope_preserved(self):

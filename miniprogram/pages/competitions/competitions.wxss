@@ -177,3 +177,8 @@
   color: #ffffff;
   background: #111827;
 }
+
+.enter-label[disabled] {
+  color: #64748b;
+  background: #e2e8f0;
+}

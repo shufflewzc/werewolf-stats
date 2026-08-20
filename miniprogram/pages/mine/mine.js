@@ -8,7 +8,7 @@ const {
 } = require("../../utils/auth");
 const { request } = require("../../utils/api");
 const { getFollowedPlayers, refreshFollowedPlayers, toggleFollow } = require("../../utils/follows");
-const { getSelectedScope, scopeParams, setSelectedScope } = require("../../utils/scope");
+const { confirmScopeMismatch, confirmScopeSwitch, getRequiredScope, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 const GENDER_VALUES = ["prefer_not_to_say", "male", "female", "other"];
 const GENDER_LABELS = ["不便透露", "男", "女", "其他"];
@@ -74,7 +74,7 @@ Page({
 
   async loadMyCenter() {
     const user = getCurrentUser();
-    const selectedScope = getSelectedScope();
+    const selectedScope = getRequiredScope();
     let centerStatus = "未登录";
     let centerCopy = "登录并绑定选手后，这里会显示你的赛事入口和个人选手页。";
     let boundPlayerLabel = "";
@@ -87,7 +87,7 @@ Page({
       centerStatus = "未绑定选手";
       centerCopy = "绑定选手后，会显示你的赛事入口和个人选手页。";
     }
-    if (!selectedScope || !selectedScope.competition) {
+    if (!selectedScope) {
       this.setData({
         selectedScope: null,
         latestDay: null,
@@ -97,7 +97,7 @@ Page({
         boundPlayers,
         currentPlayer: null,
         currentPlayerStatus: boundPlayers.length ? "not_in_scope" : "unbound",
-        centerCopy: user ? "先进入一个赛事，再查看我的比赛日和选手页。" : centerCopy
+        centerCopy: user ? "先选择赛事和赛季，再查看我的比赛日和选手页。" : centerCopy
       });
       return;
     }
@@ -125,8 +125,22 @@ Page({
         centerCopy = "本赛季暂无已绑定选手，可以绑定对应的赛季档案。";
       }
     } catch (error) {
-      centerCopy = error.message || "我的赛事数据加载失败。";
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该绑定选手" });
+      if (recovery) {
+        if (recovery.accepted && !this._scopeMismatchRetried) {
+          this._scopeMismatchRetried = true;
+          return this.loadMyCenter();
+        }
+        if (!recovery.accepted) {
+          centerCopy = scopeActivationError(recovery);
+        } else {
+          centerCopy = error.message || "我的赛事数据加载失败。";
+        }
+      } else {
+        centerCopy = error.message || "我的赛事数据加载失败。";
+      }
     }
+    this._scopeMismatchRetried = false;
     this.setData({
       selectedScope,
       latestDay,
@@ -273,15 +287,15 @@ Page({
       });
       return;
     }
-    const selectedScope = getSelectedScope();
-    if (!selectedScope || !selectedScope.competition) {
+    const selectedScope = getRequiredScope();
+    if (!selectedScope) {
       wx.showModal({
-        title: "先选择赛事",
-        content: "需要先进入一个赛事，才能查看该赛事范围下的选手页面。",
+        title: "先选择赛事和赛季",
+        content: "需要先选择完整的赛事和赛季，才能查看该赛季的选手页面。",
         confirmText: "去选择",
         success(result) {
           if (result.confirm) {
-            wx.switchTab({ url: "/pages/dashboard/dashboard" });
+            wx.switchTab({ url: "/pages/competitions/competitions" });
           }
         }
       });
@@ -292,19 +306,26 @@ Page({
     });
   },
 
-  openBoundPlayerPage(event) {
+  async openBoundPlayerPage(event) {
     const playerId = event.currentTarget.dataset.playerId;
     if (!playerId) {
       return;
     }
     const boundPlayer = this.data.boundPlayers.find((item) => item.player_id === playerId) || {};
-    const selectedScope = getSelectedScope() || {};
-    if (boundPlayer.competition && boundPlayer.season) {
-      setSelectedScope({
-        ...selectedScope,
-        competition: boundPlayer.competition,
-        season: boundPlayer.season
-      });
+    if (!boundPlayer.competition || !boundPlayer.season) {
+      this.setData({ error: "该绑定选手缺少赛事和赛季，请先从赛事入口选择。" });
+      return;
+    }
+    const activation = await confirmScopeSwitch({
+      competition: boundPlayer.competition,
+      season: boundPlayer.season
+    }, {
+      title: "切换绑定赛季",
+      sourceLabel: `绑定选手「${boundPlayer.display_name || playerId}」`
+    });
+    if (!activation.accepted) {
+      this.setData({ error: scopeActivationError(activation) });
+      return;
     }
     wx.navigateTo({
       url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}&strict_player_id=1`
@@ -313,7 +334,7 @@ Page({
 
   openFollowedPlayer(event) {
     const playerId = event.currentTarget.dataset.playerId;
-    if (!playerId || !this.data.selectedScope || !this.data.selectedScope.competition) {
+    if (!playerId || !this.data.selectedScope) {
       return;
     }
     wx.navigateTo({
@@ -324,7 +345,7 @@ Page({
   removeFollowedPlayer(event) {
     const playerId = event.currentTarget.dataset.playerId;
     const selectedScope = this.data.selectedScope;
-    if (!playerId || !selectedScope || !selectedScope.competition) {
+    if (!playerId || !selectedScope) {
       return;
     }
     toggleFollow({ player_id: playerId }, selectedScope);

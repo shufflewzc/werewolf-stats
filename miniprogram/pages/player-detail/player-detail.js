@@ -1,7 +1,7 @@
 const { request, assetUrl } = require("../../utils/api");
 const { isFollowed, toggleFollow } = require("../../utils/follows");
 const { stageLabel, take } = require("../../utils/format");
-const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 function parsePercent(value) {
   const number = Number(String(value || "").replace("%", ""));
@@ -92,11 +92,21 @@ Page({
   },
 
   onLoad(options) {
-    applyScopeFromOptions(options);
     this.setData({
       playerId: decodeURIComponent(options.player_id || ""),
       strictPlayerId: options.strict_player_id === "1"
     });
+    this.activateScopeAndLoad(options);
+  },
+
+  async activateScopeAndLoad(options) {
+    const activation = await applyScopeFromOptions(options, { sourceLabel: "分享的选手详情" });
+    if (!activation.accepted) {
+      this._scopeEntryBlocked = scopeActivationError(activation);
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
+    this._scopeEntryBlocked = "";
     this.loadData();
   },
 
@@ -118,6 +128,10 @@ Page({
   },
 
   async loadData(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
     const playerId = this.data.playerId;
     if (!playerId) {
       this.setData({ loading: false, error: "缺少选手 ID" });
@@ -175,6 +189,16 @@ Page({
         followed: isFollowed({ player_id: playerId }.player_id, selectedScope)
       });
     } catch (error) {
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该选手" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({
         loading: false,
         error: error.message || "选手详情加载失败"

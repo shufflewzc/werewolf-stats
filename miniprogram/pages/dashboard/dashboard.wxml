@@ -2,7 +2,7 @@
   <view class="hero">
     <text class="eyebrow">{{generatedAt || "赛事数据"}}</text>
     <text class="title">{{scopeLabel}}</text>
-    <text class="copy" wx:if="{{choosing}}">必须先进入一个赛事，之后才能查看该赛事内的门派、选手和比赛详情。</text>
+    <text class="copy" wx:if="{{choosing}}">必须先选择完整的赛事和赛季，之后才能查看对应的选手和比赛详情。</text>
     <text class="copy" wx:else>{{hero.featured_label || "当前赛事详情"}}</text>
     <view class="button-row" wx:if="{{!choosing}}">
       <button class="primary-button" hover-class="tap-button-hover" bindtap="goTeams">门派</button>
@@ -30,7 +30,7 @@
   <block wx:else>
     <view class="section" wx:if="{{choosing}}">
       <view class="section-head">
-        <text class="section-title">先选择赛事</text>
+        <text class="section-title">先选择赛事和赛季</text>
         <text class="section-note">{{competitions.length}} 个</text>
       </view>
       <view class="stack" wx:if="{{competitions.length}}">
@@ -38,14 +38,14 @@
           <view class="list-main">
             <text class="list-title">{{item.competition_name}}</text>
             <text class="list-meta">{{item.region_name}} · {{item.series_name}}</text>
-            <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-index="{{index}}" bindchange="chooseSeason">
+            <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" disabled="{{!item.seasons.length}}" data-index="{{index}}" bindchange="chooseSeason">
               <view class="season-picker compact-season-picker" hover-class="tap-chip-hover">
                 <text class="season-value">{{item.selectedSeason || "赛季待录入"}}</text>
-                <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
+                <text class="season-action">{{item.canEnter ? (item.hasMultipleSeasons ? "切换" : "当前") : "待录入"}}</text>
               </view>
             </picker>
           </view>
-          <button class="choice-enter" hover-class="tap-button-hover" data-index="{{index}}" bindtap="chooseCompetition">进入</button>
+          <button class="choice-enter" hover-class="tap-button-hover" disabled="{{!item.canEnter}}" data-index="{{index}}" bindtap="chooseCompetition">{{item.canEnter ? "进入" : "暂无赛季"}}</button>
         </view>
       </view>
       <view class="empty-card" wx:else>
@@ -59,7 +59,7 @@
         <view class="selected-content">
           <text class="selected-label">当前赛事</text>
           <text class="selected-title">{{selectedScope.competition}}</text>
-          <text class="selected-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+          <text class="selected-meta">{{selectedScope.displayMeta}}</text>
         </view>
         <button class="change-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
       </view>

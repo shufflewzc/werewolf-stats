@@ -55,6 +55,14 @@ Module._load = function mockPageDependencies(request, parent, isMain) {
       getRequiredScope() { return scope; },
       goCompetitions() {},
       needsCompetitionState(extra) { return { ...extra, loading: false, needsCompetition: true }; },
+      sameScope(left, right) {
+        return Boolean(
+          left
+          && right
+          && left.competition === right.competition
+          && left.season === right.season
+        );
+      },
       scopeParams(selectedScope) { return selectedScope; }
     };
   }

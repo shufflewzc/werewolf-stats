@@ -166,6 +166,22 @@ def check_miniprogram_release() -> None:
         raise ReleaseCheckError("小程序发布自检未通过：" + detail)
 
 
+def check_player_scope_regression() -> None:
+    script_path = ROOT / "scripts" / "test_player_scope_contract.py"
+    if not script_path.exists():
+        raise ReleaseCheckError("缺少选手赛事赛季 scope 回归测试。")
+    completed = subprocess.run(
+        [sys.executable, str(script_path)],
+        cwd=str(ROOT),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stdout + "\n" + completed.stderr).strip()
+        raise ReleaseCheckError("选手赛事赛季 scope 回归未通过：" + detail)
+
+
 def check_user_visible_prediction_terms() -> None:
     forbidden_terms = ("盘口", "赔率", "下注", "投注", "走水", "通杀")
     allowed_suffixes = {".py", ".js", ".wxml", ".wxss", ".html", ".css", ".swift"}
@@ -375,6 +391,26 @@ def assert_pagination(payload: dict, name: str) -> None:
             raise ReleaseCheckError(f"{name} pagination 缺少字段：{key}")
 
 
+def assert_response_scope(
+    payload: dict,
+    expected_competition: str,
+    expected_season: str,
+    name: str,
+) -> None:
+    scope = payload.get("scope") if isinstance(payload.get("scope"), dict) else {}
+    actual_competition = str(scope.get("competition") or "").strip()
+    actual_season = str(scope.get("season") or "").strip()
+    if (actual_competition, actual_season) != (
+        expected_competition,
+        expected_season,
+    ):
+        raise ReleaseCheckError(
+            f"{name} scope 与请求不一致："
+            f"请求 {expected_competition} / {expected_season}，"
+            f"响应 {actual_competition or '缺失赛事'} / {actual_season or '缺失赛季'}"
+        )
+
+
 def assert_power_rating(payload: object, name: str) -> None:
     if not isinstance(payload, dict):
         raise ReleaseCheckError(f"{name} 缺少 power_rating 对象")
@@ -466,11 +502,18 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
         "competition": competition_name,
         "season": str(seasons[0] if seasons else ""),
         "region": str(first_card.get("region_name") or ""),
+        "scope_required": "1",
     }
     scope_query = {key: value for key, value in scope_query.items() if value}
 
     dashboard = api_get_json("/api/dashboard", scope_query)
     assert_json_keys(dashboard, ["scope", "metrics", "top_players", "top_teams", "match_days"], "/api/dashboard")
+    assert_response_scope(
+        dashboard,
+        competition_name,
+        scope_query["season"],
+        "/api/dashboard",
+    )
     team_rows = dashboard.get("top_teams") if isinstance(dashboard.get("top_teams"), list) else []
     active_team = next((row for row in team_rows if isinstance(row, dict) and row.get("team_id")), None)
     if active_team:
@@ -488,6 +531,12 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
 
     players = api_get_json("/api/players", {**scope_query, "limit": "30", "offset": "0"})
     assert_json_keys(players, ["scope", "metrics", "players"], "/api/players")
+    assert_response_scope(
+        players,
+        competition_name,
+        scope_query["season"],
+        "/api/players",
+    )
     assert_pagination(players, "/api/players")
     player_rows = players.get("players") if isinstance(players.get("players"), list) else []
     if player_rows:
@@ -505,7 +554,80 @@ def check_miniprogram_api_contract(*, require_data: bool = False) -> None:
         if player_id:
             player_detail = api_get_json(f"/api/players/{player_id}", scope_query)
             assert_json_keys(player_detail, ["player", "metrics", "insights", "dimension", "power_rating"], "/api/players/{id}")
+            assert_response_scope(
+                player_detail,
+                competition_name,
+                scope_query["season"],
+                "/api/players/{id}",
+            )
             assert_power_rating(player_detail.get("power_rating"), "/api/players/{id}")
+
+    season_stats = (
+        first_card.get("season_stats")
+        if isinstance(first_card.get("season_stats"), dict)
+        else {}
+    )
+    historical_season = next(
+        (
+            str(season or "").strip()
+            for season in seasons[1:]
+            if str(season or "").strip()
+            and int((season_stats.get(season) or {}).get("player_count") or 0) > 0
+        ),
+        "",
+    )
+    if historical_season:
+        historical_query = {
+            **scope_query,
+            "season": historical_season,
+        }
+        historical_players = api_get_json(
+            "/api/players",
+            {**historical_query, "limit": "30", "offset": "0"},
+        )
+        assert_json_keys(
+            historical_players,
+            ["scope", "metrics", "players"],
+            "/api/players historical season",
+        )
+        assert_response_scope(
+            historical_players,
+            competition_name,
+            historical_season,
+            "/api/players historical season",
+        )
+        historical_rows = (
+            historical_players.get("players")
+            if isinstance(historical_players.get("players"), list)
+            else []
+        )
+        historical_active_player = next(
+            (
+                row
+                for row in historical_rows
+                if isinstance(row, dict)
+                and row.get("player_id")
+                and int(row.get("games_played") or 0) > 0
+            ),
+            None,
+        )
+        if not historical_active_player:
+            raise ReleaseCheckError(
+                f"/api/players 非首个赛季 {historical_season} 有选手统计但没有返回有效选手"
+            )
+        historical_player_id = str(historical_active_player["player_id"]).strip()
+        historical_detail = api_get_json(
+            f"/api/players/{historical_player_id}",
+            historical_query,
+        )
+        assert_response_scope(
+            historical_detail,
+            competition_name,
+            historical_season,
+            "/api/players/{id} historical season",
+        )
+    elif len(seasons) > 1:
+        print("[SKIP] 非首个赛季没有可验证的选手数据。")
 
     guilds = api_get_json("/api/guilds", scope_query)
     assert_json_keys(guilds, ["hero", "metrics", "cards"], "/api/guilds")
@@ -758,6 +880,7 @@ def main(argv: list[str] | None = None) -> int:
         ("小程序发布自检", check_miniprogram_release),
         ("预测页面用语检查", check_user_visible_prediction_terms),
         ("小程序 API 契约", lambda: check_miniprogram_api_contract(require_data=args.require_miniprogram_data)),
+        ("选手赛事赛季 scope 回归", check_player_scope_regression),
         ("预测缓存一致性", lambda: check_prediction_cache_consistency(require_data=args.require_miniprogram_data)),
         ("小程序 API 耗时基准", lambda: check_miniprogram_api_benchmark(require_data=args.require_miniprogram_data)),
         ("运维状态接口", check_ops_api),

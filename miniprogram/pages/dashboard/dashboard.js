@@ -3,10 +3,12 @@ const { getCurrentPlayerForScope, getCurrentUser } = require("../../utils/auth")
 const { getFollowedPlayers } = require("../../utils/follows");
 const { take } = require("../../utils/format");
 const {
+  applyScopeFromOptions,
   buildScopeFromCompetition,
   appendScopeToPath,
-  clearSelectedScope,
-  getSelectedScope,
+  confirmScopeMismatch,
+  getRequiredScope,
+  scopeActivationError,
   scopeParams,
   setSelectedScope
 } = require("../../utils/scope");
@@ -24,7 +26,8 @@ function decorateCompetitionChoice(card) {
     player_count: Number(seasonStats.player_count !== undefined ? seasonStats.player_count : card.player_count || 0),
     match_count: Number(seasonStats.match_count !== undefined ? seasonStats.match_count : card.match_count || 0),
     latest_played_on: seasonStats.latest_played_on || card.latest_played_on,
-    hasMultipleSeasons: seasons.length > 1
+    hasMultipleSeasons: seasons.length > 1,
+    canEnter: Boolean(selectedSeason && seasons.includes(selectedSeason))
   };
 }
 
@@ -193,8 +196,24 @@ Page({
     leaderboardRows: []
   },
 
-  onShow() {
-    this.loadData();
+  onLoad(options) {
+    this._scopeReady = applyScopeFromOptions(options, { sourceLabel: "分享的赛事首页" });
+  },
+
+  async onShow() {
+    if (this._scopeReady) {
+      const activation = await this._scopeReady;
+      this._scopeReady = null;
+      if (!activation.accepted) {
+        this._scopeEntryBlocked = scopeActivationError(activation);
+        this.setData({ loading: false, refreshing: false, error: this._scopeEntryBlocked });
+        return false;
+      }
+    } else {
+      // tab 页再次由正常入口显示时，允许用户在赛事入口重新选择后继续。
+      this._scopeEntryBlocked = "";
+    }
+    return this.loadData();
   },
 
   onPullDownRefresh() {
@@ -213,6 +232,10 @@ Page({
   },
 
   async loadData(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, refreshing: false, error: this._scopeEntryBlocked });
+      return false;
+    }
     const requestId = (this._loadRequestId || 0) + 1;
     const hasLoaded = this.data.hasLoaded;
     this._loadRequestId = requestId;
@@ -220,8 +243,8 @@ Page({
       ? { refreshing: true, error: "" }
       : { loading: true, refreshing: false, error: "" });
     try {
-      const selectedScope = getSelectedScope();
-      if (!selectedScope || !selectedScope.competition) {
+      const selectedScope = getRequiredScope();
+      if (!selectedScope) {
         const competitions = await request("/api/competitions", {}, options);
         if (requestId !== this._loadRequestId) {
           return;
@@ -232,7 +255,7 @@ Page({
           refreshing: false,
           choosing: true,
           selectedScope: null,
-          scopeLabel: "选择赛事",
+          scopeLabel: "选择赛事和赛季",
           generatedAt: competitions.generated_at || "",
           hero: competitions.hero || {},
           metrics: take(competitions.metrics, 4),
@@ -398,7 +421,7 @@ Page({
         return;
       }
       hydrateFollowedPlayers(followedPlayerSeeds, selectedScope, options).then((followedPlayers) => {
-        if (requestId !== this._loadRequestId || !sameScope(getSelectedScope(), selectedScope)) {
+        if (requestId !== this._loadRequestId || !sameScope(getRequiredScope(), selectedScope)) {
           return;
         }
         this.setData({ followedPlayers });
@@ -406,6 +429,16 @@ Page({
     } catch (error) {
       if (requestId !== this._loadRequestId) {
         return;
+      }
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该赛事内容" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, refreshing: false, error: scopeActivationError(recovery) });
+          return;
+        }
       }
       if (hasLoaded) {
         this.setData({ refreshing: false });
@@ -672,11 +705,15 @@ Page({
   chooseCompetition(event) {
     const index = Number(event.currentTarget.dataset.index);
     const card = this.data.competitions[index];
-    if (!card) {
+    if (!card || !card.canEnter) {
+      wx.showToast({ title: "请先选择有效赛季", icon: "none" });
       return;
     }
     const scope = buildScopeFromCompetition(card, card.selectedSeason);
-    setSelectedScope(scope);
+    if (!setSelectedScope(scope)) {
+      wx.showToast({ title: "赛季选择无效，请重新选择", icon: "none" });
+      return;
+    }
     this.loadData();
   },
 
@@ -695,12 +732,12 @@ Page({
       [`competitions[${index}].team_count`]: Number(seasonStats.team_count !== undefined ? seasonStats.team_count : card.team_count || 0),
       [`competitions[${index}].player_count`]: Number(seasonStats.player_count !== undefined ? seasonStats.player_count : card.player_count || 0),
       [`competitions[${index}].match_count`]: Number(seasonStats.match_count !== undefined ? seasonStats.match_count : card.match_count || 0),
-      [`competitions[${index}].latest_played_on`]: seasonStats.latest_played_on || card.latest_played_on
+      [`competitions[${index}].latest_played_on`]: seasonStats.latest_played_on || card.latest_played_on,
+      [`competitions[${index}].canEnter`]: Boolean(selectedSeason && card.seasons.includes(selectedSeason))
     });
   },
 
   changeCompetition() {
-    clearSelectedScope();
-    this.loadData();
+    wx.switchTab({ url: "/pages/competitions/competitions" });
   }
 });

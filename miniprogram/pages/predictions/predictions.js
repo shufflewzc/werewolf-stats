@@ -1,5 +1,5 @@
 const { request } = require("../../utils/api");
-const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, sameScope, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
 
@@ -81,12 +81,22 @@ Page({
   },
 
   onLoad(options) {
-    applyScopeFromOptions(options);
     this.initialPlayedOn = options.played_on || "";
     this.initialMatchId = options.match_id || "";
+    this._scopeReady = applyScopeFromOptions(options, { sourceLabel: "分享的预测页面" });
   },
 
-  onShow() {
+  async onShow() {
+    if (this._scopeReady) {
+      const activation = await this._scopeReady;
+      this._scopeReady = null;
+      if (!activation.accepted) {
+        this._scopeEntryBlocked = scopeActivationError(activation);
+        this.setData({ loading: false, error: this._scopeEntryBlocked });
+        return false;
+      }
+      this._scopeEntryBlocked = "";
+    }
     const selectedPlayedOn = this.data.selectedDay && this.data.selectedDay.played_on;
     const loadPromise = this.loadData({
       playedOn: this.initialPlayedOn || selectedPlayedOn || "",
@@ -116,16 +126,23 @@ Page({
   },
 
   async loadData(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return false;
+    }
     const requestId = Number(this.predictionRequestId || 0) + 1;
     const requestedPlayedOn = String(options.playedOn || "").trim();
     const keepContent = Boolean(options.keepContent && this.data.days.length);
     this.predictionRequestId = requestId;
+    this.predictionLoadMoreRequestId = Number(this.predictionLoadMoreRequestId || 0) + 1;
     if (keepContent) {
       this.setData({
         switchingDay: true,
         switchingPlayedOn: requestedPlayedOn,
         switchDayError: "",
-        error: ""
+        error: "",
+        loadingMore: false,
+        loadMoreError: ""
       });
     } else {
       this.setData({
@@ -133,11 +150,13 @@ Page({
         error: "",
         switchingDay: false,
         switchingPlayedOn: "",
-        switchDayError: ""
+        switchDayError: "",
+        loadingMore: false,
+        loadMoreError: ""
       });
     }
+    const selectedScope = getRequiredScope();
     try {
-      const selectedScope = getRequiredScope();
       if (!selectedScope) {
         this.setData(needsCompetitionState({
           scope: {},
@@ -164,7 +183,7 @@ Page({
         offset: 0
       };
       const payload = await request("/api/predictions", paramsWithPaging, options);
-      if (requestId !== this.predictionRequestId) {
+      if (requestId !== this.predictionRequestId || !sameScope(getRequiredScope(), selectedScope)) {
         return false;
       }
       const predictions = (payload.predictions || []).map((item, index) => decoratePrediction(item, index));
@@ -205,8 +224,23 @@ Page({
       });
       return true;
     } catch (error) {
-      if (requestId !== this.predictionRequestId) {
+      if (requestId !== this.predictionRequestId || !sameScope(getRequiredScope(), selectedScope)) {
         return false;
+      }
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该预测内容" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({
+            loading: false,
+            switchingDay: false,
+            switchingPlayedOn: "",
+            error: scopeActivationError(recovery)
+          });
+          return false;
+        }
       }
       const message = error.message || "胜率预测加载失败";
       if (keepContent) {
@@ -247,21 +281,38 @@ Page({
     wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
   },
 
-  loadMorePredictions() {
+  async loadMorePredictions() {
     const selectedScope = getRequiredScope();
     const selectedDay = this.data.selectedDay || {};
-    if (!selectedScope || !this.data.predictionHasMore || this.data.loadingMore) {
-      return;
+    if (!selectedScope || !sameScope(selectedScope, this.data.selectedScope) || !this.data.predictionHasMore || this.data.loadingMore) {
+      return false;
     }
+    const requestId = Number(this.predictionLoadMoreRequestId || 0) + 1;
+    const playedOn = selectedDay.played_on || "";
+    const offset = this.data.predictionVisibleCount;
+    this.predictionLoadMoreRequestId = requestId;
     this.setData({ loadingMore: true, loadMoreError: "" });
-    request("/api/predictions", {
-      ...scopeParams(selectedScope),
-      played_on: selectedDay.played_on || "",
-      limit: PAGE_SIZE,
-      offset: this.data.predictionVisibleCount
-    }).then((payload) => {
+    try {
+      const payload = await request("/api/predictions", {
+        ...scopeParams(selectedScope),
+        played_on: playedOn,
+        limit: PAGE_SIZE,
+        offset
+      });
+      if (
+        requestId !== this.predictionLoadMoreRequestId
+        || !sameScope(getRequiredScope(), selectedScope)
+        || !sameScope(this.data.selectedScope, selectedScope)
+        || (this.data.selectedDay && this.data.selectedDay.played_on) !== playedOn
+        || this.data.predictionVisibleCount !== offset
+      ) {
+        if (requestId === this.predictionLoadMoreRequestId) {
+          this.setData({ loadingMore: false });
+        }
+        return false;
+      }
       const morePredictions = (payload.predictions || []).map((item, index) => (
-        decoratePrediction(item, this.data.predictionVisibleCount + index)
+        decoratePrediction(item, offset + index)
       ));
       const predictions = this.data.predictions.concat(morePredictions);
       const pagination = payload.pagination || {};
@@ -273,9 +324,18 @@ Page({
         loadingMore: false,
         loadMoreError: ""
       });
-    }).catch((error) => {
+      return true;
+    } catch (error) {
+      if (requestId !== this.predictionLoadMoreRequestId) {
+        return false;
+      }
+      if (!sameScope(getRequiredScope(), selectedScope)) {
+        this.setData({ loadingMore: false });
+        return false;
+      }
       this.setData({ loadingMore: false, loadMoreError: error.message || "加载更多失败" });
-    });
+      return false;
+    }
   },
 
   goCompetitions() {

@@ -1,6 +1,7 @@
 const STORAGE_KEY = "werewolf:followedPlayers";
 const MAX_FOLLOWS = 50;
 const { request } = require("./api");
+const { isCompleteScope } = require("./scope");
 
 function readFollows() {
   const follows = wx.getStorageSync(STORAGE_KEY);
@@ -21,7 +22,7 @@ function isFollowed(playerId, scope) {
 
 function toggleFollow(player, scope) {
   const playerId = String((player && player.player_id) || "");
-  if (!playerId || !scope || !scope.competition) {
+  if (!playerId || !isCompleteScope(scope)) {
     return false;
   }
   const follows = readFollows();

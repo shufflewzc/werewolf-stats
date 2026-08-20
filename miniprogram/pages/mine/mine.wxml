@@ -18,19 +18,19 @@
           <text class="center-kicker">当前状态</text>
           <text class="center-title">{{centerStatus}}</text>
         </view>
-        <button class="scope-button scope-switch-button" hover-class="tap-button-hover" bindtap="goCompetitions">{{selectedScope ? "切换赛事" : "选赛事"}}</button>
+        <button class="scope-button scope-switch-button" hover-class="tap-button-hover" bindtap="goCompetitions">{{selectedScope ? "切换赛季" : "选赛事赛季"}}</button>
       </view>
 
       <view class="scope-mini" wx:if="{{selectedScope}}">
         <text class="account-label">当前赛事</text>
         <text class="account-name">{{selectedScope.competition}}</text>
-        <text class="account-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+        <text class="account-meta">{{selectedScope.displayMeta}}</text>
       </view>
 
       <view class="scope-mini" wx:else>
         <text class="account-label">当前赛事</text>
-        <text class="account-name">尚未进入赛事</text>
-        <text class="account-meta">先选择赛事后，才能查看我的选手页和比赛日。</text>
+        <text class="account-name">尚未选择赛事和赛季</text>
+        <text class="account-meta">先选择赛事和赛季后，才能查看我的选手页和比赛日。</text>
       </view>
 
       <view class="my-player-row" wx:if="{{currentPlayer}}">

@@ -224,13 +224,33 @@ def _resolve_requested_player_id(
     data: dict[str, Any],
     player_id: str,
 ) -> str:
-    if form_value(ctx.query, "strict_player_id").strip() == "1":
+    if (
+        legacy.api_scope_required(ctx)
+        or form_value(ctx.query, "strict_player_id").strip() == "1"
+    ):
         return player_id
     return _resolve_same_name_player_id_for_scope(
         data,
         player_id,
         form_value(ctx.query, "competition").strip() or None,
         form_value(ctx.query, "season").strip() or None,
+    )
+
+
+def _player_belongs_to_scope(
+    data: dict[str, Any],
+    player_id: str,
+    competition_name: str,
+    season_name: str,
+) -> bool:
+    return any(
+        get_match_competition_name(match) == competition_name
+        and str(match.get("season") or "").strip() == season_name
+        and any(
+            str(entry.get("player_id") or "").strip() == player_id
+            for entry in match.get("players", [])
+        )
+        for match in data.get("matches", [])
     )
 
 
@@ -253,7 +273,10 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
         if competition_name not in player_competition_names:
             player_competition_names.append(competition_name)
 
-    selected_competition = get_selected_competition(ctx, player_competition_names)
+    requested_competition = form_value(ctx.query, "competition").strip()
+    selected_competition = requested_competition or get_selected_competition(
+        ctx, player_competition_names
+    )
     season_names = (
         list_seasons(
             {
@@ -264,12 +287,12 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
                 ]
             },
             selected_competition,
+            include_non_ongoing=True,
         )
         if selected_competition
         else []
     )
-    requested_season = form_value(ctx.query, "season").strip()
-    selected_season = get_selected_season(ctx, season_names) or requested_season or None
+    selected_season = get_selected_season(ctx, season_names)
     competition_switcher = build_competition_switcher(
         f"/players/{player_id}",
         player_competition_names,
@@ -934,9 +957,12 @@ def build_players_api_payload(
     region_rows = scope["region_rows"]
     filtered_rows = scope["filtered_rows"]
     series_rows = scope["series_rows"]
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
-    requested_season = form_value(ctx.query, "season").strip()
-    selected_season = get_selected_season(ctx, season_names) or requested_season or None
+    season_names = (
+        list_seasons(data, selected_competition, include_non_ongoing=True)
+        if selected_competition
+        else []
+    )
+    selected_season = get_selected_season(ctx, season_names)
     scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
     region_options = [
         {
@@ -981,6 +1007,8 @@ def build_players_api_payload(
             "generated_at": china_now_label(),
             "requires_scope": True,
             "scope": {
+                "competition": selected_competition,
+                "season": selected_season,
                 "label": "请先选择赛事赛季",
                 "description": "选手不是全站独立列表，必须先选择具体赛事和赛季，再查看该赛季内的选手数据。",
                 "filters": {
@@ -1001,7 +1029,15 @@ def build_players_api_payload(
     )
     player_rows = build_player_rows(stats_data, selected_competition, selected_season)
     visible_rows = [row for row in player_rows if row.get("games_played", 0) > 0]
-    displayed_rows = visible_rows or player_rows
+    has_explicit_scope = bool(
+        form_value(ctx.query, "competition").strip()
+        and form_value(ctx.query, "season").strip()
+    )
+    displayed_rows = (
+        visible_rows
+        if has_explicit_scope
+        else visible_rows or player_rows
+    )
     displayed_rows.sort(
         key=lambda row: (
             -float(row.get("points_earned_total") or 0.0),
@@ -1074,6 +1110,8 @@ def build_players_api_payload(
     return {
         "generated_at": china_now_label(),
         "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
             "label": scope_label,
             "description": f"当前正在查看 {scope_label} 这个赛事赛季内的选手积分、胜率和出场数据。",
             "filters": {
@@ -1220,17 +1258,16 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
         competition_name = get_match_competition_name(match)
         if competition_name not in player_competition_names:
             player_competition_names.append(competition_name)
-    selected_competition = get_selected_competition(ctx, player_competition_names)
+    requested_competition = form_value(ctx.query, "competition").strip()
+    selected_competition = requested_competition or get_selected_competition(
+        ctx, player_competition_names
+    )
     season_names = (
-        list_seasons(
-            {"matches": [match for match in player_matches if get_match_competition_name(match) == selected_competition]},
-            selected_competition,
-        )
+        list_seasons(data, selected_competition, include_non_ongoing=True)
         if selected_competition
         else []
     )
-    requested_season = form_value(ctx.query, "season").strip()
-    selected_season = get_selected_season(ctx, season_names) or requested_season or None
+    selected_season = get_selected_season(ctx, season_names)
     same_name_scopes = _build_same_name_player_scopes(
         data,
         player_id,
@@ -1241,6 +1278,10 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
     if not selected_competition or not selected_season:
         return {
             "requires_scope": True,
+            "scope": {
+                "competition": selected_competition,
+                "season": selected_season,
+            },
             "title": "请先选择赛季",
             "message": "选手数据属于具体赛事赛季，请先从比赛中心选择赛季后再查看选手。",
             "actions": {
@@ -1254,13 +1295,31 @@ def _serialize_player_detail_payload(ctx: RequestContext, player_id: str) -> dic
     detail = details.get(player_id)
     player_lookup = {player["player_id"]: player for player in data["players"]}
     player = player_lookup.get(player_id)
-    if not detail or not player:
+    if (
+        not detail
+        or not player
+        or not _player_belongs_to_scope(
+            data,
+            player_id,
+            selected_competition,
+            selected_season,
+        )
+    ):
         return {
             "not_found": True,
-            "error": "没有找到对应的队员。",
+            "code": "PLAYER_NOT_FOUND",
+            "error": "没有找到该选手在所选赛事赛季中的数据。",
             "title": "未找到队员",
             "alert": form_value(ctx.query, "alert").strip(),
             "legacy_href": legacy_href,
+            "scope": {
+                "competition": selected_competition,
+                "season": selected_season,
+            },
+            "requested_scope": {
+                "competition": selected_competition,
+                "season": selected_season,
+            },
         }
 
     row = row_lookup.get(player_id, {})
@@ -1388,45 +1447,29 @@ def _serialize_player_dimension_payload(
     season_name: str | None,
 ) -> dict[str, Any]:
     notice = build_dimension_stage_notice(data, competition_name, season_name)
-    if not competition_name:
-        return {"available": False, "reason": "请先选择赛事。", "notice": notice}
-    all_rows = get_player_dimension_history(data, player_id, competition_name, None)
-    if not all_rows:
+    if not competition_name or not season_name:
         return {
             "available": False,
-            "reason": "当前还没有导入对应选手的赛季维度补充数据。",
+            "reason": "请先选择完整的赛事赛季。",
             "notice": notice,
+            "selected_season": season_name or "",
+            "available_seasons": [],
         }
-    available_seasons = []
-    for row in all_rows:
-        item = str(row.get("season_name") or "").strip()
-        if item and item not in available_seasons:
-            available_seasons.append(item)
-    requested_dimension_season = form_value(ctx.query, "dimension_season").strip()
-    selected_dimension_season = (
-        requested_dimension_season
-        if requested_dimension_season in available_seasons
-        else (season_name if season_name in available_seasons else (available_seasons[0] if available_seasons else ""))
-    )
-    notice = build_dimension_stage_notice(
+    history = get_player_dimension_history(
         data,
+        player_id,
         competition_name,
-        selected_dimension_season,
+        season_name,
     )
-    history = [
-        row
-        for row in all_rows
-        if str(row.get("season_name") or "").strip() == selected_dimension_season
-    ]
-    if not selected_dimension_season or not history:
-        return {"available": False, "reason": "当前赛季暂无维度数据。", "notice": notice}
-    season_summaries = {
-        item: summarize_dimension_rows(
-            [row for row in all_rows if str(row.get("season_name") or "").strip() == item]
-        )
-        for item in available_seasons
-    }
-    summary = season_summaries[selected_dimension_season]
+    if not history:
+        return {
+            "available": False,
+            "reason": "当前赛季暂无维度数据。",
+            "notice": notice,
+            "selected_season": season_name,
+            "available_seasons": [],
+        }
+    summary = summarize_dimension_rows(history)
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     latest = history[0]
     match_team_id = next(
@@ -1438,7 +1481,7 @@ def _serialize_player_dimension_payload(
                 reverse=True,
             )
             if get_match_competition_name(match) == competition_name
-            and str(match.get("season") or "").strip() == selected_dimension_season
+            and str(match.get("season") or "").strip() == season_name
             for participant in match.get("players", [])
             if str(participant.get("player_id") or "").strip() == player_id
             and str(participant.get("team_id") or "").strip()
@@ -1463,15 +1506,11 @@ def _serialize_player_dimension_payload(
         or team_lookup.get(profile_team_id, {}).get("name")
         or "未知战队"
     )
-    avg_points_by_season = {
-        item: safe_rate(
-            season_summaries[item].get("daily_points", 0.0),
-            season_summaries[item].get("games_played", 0.0),
-        )
-        for item in available_seasons
-    }
-    max_avg_points = max(avg_points_by_season.values(), default=0.0) or 1.0
-    avg_points = avg_points_by_season[selected_dimension_season]
+    avg_points = safe_rate(
+        summary.get("daily_points", 0.0),
+        summary.get("games_played", 0.0),
+    )
+    max_avg_points = avg_points or 1.0
     radar = [
         {
             "label": "总胜率",
@@ -1507,8 +1546,8 @@ def _serialize_player_dimension_payload(
     return {
         "available": True,
         "notice": notice,
-        "selected_season": selected_dimension_season,
-        "available_seasons": available_seasons,
+        "selected_season": season_name,
+        "available_seasons": [season_name],
         "current_team_name": current_team_name,
         "summary_cards": [
             {"label": "当前战队", "value": current_team_name},

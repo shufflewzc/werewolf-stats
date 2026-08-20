@@ -172,6 +172,11 @@
   background: #111827;
 }
 
+.choice-enter[disabled] {
+  color: #64748b;
+  background: #e2e8f0;
+}
+
 .selected-bar {
   justify-content: space-between;
 }

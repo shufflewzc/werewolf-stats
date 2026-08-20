@@ -1,6 +1,6 @@
 <view class="page">
   <view class="entry-card">
     <text class="entry-title">正在打开选手战绩</text>
-    <text class="entry-copy">正在恢复赛事范围并进入详情页。</text>
+    <text class="entry-copy">正在确认赛事和赛季并进入详情页。</text>
   </view>
 </view>

@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { stageLabel, take } = require("../../utils/format");
-const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 function decorateMatch(item) {
   const isWin = item.result === "胜" || item.result === "win";
@@ -47,8 +47,18 @@ Page({
   },
 
   onLoad(options) {
-    applyScopeFromOptions(options);
     this.setData({ teamId: decodeURIComponent(options.team_id || "") });
+    this.activateScopeAndLoad(options);
+  },
+
+  async activateScopeAndLoad(options) {
+    const activation = await applyScopeFromOptions(options, { sourceLabel: "分享的战队详情" });
+    if (!activation.accepted) {
+      this._scopeEntryBlocked = scopeActivationError(activation);
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
+    this._scopeEntryBlocked = "";
     this.loadData();
   },
 
@@ -56,7 +66,23 @@ Page({
     this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    const team = this.data.team || {};
+    return {
+      title: `${team.short_name || team.name || "战队"} · ${scope && scope.season ? scope.season : "赛事数据"}`,
+      path: appendScopeToPath(
+        `/pages/team-detail/team-detail?team_id=${encodeURIComponent(this.data.teamId || "")}`,
+        scope
+      )
+    };
+  },
+
   async loadData(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
     const teamId = this.data.teamId;
     if (!teamId) {
       this.setData({ loading: false, error: "缺少战队 ID" });
@@ -98,6 +124,16 @@ Page({
         matches: take(payload.matches, 8).map(decorateMatch)
       });
     } catch (error) {
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该战队" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({
         loading: false,
         error: error.message || "战队详情加载失败"

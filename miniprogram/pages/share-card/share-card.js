@@ -1,9 +1,26 @@
 const { request, assetUrl } = require("../../utils/api");
-const { getRequiredScope, scopeParams } = require("../../utils/scope");
+const { confirmScopeMismatch, getRequiredScope, isCompleteScope, scopeActivationError, scopeParams } = require("../../utils/scope");
 const { apiBaseUrl } = require("../../config");
 
 const VERTICAL_CARD = { width: 694, height: 1041 };
 const LANDSCAPE_CARD = { width: 1041, height: 694 };
+
+function buildPlayerShareCodeUrl(playerId, scope) {
+  const normalizedPlayerId = String(playerId || "").trim();
+  if (!normalizedPlayerId || !isCompleteScope(scope)) {
+    throw new Error("生成小程序码需要完整的选手、赛事和赛季。");
+  }
+  const query = {
+    share_type: "player",
+    player_id: normalizedPlayerId,
+    competition: scope.competition,
+    season: scope.season
+  };
+  const encoded = Object.keys(query)
+    .map((key) => `${encodeURIComponent(key)}=${encodeURIComponent(query[key])}`)
+    .join("&");
+  return `${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?${encoded}`;
+}
 
 function loadImage(canvas, source) {
   return new Promise((resolve, reject) => {
@@ -140,13 +157,13 @@ Page({
     this.renderCard();
   },
 
-  async renderCard() {
+  async renderCard(options = {}) {
     try {
       const scope = getRequiredScope();
       if (!this.playerId || !scope) {
-        throw new Error("请先进入赛事后再生成战绩卡。" );
+        throw new Error("请先选择赛事和赛季后再生成战绩卡。" );
       }
-      const payload = await request(`/api/players/${encodeURIComponent(this.playerId)}`, scopeParams(scope));
+      const payload = await request(`/api/players/${encodeURIComponent(this.playerId)}`, scopeParams(scope), options);
       this.payload = payload;
       this.scope = scope;
       const achievements = (payload.achievements || []).slice(0, 6).map((item) => ({
@@ -160,6 +177,16 @@ Page({
         : achievements.slice(0, 2).map((item) => item.code);
       this.setData({ achievements, selectedAchievementCodes }, () => this.initCanvas(payload, scope));
     } catch (error) {
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该选手战绩卡" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.renderCard({ forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({ loading: false, error: error.message || "生成战绩卡失败。" });
     }
   },
@@ -233,7 +260,7 @@ Page({
     this.drawAchievements(ctx, 50, 792, 380);
     try {
       const qrPath = await downloadImage(
-        `${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?player_id=${encodeURIComponent(this.playerId)}`,
+        buildPlayerShareCodeUrl(this.playerId, scope),
         "小程序码"
       );
       const qr = await loadImage(canvas, qrPath);
@@ -243,7 +270,7 @@ Page({
       ctx.strokeStyle = "#d4af37"; ctx.strokeRect(470, 804, 172, 172);
     }
     drawText(ctx, scope.competition, 50, 920, { size: 23, color: "#b8a77a" });
-    drawText(ctx, scope.season || "当前赛季", 50, 956, { size: 23, color: "#b8a77a" });
+    drawText(ctx, scope.season, 50, 956, { size: 23, color: "#b8a77a" });
   },
 
   async loadPlayerAvatar(canvas, player) {
@@ -303,7 +330,7 @@ Page({
     this.drawAchievements(ctx, 55, 523, 560);
     try {
       const qrPath = await downloadImage(
-        `${String(apiBaseUrl).replace(/\/+$/, "")}/api/miniprogram/share-code?player_id=${encodeURIComponent(this.playerId)}`,
+        buildPlayerShareCodeUrl(this.playerId, scope),
         "小程序码"
       );
       const qr = await loadImage(canvas, qrPath);
@@ -313,7 +340,7 @@ Page({
       ctx.strokeStyle = "#d4af37"; ctx.strokeRect(820, 470, 164, 164);
     }
     drawText(ctx, scope.competition, 55, 620, { size: 20, color: "#b8a77a" });
-    drawText(ctx, scope.season || "当前赛季", 55, 650, { size: 20, color: "#b8a77a" });
+    drawText(ctx, scope.season, 55, 650, { size: 20, color: "#b8a77a" });
   },
 
   setMode(event) {
@@ -374,3 +401,5 @@ Page({
     });
   }
 });
+
+module.exports = { buildPlayerShareCodeUrl };

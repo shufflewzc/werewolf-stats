@@ -26,7 +26,7 @@ from email.policy import default as default_email_policy
 from html import escape
 from http import cookies
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 from urllib.parse import parse_qs, quote, urlencode
 from urllib.request import Request, urlopen
 
@@ -56,7 +56,9 @@ from competition_meta import (
     MAX_STAGE_LABEL_LENGTH,
     PARTICIPATION_MODE_INDIVIDUAL,
     PARTICIPATION_MODE_TEAM,
+    SEASON_CATALOG_META_KEY,
     SCORING_RULE_COMPONENTS,
+    SERIES_CATALOG_META_KEY,
     build_city_code,
     build_season_code,
     build_series_context_from_competition,
@@ -70,6 +72,8 @@ from competition_meta import (
     get_series_entry_by_competition,
     infer_region_name_from_competition,
     infer_series_name_from_competition,
+    invalidate_season_catalog_cache,
+    invalidate_series_catalog_cache,
     list_seasons,
     load_season_catalog,
     load_scoring_rule_templates,
@@ -112,6 +116,8 @@ from season_policy import (
 from sqlite_store import (
     DB_PATH,
     RepositoryConflictError,
+    build_scope_grants_etag,
+    build_user_authorization_etag,
     add_ai_job_step,
     connect_read_db,
     connect_write_db,
@@ -125,9 +131,11 @@ from sqlite_store import (
     database_is_initialized,
     delete_session,
     delete_sessions_for_username,
+    delete_user_account,
     delete_web_login_challenge_record,
     acquire_idempotency_key,
     get_data_revision,
+    get_user_scope_grants_etag,
     load_access_overview,
     load_operational_overview,
     load_audit_logs,
@@ -174,14 +182,23 @@ from web_authz import (
     PERMISSION_GROUPS,
     PERMISSION_LABELS,
     SERIES_MANAGEMENT_PERMISSION_KEYS,
+    SCOPE_PERMISSION_KEYS,
+    SCOPE_PERMISSION_LABELS,
+    SCOPE_PERMISSION_PRESETS,
     build_manager_scope_key,
+    get_user_scope_grants,
+    get_user_scope_keys,
+    normalize_scope_permission_keys,
     get_all_permission_keys,
     get_user_manager_scope_keys,
     get_user_permission_labels,
     is_admin_user,
     normalize_permission_keys,
     user_has_any_permission,
+    user_has_any_scope_permission,
     user_has_permission,
+    user_has_scope_permission,
+    user_is_scope_admin,
 )
 from web_config import (
     ACCOUNT_ROLE_OPTIONS,
@@ -1980,6 +1997,14 @@ IDEMPOTENCY_PROTECTED_POST_PATHS = {
     "/achievement-rules",
     "/team-achievement-rules",
     "/series-manage",
+    "/console/matches/create",
+    "/console/matches/batch-create",
+    "/console/imports",
+    "/console/imports/matches",
+    "/console/imports/dimensions",
+    "/console/imports/assets",
+    "/console/imports/review",
+    "/console/accounts",
 }
 
 
@@ -2309,12 +2334,56 @@ def can_manage_series_entry(
 ) -> bool:
     if is_admin_user(user):
         return True
-    if not series_entry or not user_has_any_permission(user, SERIES_MANAGEMENT_PERMISSION_KEYS):
+    if not series_entry:
         return False
+    scope_key = build_manager_scope_key(
+        str(series_entry.get("region_name") or ""),
+        str(series_entry.get("series_slug") or ""),
+    )
+    return user_has_any_scope_permission(
+        user,
+        scope_key,
+        SERIES_MANAGEMENT_PERMISSION_KEYS,
+    )
+
+
+MATCH_SCOPE_PERMISSION_KEYS = {
+    "match_schedule_manage",
+    "match_result_manage",
+    "match_import_manage",
+    "dimension_data_manage",
+    "season_asset_manage",
+    "prediction_manage",
+}
+
+
+def get_competition_scope_key(
+    data: dict[str, Any],
+    competition_name: str,
+) -> str:
+    series_entry = get_series_entry_by_competition(
+        load_series_catalog(data),
+        competition_name,
+    )
+    if not series_entry:
+        return ""
     return build_manager_scope_key(
         str(series_entry.get("region_name") or ""),
         str(series_entry.get("series_slug") or ""),
-    ) in get_user_manager_scope_keys(user)
+    )
+
+
+def _expand_requested_scope_permissions(
+    permission_keys: list[str] | tuple[str, ...] | set[str],
+) -> set[str]:
+    expanded: set[str] = set()
+    for permission_key in permission_keys:
+        normalized = str(permission_key or "").strip()
+        if normalized == "match_manage":
+            expanded.update(MATCH_SCOPE_PERMISSION_KEYS)
+        elif normalized in SCOPE_PERMISSION_KEYS:
+            expanded.add(normalized)
+    return expanded
 
 
 def can_manage_competition_with_permissions(
@@ -2325,18 +2394,38 @@ def can_manage_competition_with_permissions(
 ) -> bool:
     if is_admin_user(user):
         return True
-    if not user_has_any_permission(user, permission_keys):
+    requested_permissions = _expand_requested_scope_permissions(permission_keys)
+    if not requested_permissions:
         return False
-    series_entry = get_series_entry_by_competition(
-        load_series_catalog(data),
+    scope_key = get_competition_scope_key(data, competition_name)
+    if not scope_key:
+        return False
+    return user_has_any_scope_permission(user, scope_key, requested_permissions)
+
+
+def can_manage_competition_action(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+    permission_key: str,
+) -> bool:
+    return can_manage_competition_with_permissions(
+        user,
+        data,
         competition_name,
+        {permission_key},
     )
-    if not series_entry:
-        return False
-    return build_manager_scope_key(
-        str(series_entry.get("region_name") or ""),
-        str(series_entry.get("series_slug") or ""),
-    ) in get_user_manager_scope_keys(user)
+
+
+def is_competition_scope_admin(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+) -> bool:
+    if is_admin_user(user):
+        return True
+    scope_key = get_competition_scope_key(data, competition_name)
+    return bool(scope_key and user_is_scope_admin(user, scope_key))
 
 
 def can_manage_competition(
@@ -2385,25 +2474,52 @@ def can_manage_matches(
 ) -> bool:
     if is_admin_user(user):
         return True
-    if not user_has_permission(user, "match_manage"):
-        return False
     if not competition_name:
-        return bool(get_user_manager_scope_keys(user))
+        return any(
+            user_has_any_scope_permission(user, grant["scope_key"], MATCH_SCOPE_PERMISSION_KEYS)
+            for grant in get_user_scope_grants(user)
+        )
     current_data = data or load_validated_data()
     return can_manage_competition_with_permissions(
         user,
         current_data,
         competition_name,
-        {"match_manage"},
+        MATCH_SCOPE_PERMISSION_KEYS,
     )
 
 
 def can_access_series_management(user: dict[str, Any] | None) -> bool:
     if is_admin_user(user):
         return True
-    return bool(get_user_manager_scope_keys(user)) and user_has_any_permission(
-        user,
-        SERIES_MANAGEMENT_PERMISSION_KEYS,
+    return any(
+        user_has_any_scope_permission(user, grant["scope_key"], SERIES_MANAGEMENT_PERMISSION_KEYS)
+        for grant in get_user_scope_grants(user)
+    )
+
+
+def user_has_any_scoped_capability(
+    user: dict[str, Any] | None,
+    permission_keys: Iterable[str],
+) -> bool:
+    """Return whether an operator has any requested capability in any scope."""
+
+    if is_admin_user(user):
+        return True
+    requested = normalize_scope_permission_keys(permission_keys)
+    if not requested:
+        return False
+    return any(
+        user_has_any_scope_permission(user, grant["scope_key"], requested)
+        for grant in get_user_scope_grants(user)
+    )
+
+
+def user_has_any_scope_admin_grant(user: dict[str, Any] | None) -> bool:
+    if is_admin_user(user):
+        return True
+    return any(
+        bool(grant.get("is_scope_admin"))
+        for grant in get_user_scope_grants(user)
     )
 
 
@@ -2416,7 +2532,7 @@ def get_manager_scope_labels(
     current_data = data or load_validated_data()
     labels: list[str] = []
     catalog = load_series_catalog(current_data)
-    for scope_key in get_user_manager_scope_keys(user):
+    for scope_key in get_user_scope_keys(user):
         region_name, _, series_slug = scope_key.partition("::")
         matched_entries = [
             entry
@@ -3283,6 +3399,8 @@ def build_region_picker(
 
 
 def is_management_path(path: str) -> bool:
+    if path == "/console" or path.startswith("/console/"):
+        return True
     if path in {
         "/accounts",
         "/ai-admin",
@@ -3303,6 +3421,7 @@ def is_management_path(path: str) -> bool:
         "/data-hygiene",
         "/series-manage",
         "/matches/new",
+        "/dimension-stats",
         "/prediction-admin",
     }:
         return True
@@ -3334,10 +3453,15 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         display_name = ctx.current_user.get("display_name") or ctx.current_user["username"]
         role_label = account_role_label(ctx.current_user)
         region_label = get_user_region_label(ctx.current_user)
+        has_console_access = user_has_any_scoped_capability(
+            ctx.current_user,
+            SCOPE_PERMISSION_KEYS,
+        )
+        console_entry = "/console" if has_console_access else "/profile"
         user_html = f"""
         <div class="account-actions d-flex flex-wrap align-items-center gap-3">
           <span class="small text-secondary">当前登录：{escape(display_name)} · {escape(role_label)}{' · ' + escape(region_label) if region_label else ''}</span>
-          {'' if is_admin_layout else '<a class="btn btn-outline-dark btn-sm" href="/profile">进入控制台</a>'}
+          {'' if is_admin_layout else f'<a class="btn btn-outline-dark btn-sm" href="{console_entry}">进入控制台</a>'}
           <form method="post" action="/logout" class="m-0">
             <button type="submit" class="btn btn-outline-dark btn-sm">退出登录</button>
           </form>
@@ -3351,30 +3475,132 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         ]
         if AI_PUBLIC_FEATURES_ENABLED:
             nav_links.insert(2, build_nav_link("AI数据分析", "/ai-analysis", ctx.path == "/ai-analysis"))
-        admin_nav_links = [
-            build_nav_group_label("工作台"),
-            build_nav_link("控制台总览", "/profile", ctx.path == "/profile"),
-            build_nav_link("战队认领", "/team-center", ctx.path == "/team-center"),
-        ]
-        if can_manage_matches(ctx.current_user):
+        admin_nav_links = [build_nav_group_label("工作台")]
+        if has_console_access:
+            admin_nav_links.append(
+                build_nav_link("控制台总览", "/console", ctx.path == "/console")
+            )
+        admin_nav_links.extend(
+            [
+                build_nav_link("账号资料", "/profile", ctx.path == "/profile"),
+                build_nav_link("战队认领", "/team-center", ctx.path == "/team-center"),
+            ]
+        )
+
+        can_search_matches = user_has_any_scoped_capability(
+            ctx.current_user,
+            MATCH_SCOPE_PERMISSION_KEYS | {"scope_audit_view"},
+        )
+        can_schedule_matches = user_has_any_scoped_capability(
+            ctx.current_user, {"match_schedule_manage"}
+        )
+        can_import_matches = user_has_any_scoped_capability(
+            ctx.current_user, {"match_import_manage"}
+        )
+        can_import_dimensions = user_has_any_scoped_capability(
+            ctx.current_user, {"dimension_data_manage"}
+        )
+        can_import_assets = user_has_any_scoped_capability(
+            ctx.current_user, {"season_asset_manage"}
+        )
+        can_manage_predictions = user_has_any_scoped_capability(
+            ctx.current_user, {"prediction_manage"}
+        )
+        can_view_imports = user_has_any_scoped_capability(
+            ctx.current_user,
+            {
+                "match_import_manage",
+                "dimension_data_manage",
+                "season_asset_manage",
+                "scope_audit_view",
+            },
+        )
+        if any(
+            (
+                can_search_matches,
+                can_schedule_matches,
+                can_import_matches,
+                can_import_dimensions,
+                can_import_assets,
+                can_manage_predictions,
+            )
+        ):
             admin_nav_links.append(build_nav_group_label("赛事运营"))
+        if can_search_matches:
             admin_nav_links.append(
                 build_nav_link(
-                    "比赛管理",
-                    "/matches/new",
-                    ctx.path == "/matches/new"
+                    "比赛搜索",
+                    "/console/matches",
+                    ctx.path == "/console/matches"
                     or (ctx.path.startswith("/matches/") and ctx.path.endswith("/edit")),
                 )
             )
+        if can_schedule_matches:
+            admin_nav_links.extend(
+                [
+                    build_nav_link(
+                        "创建比赛",
+                        "/console/matches/create",
+                        ctx.path == "/console/matches/create",
+                    ),
+                    build_nav_link(
+                        "批量建赛",
+                        "/console/matches/batch-create",
+                        ctx.path == "/console/matches/batch-create",
+                    ),
+                ]
+            )
+        if can_import_matches:
+            admin_nav_links.append(
+                build_nav_link(
+                    "比赛结果上传",
+                    "/console/imports/matches",
+                    ctx.path == "/console/imports/matches",
+                )
+            )
+        if can_import_dimensions:
+            admin_nav_links.append(
+                build_nav_link(
+                    "维度数据上传",
+                    "/console/imports/dimensions",
+                    ctx.path == "/console/imports/dimensions",
+                )
+            )
+        if can_import_assets:
+            admin_nav_links.append(
+                build_nav_link(
+                    "赛季素材上传",
+                    "/console/imports/assets",
+                    ctx.path == "/console/imports/assets",
+                )
+            )
+        if can_view_imports:
+            admin_nav_links.append(
+                build_nav_link(
+                    "导入记录",
+                    "/console/imports",
+                    ctx.path in {"/console/imports", "/console/imports/review"},
+                )
+            )
+        if can_manage_predictions:
             admin_nav_links.append(
                 build_nav_link("胜率预测", "/prediction-admin", ctx.path == "/prediction-admin")
             )
         if can_access_series_management(ctx.current_user):
+            admin_nav_links.append(build_nav_group_label("赛区配置"))
             admin_nav_links.append(
                 build_nav_link(
                     "系列赛管理",
                     "/series-manage",
                     ctx.path == "/series-manage",
+                )
+            )
+        if user_has_any_scope_admin_grant(ctx.current_user):
+            admin_nav_links.append(
+                build_nav_link(
+                    "赛区账号",
+                    "/console/accounts",
+                    ctx.path == "/console/accounts",
                 )
             )
         if is_admin_user(ctx.current_user):
@@ -3405,7 +3631,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
                 build_nav_link("战队成就规则", "/team-achievement-rules", ctx.path == "/team-achievement-rules")
             )
             admin_nav_links.append(
-                build_nav_link("账号管理", "/accounts", ctx.path == "/accounts")
+                build_nav_link("平台账号", "/accounts", ctx.path == "/accounts")
             )
             admin_nav_links.append(
                 build_nav_link("权限控制", "/permissions", ctx.path == "/permissions")
@@ -3492,10 +3718,19 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
               <div class="brand-title">{brand_title}</div>
               <div class="small text-secondary">{brand_copy}</div>
             </div>
-            <nav class="admin-sidebar-nav primary-nav d-flex flex-column gap-1">{''.join(nav_links)}</nav>
-            <div class="admin-sidebar-footer">
-              {admin_return_link}
-            </div>
+            <details class="admin-sidebar-menu">
+              <summary>
+                <span>后台导航</span>
+                <span class="admin-sidebar-menu-state" aria-hidden="true">
+                  <span class="admin-sidebar-menu-state-closed">展开</span>
+                  <span class="admin-sidebar-menu-state-open">收起</span>
+                </span>
+              </summary>
+              <nav class="admin-sidebar-nav primary-nav d-flex flex-column gap-1">{''.join(nav_links)}</nav>
+              <div class="admin-sidebar-footer">
+                {admin_return_link}
+              </div>
+            </details>
           </aside>
           <main class="admin-main">
             <div class="admin-topbar">
@@ -6146,6 +6381,21 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
         padding-bottom: 0.8rem;
         border-bottom: 1px solid var(--admin-line);
       }}
+      body.app-admin .admin-sidebar-menu {{
+        display: flex;
+        flex: 1 1 auto;
+        min-height: 0;
+        flex-direction: column;
+      }}
+      body.app-admin .admin-sidebar-menu > summary {{
+        display: none;
+      }}
+      body.app-admin .admin-sidebar-menu > .admin-sidebar-nav {{
+        display: flex !important;
+      }}
+      body.app-admin .admin-sidebar-menu > .admin-sidebar-footer {{
+        display: block !important;
+      }}
       body.app-admin .admin-sidebar-nav {{
         flex: 1 1 auto;
         overflow-y: auto;
@@ -6203,6 +6453,51 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
           top: auto;
           min-height: auto;
           margin-bottom: 1rem;
+          gap: 0.7rem;
+          padding: 0.8rem;
+        }}
+        body.app-admin .admin-sidebar-brand {{
+          padding-bottom: 0.7rem;
+        }}
+        body.app-admin .admin-sidebar-menu {{
+          display: block;
+        }}
+        body.app-admin .admin-sidebar-menu > summary {{
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 1rem;
+          min-height: 44px;
+          padding: 0.55rem 0.7rem;
+          color: var(--admin-ink);
+          background: var(--admin-surface-muted);
+          border: 1px solid var(--admin-line);
+          border-radius: 8px;
+          cursor: pointer;
+          font-weight: 800;
+          list-style: none;
+        }}
+        body.app-admin .admin-sidebar-menu > summary::-webkit-details-marker {{
+          display: none;
+        }}
+        body.app-admin .admin-sidebar-menu[open] > summary {{
+          margin-bottom: 0.65rem;
+        }}
+        body.app-admin .admin-sidebar-menu-state-open {{
+          display: none;
+        }}
+        body.app-admin .admin-sidebar-menu[open] .admin-sidebar-menu-state-closed {{
+          display: none;
+        }}
+        body.app-admin .admin-sidebar-menu[open] .admin-sidebar-menu-state-open {{
+          display: inline;
+        }}
+        body.app-admin .admin-sidebar-menu:not([open]) > .admin-sidebar-nav,
+        body.app-admin .admin-sidebar-menu:not([open]) > .admin-sidebar-footer {{
+          display: none !important;
+        }}
+        body.app-admin .admin-sidebar-nav {{
+          max-height: min(64vh, 520px);
         }}
         body.app-admin .admin-main {{
           padding-top: 0;
@@ -6500,30 +6795,55 @@ def save_matches(matches: list[dict[str, Any]]) -> list[str]:
         raise
 
 
-def save_repository_state(data: dict[str, Any], users: list[dict[str, Any]]) -> list[str]:
+def save_repository_state(
+    data: dict[str, Any],
+    users: list[dict[str, Any]],
+    *,
+    meta_updates: dict[str, str] | None = None,
+    membership_requests: list[dict[str, Any]] | None = None,
+) -> list[str]:
     invalidate_validated_data_cache()
-    backup_errors, backup_data = validate_repository()
-    if backup_errors:
-        return backup_errors
-    backup_users = load_users()
+    # A few administrative restore paths intentionally discard the historical
+    # revision stored in their snapshot. Pin those writes to the revision that
+    # is current before we read the authoritative account set, so an account or
+    # repository change racing validation makes the final write fail its CAS
+    # instead of persisting references validated against stale users.
+    data_to_save = data
+    if data.get("_data_revision") is None:
+        data_to_save = deepcopy(data)
+        data_to_save["_data_revision"] = get_data_revision()
+    # Repository snapshots may contain markerless, deleted accounts. The store
+    # intentionally ignores those rows, so validation must use the same
+    # effective account set rather than trusting the caller's stale snapshot.
+    authoritative_users = load_users()
+    validation_users_by_username = {
+        str(user.get("username") or "").strip(): user
+        for user in authoritative_users
+        if str(user.get("username") or "").strip()
+    }
+    for user in users:
+        username = str(user.get("username") or "").strip()
+        if username and user.get("account_create"):
+            validation_users_by_username.setdefault(username, user)
+    errors = validate_repository_state(
+        data,
+        list(validation_users_by_username.values()),
+    )
+    if errors:
+        return errors
     try:
-        save_repository_data(data, users)
-        errors, _ = validate_repository()
-        if errors:
-            restore_data = deepcopy(backup_data)
-            restore_data.pop("_data_revision", None)
-            save_repository_data(restore_data, backup_users)
-            invalidate_validated_data_cache()
-            return errors
+        save_repository_data(
+            data_to_save,
+            users,
+            meta_updates=meta_updates,
+            membership_requests=membership_requests,
+        )
         invalidate_validated_data_cache()
         return []
     except RepositoryConflictError as exc:
         invalidate_validated_data_cache()
         return [str(exc)]
     except Exception:
-        restore_data = deepcopy(backup_data)
-        restore_data.pop("_data_revision", None)
-        save_repository_data(restore_data, backup_users)
         invalidate_validated_data_cache()
         raise
 
@@ -6961,7 +7281,53 @@ def can_manage_player(ctx: RequestContext, player_id: str) -> bool:
         return False
     if is_admin_user(ctx.current_user):
         return True
-    return user_has_bound_player_id(ctx.current_user, player_id)
+    if user_has_bound_player_id(ctx.current_user, player_id):
+        return True
+    try:
+        data = load_validated_data()
+    except Exception:
+        return False
+    player = next(
+        (
+            item
+            for item in data.get("players", [])
+            if str(item.get("player_id") or "").strip() == player_id.strip()
+        ),
+        None,
+    )
+    if not player:
+        return False
+    # A player profile is global today. Resolve every series that references the
+    # profile and require ownership of all of them, otherwise an edit in one
+    # series could silently change another series' player data.
+    competition_names = {
+        str(scope.get("competition_name") or "").strip()
+        for scope in get_player_binding_scopes(data, player_id)
+        if str(scope.get("competition_name") or "").strip()
+    }
+    return bool(competition_names) and all(
+        competition_name
+        and is_competition_scope_admin(
+            ctx.current_user,
+            data,
+            competition_name,
+        )
+        for competition_name in competition_names
+    )
+
+
+def is_team_scope_admin(
+    data: dict[str, Any],
+    user: dict[str, Any] | None,
+    team: dict[str, Any] | None,
+) -> bool:
+    if not user or not team:
+        return False
+    competition_name, _ = get_team_scope(team)
+    return bool(
+        competition_name
+        and is_competition_scope_admin(user, data, competition_name)
+    )
 
 
 def can_manage_team(ctx: RequestContext, team: dict[str, Any] | None, player: dict[str, Any] | None) -> bool:
@@ -6975,6 +7341,8 @@ def can_manage_team(ctx: RequestContext, team: dict[str, Any] | None, player: di
         data = load_validated_data()
     except Exception:
         return is_team_captain(team, player)
+    if is_team_scope_admin(data, ctx.current_user, team):
+        return True
     return user_is_team_captain(data, ctx.current_user, team)
 
 
@@ -6993,6 +7361,32 @@ def get_user_captained_team_ids(data: dict[str, Any], user: dict[str, Any] | Non
     }
 
 
+def can_manage_player_binding_scope(
+    data: dict[str, Any],
+    acting_user: dict[str, Any] | None,
+    source_player: dict[str, Any] | None = None,
+) -> bool:
+    if not acting_user:
+        return False
+    if is_admin_user(acting_user) or user_has_permission(
+        acting_user, "player_binding_manage"
+    ):
+        return True
+    if not source_player:
+        return False
+    player_id = str(source_player.get("player_id") or "").strip()
+    scopes = get_player_binding_scopes(data, player_id)
+    return bool(scopes) and all(
+        str(scope.get("competition_name") or "").strip()
+        and is_competition_scope_admin(
+            acting_user,
+            data,
+            str(scope.get("competition_name") or "").strip(),
+        )
+        for scope in scopes
+    )
+
+
 def can_manage_player_bindings(
     data: dict[str, Any],
     acting_user: dict[str, Any] | None,
@@ -7003,10 +7397,7 @@ def can_manage_player_bindings(
         return False
     if target_user and acting_user["username"] == target_user["username"]:
         return True
-    return bool(
-        is_admin_user(acting_user)
-        or user_has_permission(acting_user, "player_binding_manage")
-    )
+    return can_manage_player_binding_scope(data, acting_user, source_player)
 
 
 def build_placeholder_player(
@@ -7704,45 +8095,64 @@ def get_player_binding_scopes(
     data: dict[str, Any],
     player_id: str,
 ) -> list[dict[str, str]]:
+    normalized_player_id = str(player_id or "").strip()
+    if not normalized_player_id:
+        return []
     player = next(
         (
             item
             for item in data.get("players", [])
-            if str(item.get("player_id") or "").strip() == player_id
+            if str(item.get("player_id") or "").strip() == normalized_player_id
         ),
         None,
     )
-    team = get_team_by_id(data, str((player or {}).get("team_id") or "").strip())
-    competition_name, season_name = get_team_scope(team)
-    if competition_name and season_name:
-        return [
-            {
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "scope_label": f"{competition_name} / {season_name}",
-            }
-        ]
-
-    scopes: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
-    for match in data["matches"]:
-        if not any(entry["player_id"] == player_id for entry in match["players"]):
+
+    def add_scope(competition_name: object, season_name: object) -> None:
+        normalized_competition = str(competition_name or "").strip()
+        if not normalized_competition:
+            return
+        normalized_season = str(season_name or "").strip() or "未命名赛季"
+        seen.add((normalized_competition, normalized_season))
+
+    player_team_id = str((player or {}).get("team_id") or "").strip()
+    for team in data.get("teams", []):
+        team_id = str(team.get("team_id") or "").strip()
+        related_player_ids = {
+            str(value or "").strip()
+            for value in (team.get("members", []) or [])
+            if str(value or "").strip()
+        }
+        captain_player_id = str(team.get("captain_player_id") or "").strip()
+        if captain_player_id:
+            related_player_ids.add(captain_player_id)
+        if team_id == player_team_id or normalized_player_id in related_player_ids:
+            competition_name, season_name = get_team_scope(team)
+            add_scope(competition_name, season_name)
+
+    for match in data.get("matches", []):
+        if not any(
+            str(entry.get("player_id") or "").strip() == normalized_player_id
+            for entry in match.get("players", [])
+        ):
             continue
         competition_name = get_match_competition_name(match)
-        season_name = str(match.get("season") or "").strip() or "未命名赛季"
-        scope_key = (competition_name, season_name)
-        if scope_key in seen:
+        season_name = str(match.get("season") or "").strip()
+        add_scope(competition_name, season_name)
+
+    for row in data.get("season_player_dimension_stats", []):
+        if str(row.get("player_id") or "").strip() != normalized_player_id:
             continue
-        seen.add(scope_key)
-        scopes.append(
-            {
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "scope_label": f"{competition_name} / {season_name}",
-            }
-        )
-    scopes.sort(key=lambda item: (item["competition_name"], item["season_name"]))
-    return scopes
+        add_scope(row.get("competition_name"), row.get("season_name"))
+
+    return [
+        {
+            "competition_name": competition_name,
+            "season_name": season_name,
+            "scope_label": f"{competition_name} / {season_name}",
+        }
+        for competition_name, season_name in sorted(seen)
+    ]
 
 
 def get_player_binding_scope_labels(
@@ -12452,7 +12862,12 @@ def get_match_page(ctx: RequestContext, match_id: str) -> str:
         )
 
     edit_button = ""
-    if can_manage_matches(ctx.current_user, data, competition_name):
+    if can_manage_competition_action(
+        ctx.current_user,
+        data,
+        competition_name,
+        "match_result_manage",
+    ):
         edit_button = (
             f'<a class="btn btn-dark" href="/matches/{escape(match_id)}/edit?next='
             f'{quote(build_scoped_path("/matches/" + match_id, competition_name, season_name))}">编辑比赛</a>'
@@ -13102,7 +13517,11 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
     team_competition_name, team_season_name = get_team_scope(team)
     team_status = get_team_season_status(data, team)
     team_status_label = get_team_season_status_label(team_status)
-    can_edit_team_page = can_manage_team_profile and team_status in {"ongoing", "upcoming", "unknown"}
+    can_edit_completed_team = is_team_scope_admin(data, ctx.current_user, team)
+    can_edit_team_page = can_manage_team_profile and (
+        team_status in {"ongoing", "upcoming", "unknown"}
+        or can_edit_completed_team
+    )
     guild = get_guild_by_id(data, str(team.get("guild_id") or "").strip())
     stage_group_map = get_team_stage_group_map(team)
     team_logo_html = build_team_logo_html(team["logo"], team["name"])
@@ -13252,7 +13671,7 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
           '''
           if can_edit_team_page
           else (
-            '<div class="small text-secondary">当前赛季已结束，战队资料已锁定。</div>'
+            '<div class="small text-secondary">当前赛季已结束，只有该赛事负责人可以继续修正战队资料。</div>'
             if team_status == "completed"
             else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以编辑战队资料。</div>'
           )
@@ -13806,7 +14225,13 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
             )
             manage_actions = (
                 f'<a class="btn btn-sm btn-outline-dark" href="/matches/{escape(item["match_id"])}/edit?next={quote(build_scoped_path("/teams/" + team_id, selected_competition, selected_season))}">编辑比赛</a>'
-                if can_edit_team_page and can_manage_matches(ctx.current_user, data, selected_competition)
+                if can_edit_team_page
+                and can_manage_competition_action(
+                    ctx.current_user,
+                    data,
+                    selected_competition,
+                    "match_result_manage",
+                )
                 else ""
             )
             rows.append(
@@ -14611,6 +15036,10 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
             metadata={"competition_name": competition_name, "season_name": season_name, "grade": grade or "auto"},
         )
         return redirect(start_response, append_alert_query(redirect_path, "战力评价已更新。"))
+    if action in {"save_ai_team_season_summary", "generate_ai_team_season_summary"}:
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
     if action in {"save_ai_team_season_summary", "generate_ai_team_season_summary"} and not AI_PUBLIC_FEATURES_ENABLED:
         return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
 
@@ -14663,9 +15092,6 @@ def handle_team_page(ctx: RequestContext, start_response, team_id: str):
         season_name,
     )
     if action == "save_ai_team_season_summary":
-        admin_guard = require_admin(ctx, start_response)
-        if admin_guard is not None:
-            return admin_guard
         summary_content = form_value(ctx.form, "summary_content").strip()
         if not summary_content:
             return redirect(
@@ -15237,7 +15663,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
     ai_player_summary_actions = ""
     ai_player_summary_admin_editor = ""
     if selected_competition and selected_season:
-        if ai_configured and (not ai_player_season_summary or is_admin_user(ctx.current_user)):
+        if ai_configured and is_admin_user(ctx.current_user):
             ai_player_summary_actions = f"""
             <form method="post" action="/players/{escape(player_id)}" class="m-0">
               <input type="hidden" name="action" value="generate_ai_player_season_summary">
@@ -15274,7 +15700,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
                 <div>
                   <h2 class="section-title mb-2">AI 选手赛季总结</h2>
-                  <p class="section-copy mb-0">基于当前选手在这个赛事赛季下的真实战绩、角色分布和比赛记录生成总结。首次生成对所有访客开放；生成后仅管理员可重生成或编辑。</p>
+                  <p class="section-copy mb-0">基于当前选手在这个赛事赛季下的真实战绩、角色分布和比赛记录生成总结；仅平台管理员可生成、重生成或编辑。</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">{ai_player_summary_actions}</div>
               </div>
@@ -15289,7 +15715,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
                 <div>
                   <h2 class="section-title mb-2">AI 选手赛季总结</h2>
-                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成选手赛季总结。')}</p>
+                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，仅平台管理员可以生成。' if ai_configured else '当前还没有配置 AI 接口。')}</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">{ai_player_summary_actions}</div>
               </div>
@@ -15546,6 +15972,10 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
             metadata={"competition_name": competition_name, "season_name": season_name, "grade": grade or "auto"},
         )
         return redirect(start_response, append_alert_query(redirect_path, "战力评价已更新。"))
+    if action in {"save_ai_player_season_summary", "generate_ai_player_season_summary"}:
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
     if action in {"save_ai_player_season_summary", "generate_ai_player_season_summary"} and not AI_PUBLIC_FEATURES_ENABLED:
         return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
 
@@ -15595,9 +16025,6 @@ def handle_player_page(ctx: RequestContext, start_response, player_id: str):
         season_name,
     )
     if action == "save_ai_player_season_summary":
-        admin_guard = require_admin(ctx, start_response)
-        if admin_guard is not None:
-            return admin_guard
         summary_content = form_value(ctx.form, "summary_content").strip()
         if not summary_content:
             return redirect(
@@ -16340,6 +16767,8 @@ def append_user_player_binding(
                     **user,
                     "player_id": next_player_id,
                     "linked_player_ids": linked_player_ids,
+                    "user_player_bindings_write": True,
+                    "expected_user_authorization_etag": build_user_authorization_etag(user),
                 }
             )
         else:
@@ -16369,6 +16798,8 @@ def remove_user_player_binding(
                 **user,
                 "player_id": next_primary,
                 "linked_player_ids": remaining_ids[1:] if remaining_ids else [],
+                "user_player_bindings_write": True,
+                "expected_user_authorization_etag": build_user_authorization_etag(user),
             }
         )
     return updated_users
@@ -16399,6 +16830,8 @@ def add_user_linked_player_id(
                 **user,
                 "player_id": next_primary,
                 "linked_player_ids": linked_player_ids,
+                "user_player_bindings_write": True,
+                "expected_user_authorization_etag": build_user_authorization_etag(user),
             }
         )
     return updated_users
@@ -16430,6 +16863,8 @@ def remove_user_linked_player_id(
                     for item in linked_player_ids
                     if item != str(next_primary or "").strip()
                 ],
+                "user_player_bindings_write": True,
+                "expected_user_authorization_etag": build_user_authorization_etag(user),
             }
         )
     return updated_users
@@ -17001,8 +17436,30 @@ def handle_web_login_complete(ctx: RequestContext, start_response):
     user = next((item for item in users if item["username"] == username and item.get("active", True)), None)
     if not user:
         return start_response_html(start_response, "200 OK", login_page(ctx, alert="确认登录的账号不可用，请重新登录。"))
+    expected_user_authorization_etag = str(
+        payload.get("user_authorization_etag") or ""
+    ).strip()
+    if len(expected_user_authorization_etag) != 64:
+        delete_web_login_challenge_record(token)
+        return start_response_html(
+            start_response,
+            "409 Conflict",
+            login_page(ctx, alert="登录确认已失效，请重新扫码登录。"),
+        )
     session_token = secrets.token_urlsafe(24)
-    save_session(session_token, username)
+    try:
+        save_session(
+            session_token,
+            username,
+            expected_user_authorization_etag=expected_user_authorization_etag,
+        )
+    except RepositoryConflictError:
+        delete_web_login_challenge_record(token)
+        return start_response_html(
+            start_response,
+            "409 Conflict",
+            login_page(ctx, alert="账号凭据或权限已变化，请重新扫码登录。"),
+        )
     payload["status"] = "used"
     payload["used_at"] = int(time.time())
     delete_web_login_challenge_record(token)
@@ -17080,6 +17537,44 @@ def require_competition_manager(
     )
 
 
+def require_competition_action(
+    ctx: RequestContext,
+    start_response,
+    data: dict[str, Any],
+    competition_name: str,
+    permission_key: str,
+    message: str,
+):
+    if can_manage_competition_action(
+        ctx.current_user,
+        data,
+        competition_name,
+        permission_key,
+    ):
+        return None
+    return start_response_html(
+        start_response,
+        "403 Forbidden",
+        layout("没有权限", f'<div class="alert alert-danger">{escape(message)}</div>', ctx),
+    )
+
+
+def require_competition_scope_admin(
+    ctx: RequestContext,
+    start_response,
+    data: dict[str, Any],
+    competition_name: str,
+    message: str,
+):
+    if is_competition_scope_admin(ctx.current_user, data, competition_name):
+        return None
+    return start_response_html(
+        start_response,
+        "403 Forbidden",
+        layout("没有权限", f'<div class="alert alert-danger">{escape(message)}</div>', ctx),
+    )
+
+
 def require_competition_catalog_manager(
     ctx: RequestContext,
     start_response,
@@ -17131,7 +17626,23 @@ def handle_login(ctx: RequestContext, start_response):
     for user in load_users():
         if user["username"] == username and user.get("active") and verify_password(password, user):
             token = secrets.token_urlsafe(24)
-            save_session(token, username)
+            try:
+                save_session(
+                    token,
+                    username,
+                    expected_user_authorization_etag=build_user_authorization_etag(
+                        user
+                    ),
+                )
+            except RepositoryConflictError:
+                return start_response_html(
+                    start_response,
+                    "409 Conflict",
+                    login_page(
+                        ctx,
+                        alert="账号凭据或权限刚刚发生变化，请重新登录。",
+                    ),
+                )
             clear_login_failures(ctx.remote_addr, username)
             return redirect(
                 start_response,
@@ -17193,6 +17704,27 @@ def serialize_miniprogram_user(user: dict[str, Any]) -> dict[str, Any]:
         "photo": user.get("photo") or DEFAULT_PLAYER_PHOTO,
         "wechat_bound": bool(user.get("wechat_openid")),
     }
+
+
+def resolve_active_miniprogram_session(
+    session_token: str,
+) -> tuple[str, dict[str, Any] | None, list[dict[str, Any]]]:
+    normalized_token = str(session_token or "").strip()
+    username = load_session_username(normalized_token)
+    if not username:
+        return "", None, []
+    users = load_users()
+    user = next(
+        (
+            item
+            for item in users
+            if item["username"] == username and item.get("active", True)
+        ),
+        None,
+    )
+    if not user:
+        delete_session(normalized_token)
+    return username, user, users
 
 
 def request_wechat_session(code: str) -> dict[str, str]:
@@ -17589,20 +18121,69 @@ def handle_miniprogram_login(ctx: RequestContext, start_response):
             "photo": DEFAULT_PLAYER_PHOTO,
             "wechat_openid": openid,
             "wechat_unionid": unionid,
+            "account_create": True,
         }
         users.append(user)
-        save_users(users)
-        created = True
+        try:
+            save_users(users)
+            created = True
+        except RepositoryConflictError:
+            # A concurrent login may have created the same WeChat account.
+            # Reload it instead of turning a harmless race into a 500.
+            users = load_users()
+            user = next(
+                (item for item in users if item.get("wechat_openid") == openid),
+                None,
+            )
+            if not user:
+                return start_response_json(
+                    start_response,
+                    "409 Conflict",
+                    {"error": "账号已注销或正在更新，请联系管理员。"},
+                )
+    elif not user.get("active", True):
+        delete_sessions_for_username(str(user.get("username") or ""))
+        return start_response_json(
+            start_response,
+            "403 Forbidden",
+            {"error": "账号已停用，请联系管理员。"},
+        )
     elif unionid and not user.get("wechat_unionid"):
         for item in users:
             if item["username"] == user["username"]:
                 item["wechat_unionid"] = unionid
+                item["user_wechat_identity_write"] = True
+                item["expected_user_authorization_etag"] = (
+                    build_user_authorization_etag(item)
+                )
                 user = item
                 break
-        save_users(users)
+        try:
+            save_users(users)
+        except RepositoryConflictError as exc:
+            return start_response_json(
+                start_response,
+                "409 Conflict",
+                {"error": str(exc)},
+            )
+
+    if not user.get("active", True):
+        delete_sessions_for_username(str(user.get("username") or ""))
+        return start_response_json(
+            start_response,
+            "403 Forbidden",
+            {"error": "账号已停用，请联系管理员。"},
+        )
 
     token = secrets.token_urlsafe(24)
-    save_session(token, user["username"])
+    try:
+        save_session(token, user["username"])
+    except RepositoryConflictError as exc:
+        return start_response_json(
+            start_response,
+            "409 Conflict",
+            {"error": str(exc)},
+        )
     return start_response_json(
         start_response,
         "200 OK",
@@ -17623,14 +18204,11 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
             headers=[("Allow", "POST")],
         )
     session_token = form_value(ctx.form, "session_token").strip()
-    username = load_session_username(session_token)
+    username, user, users = resolve_active_miniprogram_session(session_token)
     if not username:
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
-
-    users = load_users()
-    user = next((item for item in users if item["username"] == username), None)
     if not user:
-        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录。"})
 
     display_name = form_value(ctx.form, "display_name").strip()
     province_name = form_value(ctx.form, "province_name", DEFAULT_PROVINCE_NAME).strip()
@@ -17661,10 +18239,19 @@ def handle_miniprogram_profile(ctx: RequestContext, start_response):
             "region_name": normalized_region,
             "gender": normalized_gender,
             "bio": bio,
+            "user_profile_write": True,
+            "expected_user_authorization_etag": build_user_authorization_etag(item),
         }
         updated_user = next_user
         updated_users.append(next_user)
-    save_users(updated_users)
+    try:
+        save_users(updated_users)
+    except RepositoryConflictError as exc:
+        return start_response_json(
+            start_response,
+            "409 Conflict",
+            {"error": str(exc)},
+        )
     return start_response_json(
         start_response,
         "200 OK",
@@ -17683,14 +18270,15 @@ def handle_miniprogram_player_search(ctx: RequestContext, start_response):
             headers=[("Allow", "GET")],
         )
     session_token = form_value(ctx.query, "session_token").strip()
-    username = load_session_username(session_token)
+    username, user, users = resolve_active_miniprogram_session(session_token)
     if not username:
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录。"})
     keyword = form_value(ctx.query, "q").strip().lower()
     if len(keyword) < 1:
         return start_response_json(start_response, "200 OK", {"players": []})
     data = load_validated_data()
-    users = load_users()
     team_lookup = {team["team_id"]: team for team in data.get("teams", [])}
     rows = []
     for player in data.get("players", []):
@@ -17726,12 +18314,11 @@ def handle_miniprogram_current_player(ctx: RequestContext, start_response):
             headers=[("Allow", "GET")],
         )
     session_token = form_value(ctx.query, "session_token").strip()
-    username = load_session_username(session_token)
+    username, user, _users = resolve_active_miniprogram_session(session_token)
     if not username:
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
-    user = next((item for item in load_users() if item["username"] == username), None)
     if not user:
-        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录。"})
     competition_name = form_value(ctx.query, "competition").strip()
     season_name = form_value(ctx.query, "season").strip()
     result = resolve_user_player_for_scope(
@@ -17789,15 +18376,13 @@ def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
             headers=[("Allow", "POST")],
         )
     session_token = form_value(ctx.form, "session_token").strip()
-    username = load_session_username(session_token)
+    username, user, users = resolve_active_miniprogram_session(session_token)
     if not username:
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
     player_id = form_value(ctx.form, "player_id").strip()
     data = load_validated_data()
-    users = load_users()
-    user = next((item for item in users if item["username"] == username), None)
     if not user:
-        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录。"})
     if not any(player["player_id"] == player_id for player in data.get("players", [])):
         return start_response_json(start_response, "400 Bad Request", {"error": "没有找到这个选手。"})
     owner = get_user_by_player_id(users, player_id)
@@ -17821,7 +18406,14 @@ def handle_miniprogram_bind_player(ctx: RequestContext, start_response):
         )
     updated_users = append_user_player_binding(users, username, player_id)
     updated_user = next((item for item in updated_users if item["username"] == username), user)
-    save_users(updated_users)
+    try:
+        save_users(updated_users)
+    except RepositoryConflictError as exc:
+        return start_response_json(
+            start_response,
+            "409 Conflict",
+            {"error": str(exc)},
+        )
     return start_response_json(start_response, "200 OK", {"user": serialize_miniprogram_user(updated_user)})
 
 
@@ -17834,14 +18426,12 @@ def handle_miniprogram_unbind_player(ctx: RequestContext, start_response):
             headers=[("Allow", "POST")],
         )
     session_token = form_value(ctx.form, "session_token").strip()
-    username = load_session_username(session_token)
+    username, user, users = resolve_active_miniprogram_session(session_token)
     if not username:
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录。"})
     player_id = form_value(ctx.form, "player_id").strip()
-    users = load_users()
-    user = next((item for item in users if item["username"] == username), None)
     if not user:
-        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录。"})
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录。"})
     if not user_has_bound_player_id(user, player_id):
         return start_response_json(start_response, "404 Not Found", {"error": "这个选手未绑定到当前账号。"})
 
@@ -17888,9 +18478,11 @@ def handle_miniprogram_web_login_confirm(ctx: RequestContext, start_response):
             headers=[("Allow", "POST")],
         )
     session_token = form_value(ctx.form, "session_token").strip()
-    username = load_session_username(session_token)
+    username, user, _users = resolve_active_miniprogram_session(session_token)
     if not username:
         return start_response_json(start_response, "401 Unauthorized", {"error": "请先登录小程序。"})
+    if not user:
+        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录小程序。"})
     token = form_value(ctx.form, "token").strip()
     payload = load_web_login_challenge(token)
     if not payload:
@@ -17900,12 +18492,9 @@ def handle_miniprogram_web_login_confirm(ctx: RequestContext, start_response):
         return start_response_json(start_response, "410 Gone", {"error": "登录二维码已过期，请刷新网页后重试。"})
     if payload.get("status") not in ("pending", "confirmed"):
         return start_response_json(start_response, "409 Conflict", {"error": "这个登录二维码已经使用过，请刷新网页后重试。"})
-    users = load_users()
-    user = next((item for item in users if item["username"] == username and item.get("active", True)), None)
-    if not user:
-        return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在，请重新登录小程序。"})
     payload["status"] = "confirmed"
     payload["username"] = username
+    payload["user_authorization_etag"] = build_user_authorization_etag(user)
     payload["confirmed_at"] = int(time.time())
     save_web_login_challenge(token, payload)
     return start_response_json(
@@ -18021,11 +18610,14 @@ def update_user_account_fields(
             "region_name": normalized_region or "广州市",
             "gender": normalize_user_gender(gender) or "prefer_not_to_say",
             "bio": bio.strip(),
+            "user_profile_write": True,
+            "expected_user_authorization_etag": build_user_authorization_etag(user),
         }
         if password:
             password_salt, password_hash = hash_password(password)
             next_user["password_salt"] = password_salt
             next_user["password_hash"] = password_hash
+            next_user["account_password_write"] = True
         if photo:
             next_user["photo"] = photo
         updated_users.append(next_user)
@@ -18146,11 +18738,14 @@ def handle_team_logo_update(ctx: RequestContext, start_response, team_id: str):
             layout("未找到战队", '<div class="alert alert-danger">没有找到对应的战队。</div>', ctx),
         )
 
-    if get_team_season_status(data, team) == "completed":
+    if (
+        get_team_season_status(data, team) == "completed"
+        and not is_team_scope_admin(data, ctx.current_user, team)
+    ):
         return start_response_html(
             start_response,
             "200 OK",
-            get_team_page(ctx, team_id, alert="当前战队所属赛季已结束，队标与战队资料不再允许修改。"),
+            get_team_page(ctx, team_id, alert="当前战队所属赛季已结束，只有该赛事负责人可以继续修改队标与战队资料。"),
         )
     if not can_manage_team(ctx, team, None):
         return start_response_html(
@@ -18880,8 +19475,22 @@ def handle_prediction_roster_search_api(ctx: RequestContext, start_response):
     data = load_validated_data()
     competition_name = form_value(ctx.query, "competition").strip()
     season_name = form_value(ctx.query, "season").strip()
-    if not competition_name or not can_manage_matches(ctx.current_user, data, competition_name):
-        return start_response_json(start_response, "403 Forbidden", {"error": "没有该赛事的管理权限。"})
+    authoritative_user = (
+        {**ctx.current_user, "scope_grants_authoritative": True}
+        if ctx.current_user
+        else None
+    )
+    if not competition_name or not can_manage_competition_action(
+        authoritative_user,
+        data,
+        competition_name,
+        "prediction_manage",
+    ):
+        return start_response_json(
+            start_response,
+            "403 Forbidden",
+            {"error": "没有该赛事的胜率预测管理权限。"},
+        )
     query = form_value(ctx.query, "q").strip().casefold()
     scoped_matches = [
         match
@@ -19068,6 +19677,7 @@ def handle_healthz(ctx: RequestContext, start_response):
 
 READYZ_TABLES = [
     "users",
+    "user_scope_grants",
     "app_meta",
     "schema_migrations",
     "data_revisions",
@@ -19273,6 +19883,7 @@ def app(environ, start_response):
             body = (
                 "User-agent: *\n"
                 "Disallow: /api/\n"
+                "Disallow: /console\n"
                 "Disallow: /accounts\n"
                 "Disallow: /permissions\n"
                 "Disallow: /ops\n"
@@ -19454,6 +20065,60 @@ def app(environ, start_response):
                     "200 OK",
                     get_team_legacy_page(ctx, parts[1]),
                 )
+        if path in {"/console", "/console/matches"}:
+            from web.features.console import handle_console_route
+
+            console_response = handle_console_route(ctx, start_response)
+            if console_response is not None:
+                return console_response
+        if path == "/console/accounts":
+            guard = require_login(ctx, start_response)
+            if guard is not None:
+                return guard
+            if not user_has_any_scope_admin_grant(ctx.current_user):
+                return start_response_html(
+                    start_response,
+                    "403 Forbidden",
+                    layout(
+                        "没有权限",
+                        '<div class="alert alert-danger">只有平台管理员或赛事负责人可以管理赛区账号。</div>',
+                        ctx,
+                    ),
+                )
+            from web.features.scope_accounts import handle_scope_accounts_route
+
+            return handle_scope_accounts_route(ctx, start_response)
+        console_operation_permissions = {
+            "/console/matches/create": {"match_schedule_manage"},
+            "/console/matches/batch-create": {"match_schedule_manage"},
+            "/console/imports/matches": {"match_import_manage"},
+            "/console/imports/dimensions": {"dimension_data_manage"},
+            "/console/imports/assets": {"season_asset_manage"},
+            "/console/imports": {
+                "match_import_manage",
+                "dimension_data_manage",
+                "season_asset_manage",
+                "scope_audit_view",
+            },
+        }
+        if path in console_operation_permissions or path == "/console/imports/review":
+            guard = require_login(ctx, start_response)
+            if guard is not None:
+                return guard
+            if path != "/console/imports/review" and not user_has_any_scoped_capability(
+                ctx.current_user,
+                console_operation_permissions[path],
+            ):
+                return start_response_html(
+                    start_response,
+                    "403 Forbidden",
+                    layout(
+                        "没有权限",
+                        '<div class="alert alert-danger">当前账号没有执行此项赛区任务的权限。</div>',
+                        ctx,
+                    ),
+                )
+            return handle_match_create(ctx, start_response)
         if path == "/matches/new":
             guard = require_login(ctx, start_response)
             if guard is not None:
@@ -19485,9 +20150,19 @@ def app(environ, start_response):
             guard = require_login(ctx, start_response)
             if guard is not None:
                 return guard
-            manager_guard = require_match_manager(ctx, start_response)
-            if manager_guard is not None:
-                return manager_guard
+            edit_data = load_validated_data()
+            edit_match = get_match_by_id(edit_data.get("matches", []), match_id)
+            if edit_match:
+                manager_guard = require_competition_action(
+                    ctx,
+                    start_response,
+                    edit_data,
+                    get_match_competition_name(edit_match),
+                    "match_result_manage",
+                    "你不能编辑这个地区系列赛下的比赛。",
+                )
+                if manager_guard is not None:
+                    return manager_guard
             return handle_match_edit(ctx, start_response, match_id)
         if path.startswith("/matches/") and path.endswith("/predictions"):
             parts = path.strip("/").split("/")

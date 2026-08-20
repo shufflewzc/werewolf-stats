@@ -27,7 +27,7 @@ build_team_dimension_panel = legacy.build_team_dimension_panel
 build_team_logo_html = legacy.build_team_logo_html
 build_team_match_player_score_section = legacy.build_team_match_player_score_section
 build_team_rows = legacy.build_team_rows
-can_manage_matches = legacy.can_manage_matches
+can_manage_competition_action = legacy.can_manage_competition_action
 can_manage_team = legacy.can_manage_team
 escape = legacy.escape
 format_pct = legacy.format_pct
@@ -43,6 +43,7 @@ get_team_season_status_label = legacy.get_team_season_status_label
 get_team_stage_group_map = legacy.get_team_stage_group_map
 get_user_team_for_scope = legacy.get_user_team_for_scope
 is_admin_user = legacy.is_admin_user
+is_team_scope_admin = legacy.is_team_scope_admin
 layout = legacy.layout
 list_seasons = legacy.list_seasons
 load_membership_requests = legacy.load_membership_requests
@@ -97,6 +98,22 @@ def _build_team_legacy_href(
     )
 
 
+def can_edit_match_from_team_page(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+) -> bool:
+    return bool(
+        competition_name
+        and can_manage_competition_action(
+            user,
+            data,
+            competition_name,
+            "match_result_manage",
+        )
+    )
+
+
 def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any]:
     data = load_validated_data()
     team_lookup = {team["team_id"]: team for team in data["teams"]}
@@ -115,7 +132,11 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
     team_competition_name, team_season_name = get_team_scope(team)
     team_status = get_team_season_status(data, team)
     team_status_label = get_team_season_status_label(team_status)
-    can_edit_team_page = can_manage_team_profile and team_status in {"ongoing", "upcoming", "unknown"}
+    can_edit_completed_team = is_team_scope_admin(data, ctx.current_user, team)
+    can_edit_team_page = can_manage_team_profile and (
+        team_status in {"ongoing", "upcoming", "unknown"}
+        or can_edit_completed_team
+    )
     guild = get_guild_by_id(data, str(team.get("guild_id") or "").strip())
     stage_group_map = get_team_stage_group_map(team)
     team_logo_html = build_team_logo_html(team["logo"], team["name"])
@@ -268,7 +289,7 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
           '''
           if can_edit_team_page
           else (
-            '<div class="small text-secondary">当前赛季已结束，战队资料已锁定。</div>'
+            '<div class="small text-secondary">当前赛季已结束，只有该赛事负责人可以继续修正战队资料。</div>'
             if team_status == "completed"
             else '<div class="small text-secondary">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以编辑战队资料。</div>'
           )
@@ -680,7 +701,11 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
             )
             manage_actions = (
                 f'<a class="btn btn-sm btn-outline-dark" href="/matches/{escape(item["match_id"])}/edit?next={quote(build_scoped_path("/teams/" + team_id, selected_competition, selected_season))}">编辑比赛</a>'
-                if can_edit_team_page and can_manage_matches(ctx.current_user, data, selected_competition)
+                if can_edit_match_from_team_page(
+                    ctx.current_user,
+                    data,
+                    selected_competition,
+                )
                 else ""
             )
             rows.append(

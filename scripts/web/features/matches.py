@@ -19,7 +19,18 @@ from zipfile import BadZipFile, ZipFile
 
 import web_app as legacy
 from generate_match_result_excel_template import build_dynamic_match_template_bytes
+from import_preflight import (
+    CANCELLABLE_STATUSES,
+    STATUS_AWAITING_CONFIRMATION,
+    PreflightError,
+    PreflightStaleError,
+    cancel_preflight,
+    confirm_preflight,
+    create_preflight,
+    get_preflight,
+)
 from sqlite_store import (
+    RepositoryConflictError,
     clear_season_dimension_stats,
     clear_season_dimension_stats_for_day,
     save_season_dimension_stats,
@@ -40,6 +51,7 @@ build_match_award_select = legacy.build_match_award_select
 build_scoped_path = legacy.build_scoped_path
 calculate_score_breakdown_total = legacy.calculate_score_breakdown_total
 can_manage_matches = legacy.can_manage_matches
+can_manage_competition_action = legacy.can_manage_competition_action
 canonicalize_match_ids = legacy.canonicalize_match_ids
 create_import_batch = legacy.create_import_batch
 default_scoring_rule = legacy.default_scoring_rule
@@ -49,6 +61,7 @@ file_value = legacy.file_value
 form_value = legacy.form_value
 get_match_by_id = legacy.get_match_by_id
 get_match_competition_name = legacy.get_match_competition_name
+get_competition_scope_key = legacy.get_competition_scope_key
 get_match_score_model_label = legacy.get_match_score_model_label
 layout = legacy.layout
 list_seasons = legacy.list_seasons
@@ -74,6 +87,7 @@ build_team_serial = legacy.build_team_serial
 redirect = legacy.redirect
 replace_match_path_id = legacy.replace_match_path_id
 require_competition_manager = legacy.require_competition_manager
+require_competition_action = legacy.require_competition_action
 resolve_match_entities = legacy.resolve_match_entities
 rollback_import_batch = legacy.rollback_import_batch
 save_repository_state = legacy.save_repository_state
@@ -320,6 +334,7 @@ def build_batch_create_form(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
 ) -> str:
+    action_path = ctx.path if ctx.path.startswith("/console/") else "/matches/new"
     current = values or {
         "competition_name": form_value(ctx.query, "competition").strip(),
         "season": form_value(ctx.query, "season").strip(),
@@ -334,6 +349,7 @@ def build_batch_create_form(
         current["competition_name"],
         ctx.current_user,
         prioritize_active=True,
+        permission_keys={"match_schedule_manage"},
     )
     season_field_html = build_match_season_field(
         current["competition_name"],
@@ -351,7 +367,7 @@ def build_batch_create_form(
           <p class="section-copy mb-0">先在指定赛季下批量生成赛程壳子，后续再逐场补录版型、时长、阵容、分组和结果。适合一次创建整月赛程。</p>
         </div>
       </div>
-      <form method="post" action="/matches/new">
+      <form method="post" action="{escape(action_path)}">
         <input type="hidden" name="action" value="batch_create_matches">
         <div class="row g-3">
           <div class="col-12 col-xl-4">
@@ -402,6 +418,7 @@ def build_excel_import_panel(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
 ) -> str:
+    action_path = ctx.path if ctx.path.startswith("/console/") else "/matches/new"
     current = values or {
         "group_label": "",
         "match_id": form_value(ctx.query, "match_id").strip(),
@@ -443,7 +460,7 @@ def build_excel_import_panel(
         </div>
         <div class="d-flex flex-wrap gap-2">{''.join(template_links)}</div>
       </div>
-      <form method="get" action="/matches/new" class="team-link-card shadow-sm p-3 mb-4">
+      <form method="get" action="{escape(action_path)}" class="team-link-card shadow-sm p-3 mb-4">
         <input type="hidden" name="action" value="download_scoring_template">
         <div class="row g-3 align-items-end">
           <div class="col-12 col-lg-9">
@@ -456,7 +473,7 @@ def build_excel_import_panel(
         </div>
         <div class="small text-secondary mt-2">系统会按比赛编号读取对应赛事、赛季和该场比赛保存的计分规则。</div>
       </form>
-      <form method="post" action="/matches/new" enctype="multipart/form-data">
+      <form method="post" action="{escape(action_path)}" enctype="multipart/form-data">
         <input type="hidden" name="action" value="import_match_excel">
         <div class="row g-3">
           <div class="col-12 col-lg-4">
@@ -471,7 +488,7 @@ def build_excel_import_panel(
         </div>
         <div class="small text-secondary mt-3">模板只用于补录已经批量创建好的比赛。Excel 每条比赛数据都必须填写唯一比赛编号，系统会自动读取对应赛事、赛季、日期和赛段，不需要在页面选择赛季。这里的分组如果填写，会统一写入本次上传的每场比赛；如果留空，系统才会读取 Excel 里的 `分组` 列。MVP/SVP/背锅列填“是”或留空即可，每局每种最多一位。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
-          <button type="submit" class="btn btn-dark">上传并导入</button>
+          <button type="submit" class="btn btn-dark">上传并预检</button>
         </div>
       </form>
     </section>
@@ -482,6 +499,7 @@ def build_dimension_import_panel(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
 ) -> str:
+    action_path = ctx.path if ctx.path.startswith("/console/") else "/matches/new"
     current = values or {
         "competition_name": form_value(ctx.query, "competition").strip(),
         "season": form_value(ctx.query, "season").strip(),
@@ -490,45 +508,16 @@ def build_dimension_import_panel(
         current["competition_name"],
         ctx.current_user,
         prioritize_active=True,
+        permission_keys={"dimension_data_manage"},
     )
     season_field_html = build_match_season_field(
         current["competition_name"],
         current["season"],
         include_non_ongoing=True,
     )
-    return f"""
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
-        <div>
-          <h2 class="section-title mb-2">Excel 批量导入赛季维度数据</h2>
-          <p class="section-copy mb-0">用于导入比赛日报里的选手维度和战队维度补充数据。系统会把数据绑定到当前赛事赛季下已有的选手、战队档案中。</p>
-        </div>
-        <div class="d-flex flex-wrap gap-2">
-          <a class="btn btn-outline-dark" href="/assets/templates/dimension-stats-upload-template-jcds.xlsx">下载京城大师赛维度模板</a>
-          <a class="btn btn-outline-dark" href="/dimension-stats">管理已导入维度数据</a>
-        </div>
-      </div>
-      <form method="post" action="/matches/new" enctype="multipart/form-data">
-        <input type="hidden" name="action" value="import_dimension_excel">
-        <div class="row g-3">
-          <div class="col-12 col-xl-4">
-            <label class="form-label">地区赛事页</label>
-            {competition_field_html}
-          </div>
-          <div class="col-12 col-xl-3">
-            <label class="form-label">赛季</label>
-            {season_field_html}
-          </div>
-          <div class="col-12 col-xl-5">
-            <label class="form-label">选择 Excel 文件</label>
-            <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
-          </div>
-        </div>
-        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。个人维度表中的 NPC 行不区分大小写并会自动跳过，不影响其他选手和战队维度导入。个人参赛阶段允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写个人参赛阶段记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
-        <div class="d-flex flex-wrap gap-2 mt-4">
-          <button type="submit" class="btn btn-dark">上传并导入维度数据</button>
-        </div>
-      </form>
+    clear_dimension_panel = ""
+    if is_admin_user(ctx.current_user):
+        clear_dimension_panel = f"""
       <div class="border-top mt-4 pt-4">
         <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
           <div>
@@ -536,7 +525,7 @@ def build_dimension_import_panel(
             <p class="section-copy mb-0">只会删除当前赛事 + 赛季下已导入的选手维度和战队维度数据，不会删除比赛、战队、队员主档，也不会影响其他赛季。</p>
           </div>
         </div>
-        <form method="post" action="/matches/new" onsubmit="return confirm('确认清空当前赛事赛季下的全部维度数据吗？清空后需要重新上传。');">
+        <form method="post" action="{escape(action_path)}" onsubmit="return confirm('确认清空当前赛事赛季下的全部维度数据吗？清空后需要重新上传。');">
           <input type="hidden" name="action" value="clear_dimension_stats">
           <div class="row g-3">
             <div class="col-12 col-xl-4">
@@ -558,6 +547,41 @@ def build_dimension_import_panel(
           </div>
         </form>
       </div>
+        """
+    return f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
+        <div>
+          <h2 class="section-title mb-2">Excel 批量导入赛季维度数据</h2>
+          <p class="section-copy mb-0">用于导入比赛日报里的选手维度和战队维度补充数据。系统会把数据绑定到当前赛事赛季下已有的选手、战队档案中。</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/assets/templates/dimension-stats-upload-template-jcds.xlsx">下载京城大师赛维度模板</a>
+          <a class="btn btn-outline-dark" href="/dimension-stats">管理已导入维度数据</a>
+        </div>
+      </div>
+      <form method="post" action="{escape(action_path)}" enctype="multipart/form-data">
+        <input type="hidden" name="action" value="import_dimension_excel">
+        <div class="row g-3">
+          <div class="col-12 col-xl-4">
+            <label class="form-label">地区赛事页</label>
+            {competition_field_html}
+          </div>
+          <div class="col-12 col-xl-3">
+            <label class="form-label">赛季</label>
+            {season_field_html}
+          </div>
+          <div class="col-12 col-xl-5">
+            <label class="form-label">选择 Excel 文件</label>
+            <input class="form-control" type="file" name="dimension_excel_file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
+          </div>
+        </div>
+        <div class="small text-secondary mt-3">目前识别工作表 `单日选手个人维度数据` 和 `单日选手战队维度数据`。个人维度表中的 NPC 行不区分大小写并会自动跳过，不影响其他选手和战队维度导入。个人参赛阶段允许所属战队留空，战队维度表也可以不提供；组队后的记录填写战队并提供战队维度表后，会按当时归属正常统计。系统不会用后来加入的战队反向改写个人参赛阶段记录。重复上传只按同一赛事、赛季、日期和主键逐条新增或更新。</div>
+        <div class="d-flex flex-wrap gap-2 mt-4">
+          <button type="submit" class="btn btn-dark">上传并预检维度数据</button>
+        </div>
+      </form>
+      {clear_dimension_panel}
     </section>
     """
 
@@ -778,7 +802,21 @@ def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str
     all_rows = [
         row
         for row in all_rows
-        if ctx.current_user and can_manage_matches(ctx.current_user, data, str(row["competition_name"]))
+        if ctx.current_user
+        and (
+            can_manage_competition_action(
+                ctx.current_user,
+                data,
+                str(row["competition_name"]),
+                "dimension_data_manage",
+            )
+            or can_manage_competition_action(
+                ctx.current_user,
+                data,
+                str(row["competition_name"]),
+                "scope_audit_view",
+            )
+        )
     ]
     visible_rows = [
         row
@@ -807,7 +845,7 @@ def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str
     )
     rows_html = []
     for row in visible_rows:
-        can_manage = bool(ctx.current_user and can_manage_matches(ctx.current_user, data, str(row["competition_name"])))
+        can_manage = is_admin_user(ctx.current_user)
         players_preview = "、".join(row["players"][:6]) + (" 等" if len(row["players"]) > 6 else "")
         teams_preview = "、".join(row["teams"][:6]) + (" 等" if len(row["teams"]) > 6 else "")
         delete_action = (
@@ -822,7 +860,7 @@ def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str
             </form>
             """
             if can_manage
-            else '<span class="text-secondary small">无管理权限</span>'
+            else '<span class="text-secondary small">仅平台管理员可删除</span>'
         )
         rows_html.append(
             f"""
@@ -879,7 +917,7 @@ def get_dimension_stats_manage_page(ctx: RequestContext, alert: str = "") -> str
           <h2 class="section-title mb-2">已导入比赛日</h2>
           <p class="section-copy mb-0">共 {len(visible_rows)} 个比赛日；删除只影响这一天的赛季维度补充数据，不会删除比赛记录、队员或战队档案。</p>
         </div>
-        <a class="btn btn-dark" href="/matches/new">返回批量导入</a>
+        <a class="btn btn-dark" href="/console/imports/dimensions">返回维度上传</a>
       </div>
       <div class="table-responsive">
         <table class="table align-middle">
@@ -902,14 +940,14 @@ def handle_dimension_stats_manage(ctx: RequestContext, start_response):
     action = form_value(ctx.form, "action").strip()
     if action != "delete_dimension_day":
         return start_response_html(start_response, "405 Method Not Allowed", layout("请求无效", '<div class="alert alert-danger">请求无效。</div>', ctx))
+    if not is_admin_user(ctx.current_user):
+        return start_response_html(start_response, "403 Forbidden", get_dimension_stats_manage_page(ctx, "只有平台管理员可以删除维度数据。"))
     data = load_validated_data()
     competition_name = form_value(ctx.form, "competition_name").strip()
     season_name = form_value(ctx.form, "season").strip()
     played_on = form_value(ctx.form, "played_on").strip()
     if not competition_name or not season_name or not played_on:
         return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, "请先选择要删除的赛事、赛季和比赛日。"))
-    if not can_manage_matches(ctx.current_user, data, competition_name):
-        return start_response_html(start_response, "200 OK", get_dimension_stats_manage_page(ctx, f"你没有权限管理 {competition_name} 的维度数据。"))
     confirmation_error = danger_confirmation_error(
         form_value(ctx.form, "danger_confirmation"),
         "删除维度",
@@ -952,6 +990,7 @@ def build_team_logo_import_panel(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
 ) -> str:
+    action_path = ctx.path if ctx.path.startswith("/console/") else "/matches/new"
     current = values or {
         "competition_name": form_value(ctx.query, "competition").strip(),
         "season": form_value(ctx.query, "season").strip(),
@@ -959,6 +998,7 @@ def build_team_logo_import_panel(
     competition_field_html = build_match_competition_field(
         current["competition_name"],
         ctx.current_user,
+        permission_keys={"season_asset_manage"},
     )
     season_field_html = build_match_season_field(
         current["competition_name"],
@@ -976,7 +1016,7 @@ def build_team_logo_import_panel(
           <a class="btn btn-outline-dark" href="/assets/templates/team-logo-upload-template.xlsx">下载战队图标模板</a>
         </div>
       </div>
-      <form method="post" action="/matches/new" enctype="multipart/form-data">
+      <form method="post" action="{escape(action_path)}" enctype="multipart/form-data">
         <input type="hidden" name="action" value="import_team_logo_excel">
         <div class="row g-3">
           <div class="col-12 col-xl-4">
@@ -994,7 +1034,7 @@ def build_team_logo_import_panel(
         </div>
         <div class="small text-secondary mt-3">`战队logo` 列优先识别你直接插入到 Excel 单元格里的图片；如果这一格没有嵌图，也支持填写站内资源路径，例如 `assets/teams/logo.png`，或 `https://...` 外链地址。这个导入只会创建或更新赛季战队档案的图标，不会改成员、负责人和比赛数据。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
-          <button type="submit" class="btn btn-dark">上传并导入战队图标</button>
+          <button type="submit" class="btn btn-dark">上传并预检战队图标</button>
         </div>
       </form>
     </section>
@@ -1005,6 +1045,7 @@ def build_player_photo_import_panel(
     ctx: RequestContext,
     values: dict[str, str] | None = None,
 ) -> str:
+    action_path = ctx.path if ctx.path.startswith("/console/") else "/matches/new"
     current = values or {
         "competition_name": form_value(ctx.query, "competition").strip(),
         "season": form_value(ctx.query, "season").strip(),
@@ -1012,6 +1053,7 @@ def build_player_photo_import_panel(
     competition_field_html = build_match_competition_field(
         current["competition_name"],
         ctx.current_user,
+        permission_keys={"season_asset_manage"},
     )
     season_field_html = build_match_season_field(
         current["competition_name"],
@@ -1026,7 +1068,7 @@ def build_player_photo_import_panel(
           <p class="section-copy mb-0">上传包含头像图片的 zip 压缩包。系统会按文件名里的参赛 ID 自动匹配当前赛事赛季中已有比赛记录的队员，未匹配到的文件会跳过。</p>
         </div>
       </div>
-      <form method="post" action="/matches/new" enctype="multipart/form-data">
+      <form method="post" action="{escape(action_path)}" enctype="multipart/form-data">
         <div class="row g-3">
           <div class="col-12 col-xl-4">
             <label class="form-label">地区赛事页</label>
@@ -1043,8 +1085,8 @@ def build_player_photo_import_panel(
         </div>
         <div class="small text-secondary mt-3">压缩包内图片文件名一般为 `id.png`，例如 `player-001.png`。支持 PNG、JPG、JPEG、WEBP、GIF；同名目录不影响匹配，系统只取文件名去掉扩展名后的 ID。</div>
         <div class="d-flex flex-wrap gap-2 mt-4">
-          <button type="submit" class="btn btn-dark" name="action" value="import_player_photo_zip">上传并导入队员头像</button>
-          <button type="submit" class="btn btn-outline-dark" name="action" value="export_season_player_photo_roster" formaction="/matches/new" formmethod="get" formnovalidate>导出本赛季队员名单</button>
+          <button type="submit" class="btn btn-dark" name="action" value="import_player_photo_zip">上传并预检队员头像</button>
+          <button type="submit" class="btn btn-outline-dark" name="action" value="export_season_player_photo_roster" formaction="{escape(action_path)}" formmethod="get" formnovalidate>导出本赛季队员名单</button>
         </div>
       </form>
     </section>
@@ -1053,18 +1095,70 @@ def build_player_photo_import_panel(
 
 def _import_batch_status_label(status: str) -> str:
     labels = {
+        "awaiting_confirmation": "待确认",
         "queued": "排队中",
         "running": "处理中",
         "succeeded": "成功",
         "failed": "失败",
+        "cancelled": "已取消",
+        "stale": "需重新预检",
         "rolled_back": "已回滚",
     }
     return labels.get(str(status or "").strip(), status or "未知")
 
 
+def import_batch_scope_keys(item: dict[str, object]) -> list[str]:
+    metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+    raw_scope_keys = metadata.get("permission_scope_keys") if isinstance(metadata, dict) else []
+    if not isinstance(raw_scope_keys, list):
+        return []
+    return sorted(
+        {
+            str(scope_key or "").strip()
+            for scope_key in raw_scope_keys
+            if str(scope_key or "").strip()
+        }
+    )
+
+
+def import_batch_action_permission(item: dict[str, object]) -> str:
+    return {
+        "matches.import_excel": "match_import_manage",
+        "dimension.import_excel": "dimension_data_manage",
+        "team_logo.import_excel": "season_asset_manage",
+        "player_photo.import_zip": "season_asset_manage",
+        "matches.batch_create": "match_schedule_manage",
+    }.get(str(item.get("action") or "").strip(), "scope_audit_view")
+
+
+def can_view_import_batch(ctx: RequestContext, item: dict[str, object]) -> bool:
+    if is_admin_user(ctx.current_user):
+        return True
+    scope_keys = import_batch_scope_keys(item)
+    if not scope_keys:
+        return str(item.get("created_by") or "").strip() == str(
+            (ctx.current_user or {}).get("username") or ""
+        ).strip()
+    action_permission = import_batch_action_permission(item)
+    return all(
+        legacy.user_has_scope_permission(ctx.current_user, scope_key, "scope_audit_view")
+        or legacy.user_has_scope_permission(ctx.current_user, scope_key, action_permission)
+        for scope_key in scope_keys
+    )
+
+
+def can_rollback_import_batch(ctx: RequestContext, item: dict[str, object]) -> bool:
+    del item
+    return is_admin_user(ctx.current_user)
+
+
 def build_import_batches_panel(ctx: RequestContext) -> str:
-    batches = load_import_batches()
-    can_rollback = is_admin_user(ctx.current_user)
+    batches = [
+        item
+        for item in load_import_batches()
+        if can_view_import_batch(ctx, item)
+    ]
+    action_path = ctx.path if ctx.path.startswith("/console/") else "/matches/new"
     has_running_batch = any(
         str(item.get("status") or "").strip() in {"queued", "running"}
         for item in batches
@@ -1085,9 +1179,10 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
             if part
         )
         rollback_form = ""
+        can_rollback = can_rollback_import_batch(ctx, item)
         if status == "succeeded" and can_rollback:
             rollback_form = f"""
-            <form method="post" action="/matches/new" class="d-flex flex-column gap-1">
+            <form method="post" action="{escape(action_path)}" class="d-flex flex-column gap-1">
               <input type="hidden" name="action" value="rollback_import_batch">
               <input type="hidden" name="batch_id" value="{escape(batch_id)}">
               <input class="form-control form-control-sm" name="danger_confirmation" placeholder="输入 回滚 {escape(batch_id)}">
@@ -1109,7 +1204,7 @@ def build_import_batches_panel(ctx: RequestContext) -> str:
                 <div>{escape(str(item.get('created_by') or ''))}</div>
                 {f'<div>文件：{escape(str(item.get("filename") or ""))}</div>' if item.get("filename") else ''}
               </td>
-              <td>{rollback_form or ('<span class="small text-secondary">仅管理员可回滚</span>' if status == 'succeeded' else '<span class="small text-secondary">不可回滚</span>')}</td>
+              <td>{rollback_form or (f'<a class="btn btn-sm btn-outline-dark" href="/console/imports/review?job_id={quote(batch_id)}">查看预检</a>' if status in {"awaiting_confirmation", "stale", "cancelled"} else ('<span class="small text-secondary">仅平台管理员可回滚</span>' if status == 'succeeded' else '<span class="small text-secondary">不可回滚</span>'))}</td>
             </tr>
             """
         )
@@ -1186,6 +1281,7 @@ def build_match_management_path(
     season_name: str = "",
     values: dict[str, str] | None = None,
 ) -> str:
+    base_path = "/console/matches" if ctx.path.startswith("/console/") else "/matches/new"
     current = get_management_form_values(ctx, values)
     if competition_name and not current["competition_name"]:
         current["competition_name"] = competition_name
@@ -1205,8 +1301,8 @@ def build_match_management_path(
         if value
     }
     if not params:
-        return "/matches/new"
-    return f"/matches/new?{urlencode(params)}"
+        return base_path
+    return f"{base_path}?{urlencode(params)}"
 
 
 def build_match_management_panel(
@@ -1249,6 +1345,7 @@ def build_match_management_panel(
     competition_field_html = build_match_competition_field(
         competition_name,
         ctx.current_user,
+        permission_keys={"match_result_manage"},
     )
     season_field_html = build_match_season_field(
         competition_name,
@@ -1360,12 +1457,27 @@ def build_match_management_panel(
         if total_matches
         else '<div class="small text-secondary mt-3">当前筛选下没有比赛。</div>'
     )
+    delete_controls_html = ""
+    if is_admin_user(ctx.current_user):
+        delete_controls_html = """
+          <div class="w-100">
+            <label class="form-label">批量删除确认</label>
+            <input class="form-control" name="danger_confirmation" placeholder="删除比赛时输入 删除比赛 确认">
+            <div class="small text-secondary mt-2">批量删除会校验此确认文字，且仅平台管理员可执行。</div>
+          </div>
+          <button type="submit" class="btn btn-outline-danger" name="action" value="batch_delete_matches">批量删除选中比赛</button>
+        """
+    management_copy = (
+        "这里可以筛选、查看、编辑和批量删除比赛。列表已分页显示，避免数据量大时页面过长。"
+        if is_admin_user(ctx.current_user)
+        else "这里可以筛选、查看、编辑比赛，并批量设置是否计入战队成绩。列表已分页显示，避免数据量大时页面过长。"
+    )
     return f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4" id="match-list">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-4">
         <div>
           <h2 class="section-title mb-2">批量管理比赛</h2>
-          <p class="section-copy mb-0">这里可以筛选、查看、编辑和批量删除比赛。列表已分页显示，避免数据量大时页面过长。</p>
+          <p class="section-copy mb-0">{management_copy}</p>
         </div>
         <span class="chip">{escape(page_summary)}</span>
       </div>
@@ -1439,14 +1551,9 @@ def build_match_management_panel(
         </div>
         {pagination_html}
         <div class="d-flex flex-wrap gap-2 mt-3">
-          <div class="w-100">
-            <label class="form-label">批量删除确认</label>
-            <input class="form-control" name="danger_confirmation" placeholder="删除比赛时输入 删除比赛 确认">
-            <div class="small text-secondary mt-2">只有批量删除会校验此确认文字；设为抽局和取消抽局不会删除比赛。</div>
-          </div>
           <button type="submit" class="btn btn-outline-dark" name="action" value="batch_mark_team_score_excluded">设为抽局</button>
           <button type="submit" class="btn btn-outline-dark" name="action" value="batch_unmark_team_score_excluded">取消抽局</button>
-          <button type="submit" class="btn btn-outline-danger" name="action" value="batch_delete_matches">批量删除选中比赛</button>
+          {delete_controls_html}
         </div>
       </form>
       <script>
@@ -1728,26 +1835,44 @@ def read_wps_cell_images(
 
 
 def save_embedded_team_logo(team_id: str, original_name: str, image_bytes: bytes) -> str:
-    extension = Path(original_name).suffix.lower()
-    if extension not in ALLOWED_IMAGE_EXTENSIONS:
-        raise ValueError(f"不支持的图片格式：{original_name}")
-    signature_error = legacy.validate_image_bytes(original_name, image_bytes)
-    if signature_error:
-        raise ValueError(signature_error)
+    validate_embedded_image(original_name, image_bytes)
     ensure_team_asset_dirs()
+    extension = Path(original_name).suffix.lower()
     filename = f"{team_id}-{secrets.token_hex(6)}{extension}"
     target = TEAM_UPLOAD_DIR / filename
     target.write_bytes(image_bytes)
     return str(target.relative_to(ROOT_DIR)).replace("\\", "/")
 
 
-def save_embedded_player_photo(player_id: str, original_name: str, image_bytes: bytes) -> str:
+def validate_embedded_image(original_name: str, image_bytes: bytes) -> None:
     extension = Path(original_name).suffix.lower()
     if extension not in ALLOWED_IMAGE_EXTENSIONS:
         raise ValueError(f"不支持的图片格式：{original_name}")
     signature_error = legacy.validate_image_bytes(original_name, image_bytes)
     if signature_error:
         raise ValueError(signature_error)
+
+
+def cleanup_generated_import_assets(paths: list[str]) -> None:
+    """Delete only random assets created by an import that did not commit."""
+
+    allowed_roots = [TEAM_UPLOAD_DIR.resolve(), legacy.PLAYER_UPLOAD_DIR.resolve()]
+    for raw_path in paths:
+        normalized = str(raw_path or "").strip().lstrip("/")
+        if not normalized:
+            continue
+        candidate = (ROOT_DIR / normalized).resolve()
+        if not any(
+            candidate == allowed_root or allowed_root in candidate.parents
+            for allowed_root in allowed_roots
+        ):
+            continue
+        candidate.unlink(missing_ok=True)
+
+
+def save_embedded_player_photo(player_id: str, original_name: str, image_bytes: bytes) -> str:
+    validate_embedded_image(original_name, image_bytes)
+    extension = Path(original_name).suffix.lower()
     legacy.ensure_player_asset_dirs()
     target = legacy.PLAYER_UPLOAD_DIR / f"{player_id}-{secrets.token_hex(6)}{extension}"
     target.write_bytes(image_bytes)
@@ -2712,7 +2837,9 @@ def import_matches_from_excel(
         season_name = str(current_match["season"] or "").strip()
         scope_key = (competition_name, season_name)
         if scope_key not in validated_scopes:
-            if not can_manage_matches(ctx.current_user, data, competition_name):
+            if not can_manage_competition_action(
+                ctx.current_user, data, competition_name, "match_import_manage"
+            ):
                 return None, f"你没有权限导入 {competition_name} 下的比赛。"
             competition_error = validate_match_competition_selection(data, competition_name)
             if competition_error:
@@ -2941,6 +3068,8 @@ def import_dimension_stats_from_excel(
     upload: UploadedFile,
     competition_name: str,
     season_name: str,
+    *,
+    result_metadata: dict[str, object] | None = None,
 ) -> tuple[list[dict[str, object]] | None, list[dict[str, object]] | None, str]:
     try:
         player_sheet_rows = read_optional_sheet_rows(upload, PLAYER_DIMENSION_SHEET_NAMES)
@@ -2949,7 +3078,9 @@ def import_dimension_stats_from_excel(
         return None, None, f"解析 Excel 失败：{exc}"
     if not player_sheet_rows and not team_sheet_rows:
         return None, None, "Excel 中没有找到可导入的维度数据工作表。"
-    if not can_manage_matches(ctx.current_user, data, competition_name):
+    if not can_manage_competition_action(
+        ctx.current_user, data, competition_name, "dimension_data_manage"
+    ):
         return None, None, f"你没有权限导入 {competition_name} 下的维度数据。"
     competition_error = validate_match_competition_selection(data, competition_name)
     if competition_error:
@@ -2998,6 +3129,21 @@ def import_dimension_stats_from_excel(
         + (f" 已自动跳过 NPC {skipped_npc_rows} 条。" if skipped_npc_rows else "")
         + " 已按赛事、赛季、日期和主键逐条新增/更新，未删除本 Excel 之外的旧维度数据。"
     )
+    if result_metadata is not None:
+        result_metadata.update(
+            {
+                "player_rows": len(next_player_rows),
+                "team_rows": len(next_team_rows),
+                "skipped_npc_rows": skipped_npc_rows,
+                "played_on": sorted(
+                    {
+                        str(row.get("played_on") or "")
+                        for row in [*next_player_rows, *next_team_rows]
+                        if str(row.get("played_on") or "")
+                    }
+                ),
+            }
+        )
     return next_player_rows, next_team_rows, summary
 
 
@@ -3016,7 +3162,20 @@ def import_team_logos_from_excel(
     upload: UploadedFile,
     competition_name: str,
     season_name: str,
+    *,
+    persist_assets: bool = True,
+    result_metadata: dict[str, object] | None = None,
 ) -> tuple[list[dict[str, object]] | None, str]:
+    created_asset_paths: list[str] = []
+
+    def fail(message: str) -> tuple[None, str]:
+        if persist_assets:
+            cleanup_generated_import_assets(created_asset_paths)
+            created_asset_paths.clear()
+        return None, message
+
+    if result_metadata is not None and persist_assets:
+        result_metadata["_created_asset_paths"] = created_asset_paths
     try:
         rows = read_first_available_sheet_rows(upload, TEAM_LOGO_SHEET_NAMES)
         embedded_images: dict[tuple[int, int], tuple[str, bytes]] = {}
@@ -3025,14 +3184,16 @@ def import_team_logos_from_excel(
             if embedded_images:
                 break
     except Exception as exc:
-        return None, f"解析 Excel 失败：{exc}"
+        return fail(f"解析 Excel 失败：{exc}")
     if not rows:
-        return None, "Excel 中没有找到可导入的战队图标数据工作表。"
-    if not can_manage_matches(ctx.current_user, data, competition_name):
-        return None, f"你没有权限导入 {competition_name} 下的战队图标。"
+        return fail("Excel 中没有找到可导入的战队图标数据工作表。")
+    if not can_manage_competition_action(
+        ctx.current_user, data, competition_name, "season_asset_manage"
+    ):
+        return fail(f"你没有权限导入 {competition_name} 下的战队图标。")
     competition_error = validate_match_competition_selection(data, competition_name)
     if competition_error:
-        return None, competition_error
+        return fail(competition_error)
     season_error = validate_match_season_selection(
         data,
         competition_name,
@@ -3040,14 +3201,14 @@ def import_team_logos_from_excel(
         include_non_ongoing=True,
     )
     if season_error:
-        return None, season_error
+        return fail(season_error)
 
     created_count = 0
     updated_count = 0
     for index, row in enumerate(rows, start=2):
         team_name = get_excel_row_value(row, "team_name")
         if not team_name:
-            return None, f"战队图标数据第 {index} 行缺少战队名称。"
+            return fail(f"战队图标数据第 {index} 行缺少战队名称。")
         team = legacy.find_team_by_name_in_scope(data, competition_name, season_name, team_name)
         if not team:
             team = build_placeholder_team(
@@ -3064,26 +3225,43 @@ def import_team_logos_from_excel(
         if embedded_logo:
             original_name, image_bytes = embedded_logo
             try:
-                team["logo"] = save_embedded_team_logo(team["team_id"], original_name, image_bytes)
+                if persist_assets:
+                    team["logo"] = save_embedded_team_logo(
+                        team["team_id"], original_name, image_bytes
+                    )
+                    created_asset_paths.append(str(team["logo"]))
+                else:
+                    validate_embedded_image(original_name, image_bytes)
+                    # The marker exists only in the deep-copied preflight data;
+                    # the worker reparses the workbook and writes the real asset.
+                    team["logo"] = f"pending-embedded:{PurePosixPath(original_name).name}"
             except ValueError as exc:
-                return None, f"战队图标数据第 {index} 行图片保存失败：{exc}"
+                return fail(f"战队图标数据第 {index} 行图片保存失败：{exc}")
         else:
             logo_value = normalize_logo_reference(get_excel_row_value(row, "logo"))
             if not logo_value:
-                return None, f"战队图标数据第 {index} 行缺少战队logo。"
+                return fail(f"战队图标数据第 {index} 行缺少战队logo。")
             if not is_external_logo_url(logo_value):
                 candidate = safe_asset_path(logo_value)
                 if candidate is None:
-                    return None, (
+                    return fail(
                         f"战队图标数据第 {index} 行的战队logo 必须是 Excel 里插入的图片、`assets/` 下的站内路径，"
                         "或 http/https 外链地址。"
                     )
                 if not candidate.is_file():
-                    return None, f"战队图标数据第 {index} 行的图标文件不存在：{logo_value}"
+                    return fail(f"战队图标数据第 {index} 行的图标文件不存在：{logo_value}")
             team["logo"] = logo_value
         if not str(team.get("short_name") or "").strip():
             team["short_name"] = team_name.strip()[:12] or team["team_id"]
 
+    if result_metadata is not None:
+        result_metadata.update(
+            {
+                "created_teams": created_count,
+                "updated_teams": updated_count,
+                "total_rows": len(rows),
+            }
+        )
     return data["teams"], f"战队图标导入完成：新建 {created_count} 支，更新 {updated_count} 支。"
 
 
@@ -3269,8 +3447,19 @@ def build_match_record_player_context(
     return player_by_id, players_by_name, team_lookup
 
 
-def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, object]] | None, str]:
+def read_player_photo_zip_items(
+    upload: UploadedFile,
+    *,
+    persist_assets: bool = True,
+) -> tuple[list[dict[str, object]] | None, str]:
     batch_id = secrets.token_hex(8)
+    items: list[dict[str, object]] = []
+
+    def fail(message: str) -> tuple[None, str]:
+        if persist_assets:
+            cleanup_pending_player_photo_items(items)
+        return None, message
+
     try:
         with ZipFile(BytesIO(upload.data)) as archive:
             entries = [
@@ -3279,11 +3468,10 @@ def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, ob
                 if not info.is_dir() and not info.filename.startswith("__MACOSX/")
             ]
             if not entries:
-                return None, "zip 压缩包中没有找到可导入的头像图片。"
+                return fail("zip 压缩包中没有找到可导入的头像图片。")
             if len(entries) > MAX_ZIP_IMAGE_COUNT:
-                return None, f"zip 压缩包内文件不能超过 {MAX_ZIP_IMAGE_COUNT} 个，请拆分后再上传。"
+                return fail(f"zip 压缩包内文件不能超过 {MAX_ZIP_IMAGE_COUNT} 个，请拆分后再上传。")
 
-            items: list[dict[str, object]] = []
             ignored_count = 0
             for info in entries:
                 player_id = archive_photo_player_id(info.filename)
@@ -3291,35 +3479,41 @@ def read_player_photo_zip_items(upload: UploadedFile) -> tuple[list[dict[str, ob
                     ignored_count += 1
                     continue
                 if info.file_size > MAX_UPLOAD_BYTES:
-                    return None, f"{PurePosixPath(info.filename).name} 超过 5 MB，未导入。"
+                    return fail(f"{PurePosixPath(info.filename).name} 超过 5 MB，未导入。")
                 try:
                     image_bytes = archive.read(info)
                 except Exception as exc:
-                    return None, f"读取 {PurePosixPath(info.filename).name} 失败：{exc}"
+                    return fail(f"读取 {PurePosixPath(info.filename).name} 失败：{exc}")
                 if not image_bytes:
                     ignored_count += 1
                     continue
                 filename = PurePosixPath(info.filename).name
                 try:
-                    pending_path = save_pending_player_photo_import(filename, image_bytes, batch_id)
+                    if persist_assets:
+                        pending_path = save_pending_player_photo_import(
+                            filename, image_bytes, batch_id
+                        )
+                    else:
+                        validate_embedded_image(filename, image_bytes)
+                        pending_path = ""
                 except ValueError as exc:
-                    return None, f"{filename} 图片校验失败：{exc}"
+                    return fail(f"{filename} 图片校验失败：{exc}")
                 items.append(
                     {
                         "token": str(len(items)),
                         "filename": filename,
                         "stem": player_id,
                         "pending_path": pending_path,
-                        "data_url": pending_photo_asset_url(pending_path),
+                        "data_url": pending_photo_asset_url(pending_path) if pending_path else "",
                     }
                 )
     except BadZipFile:
-        return None, "zip 压缩包无法解析，请确认文件没有损坏。"
+        return fail("zip 压缩包无法解析，请确认文件没有损坏。")
     except Exception as exc:
-        return None, f"解析 zip 压缩包失败：{exc}"
+        return fail(f"解析 zip 压缩包失败：{exc}")
 
     if not items:
-        return None, f"zip 压缩包中没有找到可导入的头像图片，已忽略 {ignored_count} 个文件。"
+        return fail(f"zip 压缩包中没有找到可导入的头像图片，已忽略 {ignored_count} 个文件。")
     return items, (f"忽略 {ignored_count} 个非图片文件。" if ignored_count else "")
 
 
@@ -3366,9 +3560,28 @@ def resolve_zip_photo_assignments(
     return auto_assignments, conflicts, unmatched_count
 
 
+def cleanup_pending_player_photo_items(items: list[dict[str, object]]) -> None:
+    parent_dirs: set[Path] = set()
+    for item in items:
+        source_path = resolve_pending_player_photo_path(
+            str(item.get("pending_path") or "")
+        )
+        if source_path is None:
+            continue
+        parent_dirs.add(source_path.parent)
+        source_path.unlink(missing_ok=True)
+    for parent_dir in parent_dirs:
+        try:
+            parent_dir.rmdir()
+        except OSError:
+            pass
+
+
 def apply_player_photo_assignments(
     data: dict[str, object],
-    assignments: list[dict[str, str]],
+    assignments: list[dict[str, object]],
+    *,
+    created_asset_paths: list[str] | None = None,
 ) -> tuple[int, str]:
     player_by_id = {
         str(player.get("player_id") or "").strip(): player
@@ -3382,13 +3595,22 @@ def apply_player_photo_assignments(
         pending_path = str(assignment.get("pending_path") or "").strip()
         player = player_by_id.get(player_id)
         source_path = resolve_pending_player_photo_path(pending_path)
-        if not player or not filename or source_path is None:
+        embedded_bytes = assignment.get("image_bytes")
+        if not isinstance(embedded_bytes, bytes):
+            embedded_bytes = None
+        if not player or not filename or (source_path is None and embedded_bytes is None):
             continue
         try:
-            image_bytes = source_path.read_bytes()
+            image_bytes = embedded_bytes if embedded_bytes is not None else source_path.read_bytes()
             player["photo"] = save_embedded_player_photo(player_id, filename, image_bytes)
-            source_path.unlink(missing_ok=True)
+            if created_asset_paths is not None:
+                created_asset_paths.append(str(player["photo"]))
+            if source_path is not None:
+                source_path.unlink(missing_ok=True)
         except Exception as exc:
+            if created_asset_paths is not None:
+                cleanup_generated_import_assets(created_asset_paths)
+                created_asset_paths.clear()
             return updated_count, f"{filename} 图片保存失败：{exc}"
         updated_count += 1
     return updated_count, ""
@@ -3544,8 +3766,16 @@ def import_player_photos_from_zip(
     upload: UploadedFile,
     competition_name: str,
     season_name: str,
+    *,
+    persist_assets: bool = True,
+    result_metadata: dict[str, object] | None = None,
 ) -> tuple[list[dict[str, object]] | None, str]:
-    if not can_manage_matches(ctx.current_user, data, competition_name):
+    created_asset_paths: list[str] = []
+    if result_metadata is not None and persist_assets:
+        result_metadata["_created_asset_paths"] = created_asset_paths
+    if not can_manage_competition_action(
+        ctx.current_user, data, competition_name, "season_asset_manage"
+    ):
         return None, f"你没有权限导入 {competition_name} 下的队员头像。"
     competition_error = validate_match_competition_selection(data, competition_name)
     if competition_error:
@@ -3566,7 +3796,13 @@ def import_player_photos_from_zip(
     )
     if not player_by_id:
         return None, "当前赛事赛季还没有可匹配的比赛记录队员。"
-    items, ignored_message = read_player_photo_zip_items(upload)
+    # Preflight validates each entry without extracting it. Worker execution
+    # stages validated images in the pending directory, then promotes only the
+    # resolved assignments to final player assets.
+    items, ignored_message = read_player_photo_zip_items(
+        upload,
+        persist_assets=persist_assets,
+    )
     if items is None:
         return None, ignored_message
     auto_assignments, conflicts, unmatched_count = resolve_zip_photo_assignments(
@@ -3575,17 +3811,40 @@ def import_player_photos_from_zip(
         players_by_name,
     )
     if conflicts:
+        if result_metadata is not None:
+            result_metadata.update(
+                {
+                    "matched_photos": len(auto_assignments),
+                    "conflicts": len(conflicts),
+                    "unmatched_photos": unmatched_count,
+                }
+            )
+        if persist_assets:
+            cleanup_pending_player_photo_items(items)
         return None, "manual-selection-required"
-    updated_count, save_error = apply_player_photo_assignments(data, [
-        {
-            "player_id": str(item["player_id"]),
-            "filename": str(item["filename"]),
-            "pending_path": str(item["pending_path"]),
-        }
-        for item in auto_assignments
-    ])
-    if save_error:
-        return None, save_error
+    if persist_assets:
+        updated_count, save_error = apply_player_photo_assignments(data, [
+            {
+                "player_id": str(item["player_id"]),
+                "filename": str(item["filename"]),
+                "pending_path": str(item.get("pending_path") or ""),
+            }
+            for item in auto_assignments
+        ], created_asset_paths=created_asset_paths)
+        cleanup_pending_player_photo_items(items)
+        if save_error:
+            return None, save_error
+    else:
+        updated_count = len(auto_assignments)
+    if result_metadata is not None:
+        result_metadata.update(
+            {
+                "matched_photos": updated_count,
+                "conflicts": 0,
+                "unmatched_photos": unmatched_count,
+                "ignored_message": ignored_message,
+            }
+        )
     return (
         data["players"],
         f"队员头像导入完成：更新 {updated_count} 位，未匹配跳过 {unmatched_count} 个。{ignored_message}",
@@ -3612,7 +3871,9 @@ def import_player_photos_from_excel(
         return None, f"解析 Excel 失败：{exc}"
     if not rows:
         return None, "Excel 中没有找到可导入的队员头像数据工作表。"
-    if not can_manage_matches(ctx.current_user, data, competition_name):
+    if not can_manage_competition_action(
+        ctx.current_user, data, competition_name, "season_asset_manage"
+    ):
         return None, f"你没有权限导入 {competition_name} 下的队员头像。"
     competition_error = validate_match_competition_selection(data, competition_name)
     if competition_error:
@@ -3716,6 +3977,7 @@ def build_match_competition_field(
     current_competition_name: str,
     current_user: dict[str, object] | None = None,
     prioritize_active: bool = False,
+    permission_keys: set[str] | tuple[str, ...] | list[str] | None = None,
 ) -> str:
     try:
         data = load_validated_data()
@@ -3724,10 +3986,16 @@ def build_match_competition_field(
         data = {"matches": []}
         catalog = []
     if current_user and not legacy.is_admin_user(current_user):
+        requested_permissions = permission_keys or set(legacy.MATCH_SCOPE_PERMISSION_KEYS)
         catalog = [
             entry
             for entry in catalog
-            if legacy.can_manage_matches(current_user, data, entry["competition_name"])
+            if legacy.can_manage_competition_with_permissions(
+                current_user,
+                data,
+                entry["competition_name"],
+                requested_permissions,
+            )
         ]
 
     if not catalog:
@@ -4023,6 +4291,7 @@ def render_match_form_page(
     next_path: str,
     match_code_hint: str,
     alert: str = "",
+    permission_keys: set[str] | tuple[str, ...] | list[str] | None = None,
 ) -> str:
     score_model = normalize_match_score_model(str(current.get("score_model", "")))
     score_model_label = get_match_score_model_label(score_model)
@@ -4064,6 +4333,7 @@ def render_match_form_page(
     competition_field_html = build_match_competition_field(
         str(current.get("competition_name", "")),
         ctx.current_user,
+        permission_keys=permission_keys,
     )
     season_field_html = build_match_season_field(
         str(current.get("competition_name", "")),
@@ -4438,10 +4708,11 @@ def get_match_edit_page(
     match = get_match_by_id(data["matches"], match_id)
     if not match:
         return layout("未找到比赛", '<div class="alert alert-danger">没有找到对应的比赛。</div>', ctx)
-    if ctx.current_user and not can_manage_matches(
+    if ctx.current_user and not can_manage_competition_action(
         ctx.current_user,
         data,
         get_match_competition_name(match),
+        "match_result_manage",
     ):
         return layout("没有权限", '<div class="alert alert-danger">你不能编辑这个地区系列赛下的比赛。</div>', ctx)
 
@@ -4464,18 +4735,37 @@ def get_match_edit_page(
         next_path,
         match_code_hint,
         alert=alert,
+        permission_keys={"match_result_manage"},
     )
-    excel_panel_html = build_excel_import_panel(ctx)
-    dimension_panel_html = build_dimension_import_panel(ctx)
-    team_logo_panel_html = build_team_logo_import_panel(ctx)
-    player_photo_panel_html = build_player_photo_import_panel(ctx)
-    if '<section class="form-panel' not in form_html:
-        return form_html
-    return form_html.replace(
-        '<section class="form-panel',
-        f"{excel_panel_html}{dimension_panel_html}{team_logo_panel_html}{player_photo_panel_html}<section class=\"form-panel",
-        1,
-    )
+    return form_html
+
+
+def _console_operation_page(
+    ctx: RequestContext,
+    title: str,
+    eyebrow: str,
+    copy: str,
+    content: str,
+    *,
+    alert: str = "",
+) -> str:
+    body = f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-xl-row justify-content-between align-items-xl-center gap-3">
+        <div>
+          <div class="eyebrow mb-2">{escape(eyebrow)}</div>
+          <h1 class="section-title mb-2">{escape(title)}</h1>
+          <p class="section-copy mb-0">{escape(copy)}</p>
+        </div>
+        <div class="d-flex flex-wrap gap-2">
+          <a class="btn btn-outline-dark" href="/console/matches">比赛列表</a>
+          <a class="btn btn-outline-dark" href="/console/imports">导入记录</a>
+        </div>
+      </div>
+    </section>
+    {content}
+    """
+    return layout(title, body, ctx, alert=alert)
 
 
 def get_match_create_page(
@@ -4500,10 +4790,11 @@ def get_match_create_page(
         current["scoring_rule"] = scoring_rule
     if current.get("competition_name"):
         data = load_validated_data()
-        if ctx.current_user and not can_manage_matches(
+        if ctx.current_user and not can_manage_competition_action(
             ctx.current_user,
             data,
             str(current.get("competition_name") or ""),
+            "match_schedule_manage",
         ):
             return layout("没有权限", '<div class="alert alert-danger">你不能在这个地区系列赛下创建比赛。</div>', ctx)
     next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
@@ -4511,16 +4802,20 @@ def get_match_create_page(
         str(current.get("competition_name") or ""),
         str(current.get("season") or ""),
     )
+    manual_action_path = (
+        ctx.path if ctx.path == "/console/matches/create" else "/matches/new"
+    )
     manual_form_html = render_match_form_page(
         ctx,
         current,
-        f"/matches/new?next={quote(next_path)}",
+        f"{manual_action_path}?next={quote(next_path)}",
         "比赛管理",
         "新增比赛",
         "创建比赛",
         next_path,
         "保存后自动生成",
         alert=alert,
+        permission_keys={"match_schedule_manage"},
     )
     management_panel_html = build_match_management_panel(ctx)
     batch_panel_html = build_batch_create_form(ctx, get_batch_create_form_values(ctx, batch_form_values))
@@ -4529,6 +4824,53 @@ def get_match_create_page(
     team_logo_panel_html = build_team_logo_import_panel(ctx)
     player_photo_panel_html = build_player_photo_import_panel(ctx)
     import_batches_panel_html = build_import_batches_panel(ctx)
+    if ctx.path == "/console/matches/create":
+        return manual_form_html
+    if ctx.path == "/console/matches/batch-create":
+        return _console_operation_page(
+            ctx,
+            "批量创建赛程",
+            "比赛运营",
+            "按赛事、赛季和日期范围创建待补录比赛，创建后可在比赛列表继续补录。",
+            batch_panel_html,
+            alert=alert,
+        )
+    if ctx.path == "/console/imports/matches":
+        return _console_operation_page(
+            ctx,
+            "比赛数据上传",
+            "数据上传",
+            "先按比赛编号生成对应规则模板，再上传文件进行预检和确认。",
+            excel_panel_html,
+            alert=alert,
+        )
+    if ctx.path == "/console/imports/dimensions":
+        return _console_operation_page(
+            ctx,
+            "维度数据上传",
+            "数据上传",
+            "导入当前系列赛赛季的选手与战队维度数据，并集中管理已导入比赛日。",
+            dimension_panel_html,
+            alert=alert,
+        )
+    if ctx.path == "/console/imports/assets":
+        return _console_operation_page(
+            ctx,
+            "赛季素材上传",
+            "数据上传",
+            "集中维护赛季战队图标和选手头像，上传前会校验赛事、赛季和档案匹配情况。",
+            team_logo_panel_html + player_photo_panel_html,
+            alert=alert,
+        )
+    if ctx.path == "/console/imports":
+        return _console_operation_page(
+            ctx,
+            "导入记录",
+            "数据上传",
+            "查看上传任务状态、校验摘要和允许范围内的回滚操作。",
+            import_batches_panel_html,
+            alert=alert,
+        )
     body_start = manual_form_html.find('<section class="form-panel')
     if body_start == -1:
         return manual_form_html
@@ -4556,11 +4898,12 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
             "404 Not Found",
             layout("未找到比赛", '<div class="alert alert-danger">没有找到对应的比赛。</div>', ctx),
         )
-    permission_guard = require_competition_manager(
+    permission_guard = require_competition_action(
         ctx,
         start_response,
         data,
         get_match_competition_name(match),
+        "match_result_manage",
         "你不能编辑这个地区系列赛下的比赛。",
     )
     if permission_guard is not None:
@@ -4574,11 +4917,12 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
             "200 OK",
             get_match_edit_page(ctx, match_id, alert=resolution_errors[0], field_values=updated_match),
         )
-    permission_guard = require_competition_manager(
+    permission_guard = require_competition_action(
         ctx,
         start_response,
         data,
         updated_match["competition_name"],
+        "match_result_manage",
         "你不能把比赛保存到未授权的地区系列赛下。",
     )
     if permission_guard is not None:
@@ -4655,15 +4999,47 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
     return redirect(start_response, next_path)
 
 
+def import_job_revision_changed(
+    data: dict[str, object],
+    expected_data_revision: int | None,
+    import_batch_id: str,
+    ctx: RequestContext,
+) -> bool:
+    if expected_data_revision is None:
+        return False
+    try:
+        current_revision = int(data.get("_data_revision", -1))
+    except (TypeError, ValueError):
+        current_revision = -1
+    if current_revision == int(expected_data_revision):
+        return False
+    update_import_batch(
+        import_batch_id,
+        status="stale",
+        summary=(
+            "数据已在后台任务开始后发生变化，请重新预检。"
+            f"（任务版本 {expected_data_revision}，当前版本 {current_revision}）"
+        ),
+        ctx=ctx,
+    )
+    return True
+
+
 def run_match_excel_import_job(
     ctx: RequestContext,
     upload: UploadedFile,
     group_label: str,
     import_batch_id: str,
+    *,
+    expected_data_revision: int | None = None,
 ) -> None:
     """Execute the expensive Excel parse and database update after the HTTP response."""
     try:
         data = load_validated_data()
+        if import_job_revision_changed(
+            data, expected_data_revision, import_batch_id, ctx
+        ):
+            return
         before_players = deepcopy(data.get("players", []))
         before_teams = deepcopy(data.get("teams", []))
         import_result_metadata: dict[str, object] = {}
@@ -4728,9 +5104,13 @@ def run_match_excel_import_job(
             before_teams,
         )
         if errors:
+            stale_error = next(
+                (error for error in errors if "数据已被其他管理员更新" in error),
+                "",
+            )
             update_import_batch(
                 import_batch_id,
-                status="failed",
+                status="stale" if stale_error else "failed",
                 summary="Excel 导入保存失败：" + "；".join(errors[:3]),
                 ctx=ctx,
             )
@@ -4763,6 +5143,13 @@ def run_match_excel_import_job(
                 **import_result_metadata,
             },
         )
+    except RepositoryConflictError as exc:
+        update_import_batch(
+            import_batch_id,
+            status="stale",
+            summary=f"维度数据已变化，请重新预检：{exc}",
+            ctx=ctx,
+        )
     except Exception as exc:
         update_import_batch(
             import_batch_id,
@@ -4772,7 +5159,723 @@ def run_match_excel_import_job(
         )
 
 
+def run_dimension_excel_import_job(
+    ctx: RequestContext,
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+    import_batch_id: str,
+    *,
+    expected_data_revision: int | None = None,
+) -> None:
+    try:
+        data = load_validated_data()
+        if import_job_revision_changed(
+            data, expected_data_revision, import_batch_id, ctx
+        ):
+            return
+        result_metadata: dict[str, object] = {}
+        player_rows, team_rows, import_message = import_dimension_stats_from_excel(
+            ctx,
+            data,
+            upload,
+            competition_name,
+            season_name,
+            result_metadata=result_metadata,
+        )
+        if player_rows is None or team_rows is None:
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary="维度数据导入失败：" + import_message,
+                ctx=ctx,
+            )
+            return
+        save_season_dimension_stats(
+            player_rows,
+            team_rows,
+            expected_revision=expected_data_revision,
+        )
+        invalidate_validated_data_cache()
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=import_message,
+            metadata=result_metadata,
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "dimension.import_excel",
+            target_type="competition",
+            target_id=competition_name,
+            summary=import_message,
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "async": True,
+                **result_metadata,
+            },
+        )
+    except Exception as exc:
+        update_import_batch(
+            import_batch_id,
+            status="failed",
+            summary=f"维度数据后台导入异常：{exc}",
+            ctx=ctx,
+        )
+
+
+def run_team_logo_excel_import_job(
+    ctx: RequestContext,
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+    import_batch_id: str,
+    *,
+    expected_data_revision: int | None = None,
+) -> None:
+    result_metadata: dict[str, object] = {}
+    created_asset_paths: list[str] = []
+    assets_committed = False
+    try:
+        data = load_validated_data()
+        if import_job_revision_changed(
+            data, expected_data_revision, import_batch_id, ctx
+        ):
+            return
+        next_teams, import_message = import_team_logos_from_excel(
+            ctx,
+            data,
+            upload,
+            competition_name,
+            season_name,
+            persist_assets=True,
+            result_metadata=result_metadata,
+        )
+        raw_created_paths = result_metadata.pop("_created_asset_paths", [])
+        if isinstance(raw_created_paths, list):
+            created_asset_paths.extend(str(path) for path in raw_created_paths)
+        if next_teams is None:
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary="战队图标导入失败：" + import_message,
+                ctx=ctx,
+            )
+            return
+        data["teams"] = next_teams
+        errors = save_repository_state(data, load_users())
+        if errors:
+            stale_error = next(
+                (error for error in errors if "数据已被其他管理员更新" in error),
+                "",
+            )
+            update_import_batch(
+                import_batch_id,
+                status="stale" if stale_error else "failed",
+                summary="战队图标导入保存失败：" + "；".join(errors[:3]),
+                ctx=ctx,
+            )
+            return
+        assets_committed = True
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=import_message,
+            metadata=result_metadata,
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "team_logo.import_excel",
+            target_type="competition",
+            target_id=competition_name,
+            summary=import_message,
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "async": True,
+                **result_metadata,
+            },
+        )
+    except Exception as exc:
+        update_import_batch(
+            import_batch_id,
+            status="failed",
+            summary=f"战队图标后台导入异常：{exc}",
+            ctx=ctx,
+        )
+    finally:
+        raw_created_paths = result_metadata.pop("_created_asset_paths", [])
+        if isinstance(raw_created_paths, list):
+            created_asset_paths.extend(str(path) for path in raw_created_paths)
+        if not assets_committed:
+            cleanup_generated_import_assets(created_asset_paths)
+
+
+def run_player_photo_zip_import_job(
+    ctx: RequestContext,
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+    import_batch_id: str,
+    *,
+    expected_data_revision: int | None = None,
+) -> None:
+    result_metadata: dict[str, object] = {}
+    created_asset_paths: list[str] = []
+    assets_committed = False
+    try:
+        data = load_validated_data()
+        if import_job_revision_changed(
+            data, expected_data_revision, import_batch_id, ctx
+        ):
+            return
+        next_players, import_message = import_player_photos_from_zip(
+            ctx,
+            data,
+            upload,
+            competition_name,
+            season_name,
+            persist_assets=True,
+            result_metadata=result_metadata,
+        )
+        raw_created_paths = result_metadata.pop("_created_asset_paths", [])
+        if isinstance(raw_created_paths, list):
+            created_asset_paths.extend(str(path) for path in raw_created_paths)
+        if next_players is None:
+            if import_message == "manual-selection-required":
+                import_message = "头像匹配关系已变化或存在冲突，请按 player_id 重命名后重新上传。"
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary="选手头像导入失败：" + import_message,
+                ctx=ctx,
+            )
+            return
+        data["players"] = next_players
+        errors = save_repository_state(data, load_users())
+        if errors:
+            stale_error = next(
+                (error for error in errors if "数据已被其他管理员更新" in error),
+                "",
+            )
+            update_import_batch(
+                import_batch_id,
+                status="stale" if stale_error else "failed",
+                summary="选手头像导入保存失败：" + "；".join(errors[:3]),
+                ctx=ctx,
+            )
+            return
+        assets_committed = True
+        update_import_batch(
+            import_batch_id,
+            status="succeeded",
+            summary=import_message,
+            metadata=result_metadata,
+            ctx=ctx,
+        )
+        audit_action(
+            ctx,
+            "player_photo.import_zip",
+            target_type="competition",
+            target_id=competition_name,
+            summary=import_message,
+            metadata={
+                "competition_name": competition_name,
+                "season_name": season_name,
+                "async": True,
+                **result_metadata,
+            },
+        )
+    except Exception as exc:
+        update_import_batch(
+            import_batch_id,
+            status="failed",
+            summary=f"选手头像后台导入异常：{exc}",
+            ctx=ctx,
+        )
+    finally:
+        raw_created_paths = result_metadata.pop("_created_asset_paths", [])
+        if isinstance(raw_created_paths, list):
+            created_asset_paths.extend(str(path) for path in raw_created_paths)
+        if not assets_committed:
+            cleanup_generated_import_assets(created_asset_paths)
+
+
+IMPORT_PREFLIGHT_LABELS = {
+    "matches.import_excel": "比赛 Excel 批量补录",
+    "dimension.import_excel": "赛季维度 Excel 导入",
+    "team_logo.import_excel": "战队图标 Excel 导入",
+    "player_photo.import_zip": "选手头像 ZIP 导入",
+}
+IMPORT_PREFLIGHT_PERMISSION_KEYS = {
+    "matches.import_excel": "match_import_manage",
+    "dimension.import_excel": "dimension_data_manage",
+    "team_logo.import_excel": "season_asset_manage",
+    "player_photo.import_zip": "season_asset_manage",
+}
+IMPORT_PREFLIGHT_COUNT_LABELS = {
+    "updated_matches": "将更新比赛",
+    "player_rows": "选手维度记录",
+    "team_rows": "战队维度记录",
+    "skipped_npc_rows": "跳过 NPC 记录",
+    "created_teams": "将新建战队",
+    "updated_teams": "将更新战队",
+    "matched_photos": "将更新头像",
+    "unmatched_photos": "未匹配头像",
+    "conflicts": "匹配冲突",
+}
+
+
+def build_preflight_scope_requirements(
+    data: dict[str, object],
+    competition_names: list[str] | set[str],
+    permission_key: str,
+) -> dict[str, list[str]]:
+    requirements: dict[str, list[str]] = {}
+    for competition_name in sorted(
+        {str(value or "").strip() for value in competition_names if str(value or "").strip()}
+    ):
+        scope_key = get_competition_scope_key(data, competition_name)
+        if scope_key:
+            requirements.setdefault(scope_key, []).append(permission_key)
+    return requirements
+
+
+def create_import_upload_preflight(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    *,
+    action: str,
+    preview: dict[str, object],
+    action_metadata: dict[str, object],
+    competition_names: list[str] | set[str],
+    validation_errors: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> str:
+    permission_key = IMPORT_PREFLIGHT_PERMISSION_KEYS[action]
+    users = load_users()
+    snapshot_json = json.dumps(
+        {"data": data, "users": users},
+        ensure_ascii=False,
+    )
+    metadata = {
+        **action_metadata,
+        "background": True,
+        "matched_scopes": preview.get("matched_scopes", []),
+    }
+    return create_preflight(
+        action=action,
+        label=IMPORT_PREFLIGHT_LABELS[action],
+        filename=str(upload.filename or ""),
+        content_type=str(upload.content_type or "application/octet-stream"),
+        created_by=str((ctx.current_user or {}).get("username") or "unknown"),
+        created_at=ctx.now_label,
+        payload_data=upload.data,
+        payload=preview,
+        metadata=metadata,
+        required_scope_permissions=build_preflight_scope_requirements(
+            data,
+            competition_names,
+            permission_key,
+        ),
+        validation_errors=validation_errors or [],
+        warnings=warnings or [],
+        data_revision=(
+            int(data["_data_revision"])
+            if data.get("_data_revision") is not None
+            else None
+        ),
+        snapshot_json=snapshot_json,
+    )
+
+
+def preflight_match_excel_upload(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    group_label: str,
+) -> tuple[dict[str, object], list[str], list[str], set[str]]:
+    working_data = deepcopy(data)
+    result_metadata: dict[str, object] = {}
+    next_matches, message = import_matches_from_excel(
+        ctx,
+        working_data,
+        upload,
+        group_label,
+        result_metadata=result_metadata,
+    )
+    errors = [] if next_matches is not None else [message]
+    matched_scopes = result_metadata.get("matched_scopes")
+    if not isinstance(matched_scopes, list):
+        matched_scopes = []
+    competition_names = {
+        str(item.get("competition_name") or "").strip()
+        for item in matched_scopes
+        if isinstance(item, dict) and str(item.get("competition_name") or "").strip()
+    }
+    warnings = (
+        [f"本次会使用页面填写的分组“{group_label}”覆盖工作簿中的分组。"]
+        if group_label and not errors
+        else []
+    )
+    preview = {
+        "summary": message,
+        "counts": {
+            "updated_matches": len(result_metadata.get("matched_match_ids") or []),
+        },
+        "matched_match_ids": result_metadata.get("matched_match_ids", []),
+        "matched_scopes": matched_scopes,
+        "scoring_rule_signature": result_metadata.get("scoring_rule_signature", {}),
+    }
+    return preview, errors, warnings, competition_names
+
+
+def preflight_dimension_excel_upload(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[dict[str, object], list[str], list[str]]:
+    result_metadata: dict[str, object] = {}
+    player_rows, team_rows, message = import_dimension_stats_from_excel(
+        ctx,
+        data,
+        upload,
+        competition_name,
+        season_name,
+        result_metadata=result_metadata,
+    )
+    errors = [] if player_rows is not None and team_rows is not None else [message]
+    warnings = []
+    skipped_npc_rows = int(result_metadata.get("skipped_npc_rows") or 0)
+    if skipped_npc_rows:
+        warnings.append(f"将忽略大小写形式的 NPC 共 {skipped_npc_rows} 条。")
+    preview = {
+        "summary": message,
+        "counts": {
+            "player_rows": int(result_metadata.get("player_rows") or 0),
+            "team_rows": int(result_metadata.get("team_rows") or 0),
+            "skipped_npc_rows": skipped_npc_rows,
+        },
+        "played_on": result_metadata.get("played_on", []),
+        "matched_scopes": [
+            {
+                "competition_name": competition_name,
+                "season_name": season_name,
+            }
+        ],
+    }
+    return preview, errors, warnings
+
+
+def preflight_team_logo_excel_upload(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[dict[str, object], list[str], list[str]]:
+    working_data = deepcopy(data)
+    result_metadata: dict[str, object] = {}
+    teams, message = import_team_logos_from_excel(
+        ctx,
+        working_data,
+        upload,
+        competition_name,
+        season_name,
+        persist_assets=False,
+        result_metadata=result_metadata,
+    )
+    errors = [] if teams is not None else [message]
+    preview = {
+        "summary": message,
+        "counts": {
+            "created_teams": int(result_metadata.get("created_teams") or 0),
+            "updated_teams": int(result_metadata.get("updated_teams") or 0),
+        },
+        "matched_scopes": [
+            {
+                "competition_name": competition_name,
+                "season_name": season_name,
+            }
+        ],
+    }
+    return preview, errors, []
+
+
+def preflight_player_photo_zip_upload(
+    ctx: RequestContext,
+    data: dict[str, object],
+    upload: UploadedFile,
+    competition_name: str,
+    season_name: str,
+) -> tuple[dict[str, object], list[str], list[str]]:
+    working_data = deepcopy(data)
+    result_metadata: dict[str, object] = {}
+    players, message = import_player_photos_from_zip(
+        ctx,
+        working_data,
+        upload,
+        competition_name,
+        season_name,
+        persist_assets=False,
+        result_metadata=result_metadata,
+    )
+    conflicts = int(result_metadata.get("conflicts") or 0)
+    if message == "manual-selection-required":
+        message = (
+            f"头像文件存在 {conflicts} 处同名或重复匹配，请按 player_id 重命名冲突文件后重新上传。"
+        )
+    errors = [] if players is not None else [message]
+    unmatched_count = int(result_metadata.get("unmatched_photos") or 0)
+    warnings = (
+        [f"有 {unmatched_count} 张头像未匹配到当前赛季选手，将自动跳过。"]
+        if unmatched_count and not errors
+        else []
+    )
+    ignored_message = str(result_metadata.get("ignored_message") or "").strip()
+    if ignored_message:
+        warnings.append(ignored_message)
+    preview = {
+        "summary": message,
+        "counts": {
+            "matched_photos": int(result_metadata.get("matched_photos") or 0),
+            "unmatched_photos": unmatched_count,
+            "conflicts": conflicts,
+        },
+        "matched_scopes": [
+            {
+                "competition_name": competition_name,
+                "season_name": season_name,
+            }
+        ],
+    }
+    return preview, errors, warnings
+
+
+def import_preflight_status_label(status: str) -> str:
+    return {
+        "awaiting_confirmation": "待确认",
+        "queued": "排队中",
+        "running": "处理中",
+        "succeeded": "成功",
+        "failed": "失败",
+        "cancelled": "已取消",
+        "stale": "需重新预检",
+    }.get(str(status or "").strip(), str(status or "").strip() or "未知")
+
+
+def can_access_import_preflight(ctx: RequestContext, job: dict[str, object]) -> bool:
+    return can_view_import_batch(ctx, job)
+
+
+def can_operate_import_preflight(ctx: RequestContext, job: dict[str, object]) -> bool:
+    username = str((ctx.current_user or {}).get("username") or "").strip()
+    return bool(
+        username
+        and (
+            username == str(job.get("created_by") or "").strip()
+            or is_admin_user(ctx.current_user)
+        )
+    )
+
+
+def get_import_preflight_review_page(
+    ctx: RequestContext,
+    job_id: str,
+    alert: str = "",
+) -> str:
+    job = get_preflight(job_id)
+    if job is None:
+        return layout(
+            "上传预检",
+            '<div class="alert alert-danger">没有找到这个上传预检任务。</div>',
+            ctx,
+            alert=alert,
+        )
+    if not can_access_import_preflight(ctx, job):
+        return layout(
+            "上传预检",
+            '<div class="alert alert-danger">当前账号没有查看这个上传预检任务所涉及赛区的权限。</div>',
+            ctx,
+            alert=alert,
+        )
+    metadata = job.get("metadata") if isinstance(job.get("metadata"), dict) else {}
+    preflight = metadata.get("preflight") if isinstance(metadata, dict) else {}
+    if not isinstance(preflight, dict):
+        preflight = {}
+    preview = preflight.get("payload") if isinstance(preflight.get("payload"), dict) else {}
+    counts = preview.get("counts") if isinstance(preview.get("counts"), dict) else {}
+    count_rows = "".join(
+        f"<tr><th>{escape(IMPORT_PREFLIGHT_COUNT_LABELS.get(str(key), str(key)))}</th><td>{escape(str(value))}</td></tr>"
+        for key, value in counts.items()
+    )
+    matched_scopes = preview.get("matched_scopes") if isinstance(preview.get("matched_scopes"), list) else []
+    scope_items = "".join(
+        f"<li>{escape(str(item.get('competition_name') or ''))} / {escape(str(item.get('season_name') or ''))}</li>"
+        for item in matched_scopes
+        if isinstance(item, dict)
+    )
+    match_ids = preview.get("matched_match_ids") if isinstance(preview.get("matched_match_ids"), list) else []
+    match_id_html = "、".join(
+        f"<code>{escape(str(match_id))}</code>" for match_id in match_ids[:100]
+    )
+    warnings = preflight.get("warnings") if isinstance(preflight.get("warnings"), list) else []
+    blocking_errors = preflight.get("blocking_errors") if isinstance(preflight.get("blocking_errors"), list) else []
+    warning_html = "".join(
+        f'<div class="alert alert-warning">{escape(str(message))}</div>'
+        for message in warnings
+    )
+    error_html = "".join(
+        f'<div class="alert alert-danger">{escape(str(message))}</div>'
+        for message in blocking_errors
+    )
+    status = str(job.get("status") or "")
+    can_operate = can_operate_import_preflight(ctx, job)
+    can_confirm = (
+        can_operate
+        and status == STATUS_AWAITING_CONFIRMATION
+        and not blocking_errors
+    )
+    can_cancel = can_operate and status in CANCELLABLE_STATUSES
+    actions_html = ""
+    if can_confirm:
+        actions_html += f"""
+        <form method="post" action="/console/imports/review" class="m-0">
+          <input type="hidden" name="action" value="confirm_import_preflight">
+          <input type="hidden" name="job_id" value="{escape(job_id)}">
+          <button type="submit" class="btn btn-dark">确认并加入队列</button>
+        </form>
+        """
+    if can_cancel:
+        actions_html += f"""
+        <form method="post" action="/console/imports/review" class="m-0">
+          <input type="hidden" name="action" value="cancel_import_preflight">
+          <input type="hidden" name="job_id" value="{escape(job_id)}">
+          <button type="submit" class="btn btn-outline-danger">取消并删除暂存文件</button>
+        </form>
+        """
+    body = f"""
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
+        <div>
+          <div class="eyebrow mb-2">上传预检</div>
+          <h1 class="h3 mb-1">{escape(str(job.get('label') or '上传任务'))}</h1>
+          <p class="small text-secondary mb-0"><code>{escape(job_id)}</code> · {escape(str(job.get('filename') or ''))}</p>
+        </div>
+        <div><span class="badge text-bg-secondary">{escape(import_preflight_status_label(status))}</span></div>
+      </div>
+      {error_html}{warning_html}
+      <div class="alert alert-light border">{escape(str(preview.get('summary') or job.get('summary') or ''))}</div>
+      <div class="row g-4">
+        <div class="col-12 col-lg-6">
+          <h2 class="h6">影响汇总</h2>
+          <div class="table-responsive"><table class="table table-sm"><tbody>{count_rows or '<tr><td class="text-secondary">暂无可应用的数据</td></tr>'}</tbody></table></div>
+        </div>
+        <div class="col-12 col-lg-6">
+          <h2 class="h6">目标赛事赛季</h2>
+          <ul class="mb-3">{scope_items or '<li class="text-secondary">尚未匹配到有效范围</li>'}</ul>
+          {f'<div class="small"><strong>比赛编号：</strong>{match_id_html}</div>' if match_id_html else ''}
+        </div>
+      </div>
+      <div class="d-flex flex-wrap gap-2 mt-4">{actions_html}<a class="btn btn-outline-dark" href="/console/imports">返回导入记录</a></div>
+    </section>
+    """
+    return layout("上传预检", body, ctx, alert=alert)
+
+
+def handle_import_preflight_review(ctx: RequestContext, start_response):
+    job_id = (
+        form_value(ctx.form, "job_id").strip()
+        if ctx.method == "POST"
+        else form_value(ctx.query, "job_id").strip()
+    )
+    if ctx.method != "POST":
+        job = get_preflight(job_id)
+        if job is None:
+            return start_response_html(
+                start_response,
+                "404 Not Found",
+                get_import_preflight_review_page(ctx, job_id),
+            )
+        if not can_access_import_preflight(ctx, job):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                get_import_preflight_review_page(ctx, job_id),
+            )
+        return start_response_html(
+            start_response,
+            "200 OK",
+            get_import_preflight_review_page(ctx, job_id),
+        )
+    action = form_value(ctx.form, "action").strip()
+    job = get_preflight(job_id)
+    if job is None:
+        return start_response_html(
+            start_response,
+            "404 Not Found",
+            get_import_preflight_review_page(ctx, job_id, "没有找到这个上传任务。"),
+        )
+    if not can_operate_import_preflight(ctx, job):
+        return start_response_html(
+            start_response,
+            "403 Forbidden",
+            get_import_preflight_review_page(ctx, job_id, "没有权限操作这个上传任务。"),
+        )
+
+    def creator_check(actor: str, created_by: str, _job: dict[str, object]) -> bool:
+        return actor == created_by or is_admin_user(ctx.current_user)
+
+    def permission_check(_actor: str, scope_key: str, permission_key: str) -> bool:
+        return bool(
+            legacy.user_has_scope_permission(
+                ctx.current_user,
+                scope_key,
+                permission_key,
+            )
+        )
+
+    try:
+        if action == "confirm_import_preflight":
+            updated = confirm_preflight(
+                job_id,
+                actor=str((ctx.current_user or {}).get("username") or ""),
+                creator_check=creator_check,
+                permission_check=permission_check,
+                now_label=ctx.now_label,
+            )
+            message = f"预检已确认，任务 {updated['batch_id']} 已加入后台队列。"
+        elif action == "cancel_import_preflight":
+            updated = cancel_preflight(
+                job_id,
+                actor=str((ctx.current_user or {}).get("username") or ""),
+                creator_check=creator_check,
+                revision_getter=legacy.get_data_revision,
+                now_label=ctx.now_label,
+            )
+            message = f"任务 {updated['batch_id']} 已取消，暂存文件已清理。"
+        else:
+            message = "不支持的预检操作。"
+    except PreflightStaleError as exc:
+        message = str(exc)
+    except PreflightError as exc:
+        message = str(exc)
+    return start_response_html(
+        start_response,
+        "200 OK",
+        get_import_preflight_review_page(ctx, job_id, message),
+    )
+
+
 def handle_match_create(ctx: RequestContext, start_response):
+    if ctx.path == "/console/imports/review":
+        return handle_import_preflight_review(ctx, start_response)
     if ctx.method == "GET":
         action = form_value(ctx.query, "action").strip()
         if action == "download_scoring_template":
@@ -4810,7 +5913,9 @@ def handle_match_create(ctx: RequestContext, start_response):
                             excel_form_values={"group_label": "", "match_id": ""},
                         ),
                     )
-            if not can_manage_matches(ctx.current_user, data, competition_name):
+            if not can_manage_competition_action(
+                ctx.current_user, data, competition_name, "match_import_manage"
+            ):
                 return start_response_html(
                     start_response,
                     "403 Forbidden",
@@ -4877,7 +5982,9 @@ def handle_match_create(ctx: RequestContext, start_response):
                 or form_value(ctx.query, "competition").strip()
             )
             season_name = form_value(ctx.query, "season").strip()
-            if not can_manage_matches(ctx.current_user, data, competition_name):
+            if not can_manage_competition_action(
+                ctx.current_user, data, competition_name, "season_asset_manage"
+            ):
                 return start_response_html(
                     start_response,
                     "403 Forbidden",
@@ -4923,9 +6030,26 @@ def handle_match_create(ctx: RequestContext, start_response):
             return start_response_html(
                 start_response,
                 "403 Forbidden",
-                get_match_create_page(ctx, alert="只有管理员可以回滚导入批次。"),
+                get_match_create_page(
+                    ctx,
+                    alert="只有平台管理员可以回滚导入任务。",
+                ),
             )
         batch_id = form_value(ctx.form, "batch_id").strip()
+        batch = next(
+            (
+                item
+                for item in load_import_batches()
+                if str(item.get("batch_id") or "").strip() == batch_id
+            ),
+            None,
+        )
+        if batch is None or not can_view_import_batch(ctx, batch):
+            return start_response_html(
+                start_response,
+                "404 Not Found",
+                get_match_create_page(ctx, alert="没有找到可操作的导入批次。"),
+            )
         expected_confirmation = f"回滚 {batch_id}"
         confirmation_error = danger_confirmation_error(
             form_value(ctx.form, "danger_confirmation"),
@@ -4953,6 +6077,12 @@ def handle_match_create(ctx: RequestContext, start_response):
         "batch_mark_team_score_excluded",
         "batch_unmark_team_score_excluded",
     }:
+        if action == "batch_delete_matches" and not is_admin_user(ctx.current_user):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                get_match_create_page(ctx, alert="只有平台管理员可以批量删除比赛。"),
+            )
         selected_match_ids = [
             value.strip()
             for value in ctx.form.get("match_ids", [])
@@ -4990,12 +6120,17 @@ def handle_match_create(ctx: RequestContext, start_response):
                 get_match_create_page(ctx, alert="选中的比赛里有不存在的记录，请刷新后重试。"),
             )
         for match in selected_matches:
-            permission_guard = require_competition_manager(
-                ctx,
-                start_response,
-                data,
-                get_match_competition_name(match),
-                "你不能管理未授权地区系列赛下的比赛。",
+            permission_guard = (
+                None
+                if action == "batch_delete_matches"
+                else require_competition_action(
+                    ctx,
+                    start_response,
+                    data,
+                    get_match_competition_name(match),
+                    "match_result_manage",
+                    "你不能修改未授权地区系列赛下的比赛。",
+                )
             )
             if permission_guard is not None:
                 return permission_guard
@@ -5098,11 +6233,12 @@ def handle_match_create(ctx: RequestContext, start_response):
             "matches_per_day": matches_per_day_raw or "1",
             "room_label": room_label or "1号房",
         }
-        permission_guard = require_competition_manager(
+        permission_guard = require_competition_action(
             ctx,
             start_response,
             data,
             competition_name,
+            "match_schedule_manage",
             "你不能在这个地区系列赛下批量创建比赛。",
         )
         if permission_guard is not None:
@@ -5163,6 +6299,13 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "competition_name": competition_name,
                 "season_name": season_name,
                 "created_matches": len(new_matches),
+                "permission_scope_keys": [
+                    scope_key
+                    for scope_key in [
+                        get_competition_scope_key(data, competition_name)
+                    ]
+                    if scope_key
+                ],
             },
         )
         normalized_matches, _ = canonicalize_match_ids([*data["matches"], *new_matches])
@@ -5218,36 +6361,37 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error, excel_form_values=excel_form_values),
             )
-        running_batches = [
-            item
-            for item in load_import_batches()
-            if str(item.get("status") or "").strip() in {"queued", "running"}
-        ]
-        if running_batches:
+        preview, blocking_errors, warnings, competition_names = preflight_match_excel_upload(
+            ctx,
+            data,
+            upload,
+            group_label,
+        )
+        try:
+            import_batch_id = create_import_upload_preflight(
+                ctx,
+                data,
+                upload,
+                action="matches.import_excel",
+                preview=preview,
+                action_metadata={"group_label": group_label},
+                competition_names=competition_names,
+                validation_errors=blocking_errors,
+                warnings=warnings,
+            )
+        except Exception as exc:
             return start_response_html(
                 start_response,
                 "200 OK",
                 get_match_create_page(
                     ctx,
-                    alert="已有导入任务正在处理中，请等待完成后再提交新的 Excel。",
+                    alert=f"创建上传预检失败：{exc}",
                     excel_form_values=excel_form_values,
                 ),
             )
-        import_batch_id = create_import_batch(
-            ctx=ctx,
-            action="matches.import_excel",
-            label="Excel 批量补录比赛详情",
-            filename=getattr(upload, "filename", "") or "",
-            metadata={
-                "group_label": group_label,
-                "background": True,
-            },
-            payload_data=upload.data,
-        )
-        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(ctx)
         return redirect(
             start_response,
-            append_alert_query(next_path, f"Excel 已进入后台导入队列（批次 {import_batch_id}），页面会自动刷新状态。"),
+            f"/console/imports/review?job_id={quote(import_batch_id)}",
         )
     if action == "import_dimension_excel":
         competition_name = form_value(ctx.form, "competition_name").strip()
@@ -5260,73 +6404,45 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error),
             )
-        next_player_rows, next_team_rows, import_message = import_dimension_stats_from_excel(
+        preview, blocking_errors, warnings = preflight_dimension_excel_upload(
             ctx,
             data,
             upload,
             competition_name,
             season_name,
         )
-        if next_player_rows is None or next_team_rows is None:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=import_message),
-            )
-        import_batch_id = create_import_batch(
-            ctx=ctx,
-            action="dimension.import_excel",
-            label="Excel 批量导入赛季维度数据",
-            filename=getattr(upload, "filename", "") or "",
-            metadata={
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "player_rows": len(next_player_rows),
-                "team_rows": len(next_team_rows),
-            },
-        )
         try:
-            save_season_dimension_stats(next_player_rows, next_team_rows)
-            invalidate_validated_data_cache()
+            import_batch_id = create_import_upload_preflight(
+                ctx,
+                data,
+                upload,
+                action="dimension.import_excel",
+                preview=preview,
+                action_metadata={
+                    "competition_name": competition_name,
+                    "season_name": season_name,
+                },
+                competition_names={competition_name},
+                validation_errors=blocking_errors,
+                warnings=warnings,
+            )
         except Exception as exc:
-            update_import_batch(import_batch_id, status="failed", summary=f"维度数据保存失败：{exc}", ctx=ctx)
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=f"维度数据保存失败：{exc}"),
+                get_match_create_page(ctx, alert=f"创建上传预检失败：{exc}"),
             )
-        update_import_batch(
-            import_batch_id,
-            status="succeeded",
-            summary=import_message,
-            metadata={
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "player_rows": len(next_player_rows),
-                "team_rows": len(next_team_rows),
-            },
-            ctx=ctx,
+        return redirect(
+            start_response,
+            f"/console/imports/review?job_id={quote(import_batch_id)}",
         )
-        audit_action(
-            ctx,
-            "dimension.import_excel",
-            target_type="competition",
-            target_id=competition_name,
-            summary=import_message,
-            metadata={
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "player_rows": len(next_player_rows),
-                "team_rows": len(next_team_rows),
-            },
-        )
-        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
-            ctx,
-            competition_name,
-            season_name,
-        )
-        return redirect(start_response, append_alert_query(next_path, import_message))
     if action == "clear_dimension_stats":
+        if not is_admin_user(ctx.current_user):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                get_match_create_page(ctx, alert="只有平台管理员可以清空赛季维度数据。"),
+            )
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()
         if not competition_name:
@@ -5340,12 +6456,6 @@ def handle_match_create(ctx: RequestContext, start_response):
                 start_response,
                 "200 OK",
                 get_match_create_page(ctx, alert="请先选择要清空的赛季。"),
-            )
-        if not can_manage_matches(ctx.current_user, data, competition_name):
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=f"你没有权限清空 {competition_name} 下的维度数据。"),
             )
         confirmation_error = danger_confirmation_error(
             form_value(ctx.form, "danger_confirmation"),
@@ -5424,46 +6534,44 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error),
             )
-        next_teams, import_message = import_team_logos_from_excel(
+        preview, blocking_errors, warnings = preflight_team_logo_excel_upload(
             ctx,
             data,
             upload,
             competition_name,
             season_name,
         )
-        if next_teams is None:
+        try:
+            import_batch_id = create_import_upload_preflight(
+                ctx,
+                data,
+                upload,
+                action="team_logo.import_excel",
+                preview=preview,
+                action_metadata={
+                    "competition_name": competition_name,
+                    "season_name": season_name,
+                },
+                competition_names={competition_name},
+                validation_errors=blocking_errors,
+                warnings=warnings,
+            )
+        except Exception as exc:
             return start_response_html(
                 start_response,
                 "200 OK",
-                get_match_create_page(ctx, alert=import_message),
+                get_match_create_page(ctx, alert=f"创建上传预检失败：{exc}"),
             )
-        users = load_users()
-        data["teams"] = next_teams
-        errors = save_repository_state(data, users)
-        if errors:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert="战队图标导入保存失败：" + "；".join(errors[:3])),
-            )
-        audit_action(
-            ctx,
-            "team_logo.import_excel",
-            target_type="competition",
-            target_id=competition_name,
-            summary=import_message,
-            metadata={"competition_name": competition_name, "season_name": season_name},
+        return redirect(
+            start_response,
+            f"/console/imports/review?job_id={quote(import_batch_id)}",
         )
-        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
-            ctx,
-            competition_name,
-            season_name,
-        )
-        return redirect(start_response, append_alert_query(next_path, import_message))
     if action == "confirm_player_photo_zip":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season").strip()
-        if not can_manage_matches(ctx.current_user, data, competition_name):
+        if not can_manage_competition_action(
+            ctx.current_user, data, competition_name, "season_asset_manage"
+        ):
             return start_response_html(
                 start_response,
                 "200 OK",
@@ -5544,116 +6652,38 @@ def handle_match_create(ctx: RequestContext, start_response):
                 "200 OK",
                 get_match_create_page(ctx, alert=upload_error),
             )
-        if not can_manage_matches(ctx.current_user, data, competition_name):
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=f"你没有权限导入 {competition_name} 下的队员头像。"),
-            )
-        competition_error = validate_match_competition_selection(data, competition_name)
-        if competition_error:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=competition_error),
-            )
-        season_error = validate_match_season_selection(
-            data,
-            competition_name,
-            season_name,
-            include_non_ongoing=True,
-        )
-        if season_error:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=season_error),
-            )
-        player_by_id, players_by_name, team_lookup = build_match_record_player_context(
-            data,
-            competition_name,
-            season_name,
-        )
-        if not player_by_id:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert="当前赛事赛季还没有可匹配的比赛记录队员。"),
-            )
-        items, ignored_message = read_player_photo_zip_items(upload)
-        if items is None:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=ignored_message),
-            )
-        auto_assignments, conflicts, unmatched_count = resolve_zip_photo_assignments(
-            items,
-            player_by_id,
-            players_by_name,
-        )
-        if conflicts:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                build_player_photo_manual_select_page(
-                    ctx,
-                    competition_name,
-                    season_name,
-                    items,
-                    auto_assignments,
-                    conflicts,
-                    unmatched_count,
-                    ignored_message,
-                    player_by_id,
-                    team_lookup,
-                ),
-            )
-        updated_count, save_error = apply_player_photo_assignments(data, [
-            {
-                "player_id": str(item["player_id"]),
-                "filename": str(item["filename"]),
-                "pending_path": str(item["pending_path"]),
-            }
-            for item in auto_assignments
-        ])
-        if save_error:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert=save_error),
-            )
-        users = load_users()
-        errors = save_repository_state(data, users)
-        if errors:
-            return start_response_html(
-                start_response,
-                "200 OK",
-                get_match_create_page(ctx, alert="队员头像导入保存失败：" + "；".join(errors[:3])),
-            )
-        audit_action(
+        preview, blocking_errors, warnings = preflight_player_photo_zip_upload(
             ctx,
-            "player_photo.import_zip",
-            target_type="competition",
-            target_id=competition_name,
-            summary=f"ZIP 导入队员头像，更新 {updated_count} 位，跳过 {unmatched_count} 个",
-            metadata={
-                "competition_name": competition_name,
-                "season_name": season_name,
-                "updated_count": updated_count,
-                "unmatched_count": unmatched_count,
-            },
-        )
-        next_path = form_value(ctx.query, "next").strip() or build_match_management_path(
-            ctx,
+            data,
+            upload,
             competition_name,
             season_name,
         )
-        import_message = (
-            f"队员头像导入完成：更新 {updated_count} 位，"
-            f"未匹配跳过 {unmatched_count} 个。{ignored_message}"
+        try:
+            import_batch_id = create_import_upload_preflight(
+                ctx,
+                data,
+                upload,
+                action="player_photo.import_zip",
+                preview=preview,
+                action_metadata={
+                    "competition_name": competition_name,
+                    "season_name": season_name,
+                },
+                competition_names={competition_name},
+                validation_errors=blocking_errors,
+                warnings=warnings,
+            )
+        except Exception as exc:
+            return start_response_html(
+                start_response,
+                "200 OK",
+                get_match_create_page(ctx, alert=f"创建上传预检失败：{exc}"),
+            )
+        return redirect(
+            start_response,
+            f"/console/imports/review?job_id={quote(import_batch_id)}",
         )
-        return redirect(start_response, append_alert_query(next_path, import_message))
 
     submitted_competition = form_value(ctx.form, "competition_name").strip()
     submitted_season = form_value(ctx.form, "season").strip()
@@ -5677,11 +6707,12 @@ def handle_match_create(ctx: RequestContext, start_response):
             "200 OK",
             get_match_create_page(ctx, alert=resolution_errors[0], field_values=new_match),
         )
-    permission_guard = require_competition_manager(
+    permission_guard = require_competition_action(
         ctx,
         start_response,
         data,
         new_match["competition_name"],
+        "match_schedule_manage",
         "你不能在这个地区系列赛下创建比赛。",
     )
     if permission_guard is not None:

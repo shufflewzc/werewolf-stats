@@ -24,6 +24,7 @@ get_team_season_status = legacy.get_team_season_status
 get_user_team_for_scope = legacy.get_user_team_for_scope
 get_user_team_identities = legacy.get_user_team_identities
 is_admin_user = legacy.is_admin_user
+is_team_scope_admin = legacy.is_team_scope_admin
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
 load_users = legacy.load_users
@@ -508,8 +509,16 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
                 "403 Forbidden",
                 layout("没有权限", '<div class="alert alert-danger">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以编辑战队资料。</div>', ctx),
             )
-        if get_team_season_status(data, team) == "completed":
-            return _respond_with_alert(start_response, ctx, "当前战队所属赛季已结束，战队资料已锁定。", next_path)
+        if (
+            get_team_season_status(data, team) == "completed"
+            and not is_team_scope_admin(data, current_user, team)
+        ):
+            return _respond_with_alert(
+                start_response,
+                ctx,
+                "当前战队所属赛季已结束，只有该赛事负责人可以继续修正战队资料。",
+                next_path,
+            )
         short_name = form_value(ctx.form, "short_name").strip() or str(team.get("short_name") or "").strip() or team["name"][:12]
         team["short_name"] = short_name
         team["notes"] = form_value(ctx.form, "notes").strip()
@@ -574,8 +583,19 @@ def handle_team_center_impl(ctx: RequestContext, start_response):
                 "403 Forbidden",
                 layout("没有权限", '<div class="alert alert-danger">只有管理员、具备战队管理权限的账号或已认领该战队的负责人可以维护战队分组。</div>', ctx),
             )
-        if get_team_season_status(data, team) == "completed":
-            return start_response_html(start_response, "200 OK", legacy.get_team_page(ctx, team_id, alert="当前战队所属赛季已结束，战队分组信息已锁定。"))
+        if (
+            get_team_season_status(data, team) == "completed"
+            and not is_team_scope_admin(data, current_user, team)
+        ):
+            return start_response_html(
+                start_response,
+                "200 OK",
+                legacy.get_team_page(
+                    ctx,
+                    team_id,
+                    alert="当前战队所属赛季已结束，只有该赛事负责人可以继续修正战队分组。",
+                ),
+            )
         team["stage_groups"] = collect_team_stage_groups_from_form(ctx.form)
         errors = save_repository_state(data, users)
         if errors:

@@ -9,18 +9,23 @@ import web_app as legacy
 ACCOUNT_ROLE_OPTIONS = legacy.ACCOUNT_ROLE_OPTIONS
 ADMIN_USERNAME = legacy.ADMIN_USERNAME
 DEFAULT_PROVINCE_NAME = legacy.DEFAULT_PROVINCE_NAME
+delete_user_account = legacy.delete_user_account
+RepositoryConflictError = legacy.RepositoryConflictError
 EVENT_SCOPE_PERMISSION_KEYS = legacy.EVENT_SCOPE_PERMISSION_KEYS
 PERMISSION_GROUPS = legacy.PERMISSION_GROUPS
 PERMISSION_LABELS = legacy.PERMISSION_LABELS
+SCOPE_PERMISSION_LABELS = legacy.SCOPE_PERMISSION_LABELS
 RequestContext = legacy.RequestContext
 account_role_label = legacy.account_role_label
 audit_action = legacy.audit_action
 build_manager_scope_options = legacy.build_manager_scope_options
+build_user_authorization_etag = legacy.build_user_authorization_etag
 form_value = legacy.form_value
 get_all_permission_keys = legacy.get_all_permission_keys
 get_manager_scope_labels = legacy.get_manager_scope_labels
 get_user_manager_scope_keys = legacy.get_user_manager_scope_keys
 get_user_permission_labels = legacy.get_user_permission_labels
+get_user_scope_grants = legacy.get_user_scope_grants
 get_user_region_label = legacy.get_user_region_label
 hash_password = legacy.hash_password
 is_admin_user = legacy.is_admin_user
@@ -144,6 +149,7 @@ def get_accounts_page(
             <form method="post" action="/accounts" class="m-0">
               <input type="hidden" name="action" value="delete">
               <input type="hidden" name="username" value="{escape(username)}">
+              <input type="hidden" name="user_authorization_etag" value="{build_user_authorization_etag(user)}">
               <input class="form-control form-control-sm mb-1" name="delete_confirmation" placeholder="输入 {escape(username)} 确认">
               <button type="submit" class="btn btn-sm btn-outline-danger" data-confirm="确认删除账号 {escape(username)}？该账号的登录会话也会失效。">删除账号</button>
             </form>
@@ -166,9 +172,9 @@ def get_accounts_page(
 
     account_form_title = "编辑账号" if editing_account else "新增账号"
     account_form_copy = (
-        "可以在这里调整赛事负责人负责范围、所在地区和登录密码。具体赛事权限请到“权限控制”里按地区系列赛授权。"
+        "赛事负责人的范围与权限统一在“赛区账号与权限”维护；这里仅可调整其显示名称、地区、密码或降级为普通成员。"
         if editing_account
-        else "新增后即可使用新账号登录当前网站。"
+        else "这里新增普通成员账号；赛事负责人请前往“赛区账号与权限”创建。"
     )
     username_field_html = (
         f"""
@@ -273,9 +279,9 @@ def get_accounts_page(
               <div class="mb-3">
                 <label class="form-label">账号类型</label>
                 <select class="form-select" name="role">
-                  {option_tags({k: v for k, v in ACCOUNT_ROLE_OPTIONS.items() if k != 'admin'}, current_form['role'])}
+                  {option_tags({k: v for k, v in ACCOUNT_ROLE_OPTIONS.items() if k != 'admin' and (k != 'event_manager' or editing_user and editing_user.get('role') == 'event_manager')}, current_form['role'])}
                 </select>
-                <div class="small text-secondary mt-2">赛事负责人只表示可被授予赛事类权限；真正能管理哪些功能，要到“权限控制”里按地区 + 系列赛单独勾选，可多选。</div>
+                <div class="small text-secondary mt-2">赛事负责人请在“赛区账号与权限”中创建和授权，避免出现没有明确赛事范围的账号。</div>
               </div>
               <div class="mb-3">
                 <label class="form-label">赛事负责人管辖范围</label>
@@ -427,6 +433,96 @@ def get_accounts_page(
     return layout("账号管理", body, ctx, alert=alert)
 
 
+def _build_global_permission_options(selected_permission_keys: list[str]) -> str:
+    """Render only platform-wide permissions on the compatibility page."""
+
+    selected_set = set(normalize_permission_keys(selected_permission_keys))
+    sections: list[str] = []
+    for group in PERMISSION_GROUPS:
+        cards = []
+        for permission_key in group["keys"]:
+            if permission_key in EVENT_SCOPE_PERMISSION_KEYS:
+                continue
+            checked = " checked" if permission_key in selected_set else ""
+            cards.append(
+                f"""
+                <div class="col-12 col-lg-6">
+                  <label class="team-link-card shadow-sm p-3 h-100 d-block">
+                    <input class="form-check-input me-2" type="checkbox" name="permission_key" value="{escape(permission_key)}"{checked}>
+                    <span class="fw-semibold">{escape(PERMISSION_LABELS[permission_key])}</span>
+                    <span class="d-block small text-secondary mt-2">{escape(legacy.PERMISSION_DESCRIPTIONS[permission_key])}</span>
+                  </label>
+                </div>
+                """
+            )
+        if cards:
+            sections.append(
+                f"""
+                <div class="mb-4">
+                  <h3 class="h6 mb-2">{escape(str(group.get('title') or '全局权限'))}</h3>
+                  <p class="small text-secondary mb-3">{escape(str(group.get('copy') or ''))}</p>
+                  <div class="row g-3">{''.join(cards)}</div>
+                </div>
+                """
+            )
+    return ''.join(sections) or '<div class="small text-secondary">当前没有可在旧页面设置的全局权限。</div>'
+
+
+def _scope_grants_summary_html(
+    target_user: dict[str, Any],
+    data: dict[str, Any],
+) -> str:
+    catalog_by_scope: dict[str, str] = {}
+    for entry in legacy.load_series_catalog(data):
+        scope_key = legacy.build_manager_scope_key(
+            str(entry.get("region_name") or ""),
+            str(entry.get("series_slug") or ""),
+        )
+        catalog_by_scope[scope_key] = " · ".join(
+            part
+            for part in [
+                str(entry.get("region_name") or "").strip(),
+                str(entry.get("series_name") or entry.get("competition_name") or "").strip(),
+            ]
+            if part
+        )
+    rows = []
+    for grant in get_user_scope_grants(target_user):
+        scope_key = str(grant.get("scope_key") or "").strip()
+        permission_keys = [
+            str(item or "").strip()
+            for item in grant.get("permissions", [])
+            if str(item or "").strip() in SCOPE_PERMISSION_LABELS
+        ]
+        permission_labels = [
+            SCOPE_PERMISSION_LABELS[key] for key in permission_keys
+        ]
+        if grant.get("is_scope_admin"):
+            permission_labels.insert(0, "赛事负责人（全权限）")
+        rows.append(
+            f"""
+            <tr>
+              <td><div class="fw-semibold">{escape(catalog_by_scope.get(scope_key, scope_key) or '未知范围')}</div><code class="small">{escape(scope_key)}</code></td>
+              <td>{escape("；".join(permission_labels) or "只保留范围，未授予操作权限")}</td>
+            </tr>
+            """
+        )
+    return f"""
+    <div class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
+        <div>
+          <h3 class="h5 mb-1">赛区精细权限</h3>
+          <p class="small text-secondary mb-0">这里只读展示当前授权。新增、撤销和角色预设统一在新账号页操作。</p>
+        </div>
+        <a class="btn btn-dark align-self-start" href="/console/accounts?{urlencode({'edit_username': target_user['username']})}">前往赛区账号与权限</a>
+      </div>
+      <div class="table-responsive">
+        <table class="table table-sm align-middle mb-0"><thead><tr><th>赛区范围</th><th>权限</th></tr></thead><tbody>{''.join(rows) or '<tr><td colspan="2" class="text-secondary">尚未授予赛区权限。</td></tr>'}</tbody></table>
+      </div>
+    </div>
+    """
+
+
 def get_permission_control_page(
     ctx: RequestContext,
     alert: str = "",
@@ -434,6 +530,7 @@ def get_permission_control_page(
     form_values: dict[str, Any] | None = None,
 ) -> str:
     users = load_users()
+    data = legacy.load_validated_data()
     requested_username = (
         str(form_values.get("username") or "").strip()
         if form_values
@@ -469,9 +566,11 @@ def get_permission_control_page(
     permissioned_accounts = sum(
         1
         for user in users
-        if is_admin_user(user) or normalize_permission_keys(user.get("permissions", []))
+        if is_admin_user(user)
+        or normalize_permission_keys(user.get("permissions", []))
+        or get_user_scope_grants(user)
     )
-    scoped_accounts = sum(1 for user in users if get_user_manager_scope_keys(user))
+    scoped_accounts = sum(1 for user in users if get_user_scope_grants(user))
     user_cards: list[str] = []
     for user in users:
         permission_labels = get_user_permission_labels(user)
@@ -502,17 +601,13 @@ def get_permission_control_page(
         selected_event_permissions = [
             key for key in selected_permissions if key in EVENT_SCOPE_PERMISSION_KEYS
         ]
-        selected_scope_keys = [
-            str(scope_key or "").strip()
-            for scope_key in current_form["manager_scope_keys"]
-            if str(scope_key or "").strip()
-        ]
         permission_summary = "；".join(get_user_permission_labels(target_user)) or "暂未授予额外权限"
         scope_warning = (
-            '<div class="alert alert-warning mb-4">已勾选赛事类权限，请至少选择一个“地区 + 系列赛”负责范围后再保存。</div>'
-            if selected_event_permissions and not selected_scope_keys
+            '<div class="alert alert-warning mb-4">检测到旧版赛事权限。旧版 <code>match_manage</code> 等全局权限不会再作为赛区写权限；请在“赛区账号与权限”中核对迁移后的授权。</div>'
+            if selected_event_permissions
             else ""
         )
+        scope_grants_panel = _scope_grants_summary_html(target_user, data)
         if is_admin_user(target_user):
             permission_panel = f"""
             <section class="panel shadow-sm p-3 p-lg-4">
@@ -536,7 +631,7 @@ def get_permission_control_page(
               <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-4">
                 <div>
                   <h2 class="section-title mb-2">编辑账号权限</h2>
-                  <p class="section-copy mb-0">先授予功能权限，再限定赛事类权限的生效范围。组织类和数据类权限不受赛事范围限制。</p>
+                  <p class="section-copy mb-0">此兼容页面仅维护平台级组织权限；比赛、预测、上传等权限按赛区独立授权。</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2 align-items-start">
                   <a class="btn btn-outline-dark" href="/accounts?{urlencode({'edit_username': target_user['username']})}">编辑账号资料</a>
@@ -545,36 +640,29 @@ def get_permission_control_page(
               </div>
               <div class="row g-3 mb-4">
                 <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">功能权限</div><div class="stat-value mt-2">{len(selected_permissions)}</div></div></div>
-                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">赛事权限</div><div class="stat-value mt-2">{len(selected_event_permissions)}</div></div></div>
-                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">负责范围</div><div class="stat-value mt-2">{len(selected_scope_keys)}</div></div></div>
+                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">旧赛事权限</div><div class="stat-value mt-2">{len(selected_event_permissions)}</div></div></div>
+                <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">精细授权范围</div><div class="stat-value mt-2">{len(get_user_scope_grants(target_user))}</div></div></div>
                 <div class="col-6 col-xl-3"><div class="stat-card h-100 p-3 border-0"><div class="stat-label">账号身份</div><div class="stat-value mt-2">{escape(role_label)}</div></div></div>
               </div>
               <div class="alert alert-light mb-4">当前权限：{escape(permission_summary)}</div>
               {scope_warning}
+              {scope_grants_panel}
               <form method="post" action="/permissions">
                 <input type="hidden" name="username" value="{escape(current_form['username'])}">
+                <input type="hidden" name="user_authorization_etag" value="{escape(build_user_authorization_etag(target_user))}">
                 <div class="panel shadow-sm p-3 p-lg-4 mb-4">
                   <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
                     <div>
-                      <h3 class="h5 mb-1">功能权限</h3>
-                      <p class="small text-secondary mb-0">勾选账号可以进入和维护的后台能力。</p>
+                      <h3 class="h5 mb-1">平台级权限</h3>
+                      <p class="small text-secondary mb-0">只包含门派、战队和参赛 ID 等跨赛事能力；赛区权限不能在这里修改。</p>
                     </div>
                     <span class="chip">{len(selected_permissions)} / {len(PERMISSION_LABELS)} 已选</span>
                   </div>
-                  {legacy.build_permission_options(current_form['permission_keys'])}
-                </div>
-                <div class="panel shadow-sm p-3 p-lg-4 mb-4">
-                  <div class="d-flex flex-column flex-lg-row justify-content-between gap-3 mb-3">
-                    <div>
-                      <h3 class="h5 mb-1">赛事负责范围</h3>
-                      <p class="small text-secondary mb-0">范围口径为“地区 + 系列赛”。赛事类权限只会在这些已选范围内生效。</p>
-                    </div>
-                    <span class="chip">{len(selected_scope_keys)} 个范围</span>
-                  </div>
-                  {build_manager_scope_options(ctx.current_user, current_form['manager_scope_keys'])}
+                  {_build_global_permission_options(current_form['permission_keys'])}
                 </div>
                 <div class="d-flex flex-wrap gap-2">
-                  <button type="submit" class="btn btn-dark">保存权限设置</button>
+                  <button type="submit" class="btn btn-dark">保存平台级权限</button>
+                  <a class="btn btn-outline-dark" href="/console/accounts?{urlencode({'edit_username': target_user['username']})}">管理赛区权限</a>
                   <a class="btn btn-outline-dark" href="/permissions?{urlencode({'username': target_user['username']})}">重置表单</a>
                 </div>
               </form>
@@ -585,7 +673,8 @@ def get_permission_control_page(
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="eyebrow mb-3">RBAC</div>
       <h1 class="display-6 fw-semibold mb-3">用户权限控制</h1>
-      <p class="mb-0 opacity-75">集中控制账号的门派、战队、赛事与数据维护权限。赛事类权限必须绑定负责范围。</p>
+      <p class="mb-0 opacity-75">旧页面仅保留平台级权限维护。比赛、预测、上传和赛区审计已迁移为“地区 + 系列赛”精细授权。</p>
+      <div class="mt-3"><a class="btn btn-light" href="/console/accounts">打开赛区账号与权限</a></div>
     </section>
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="row g-3">
@@ -603,7 +692,7 @@ def get_permission_control_page(
               <h2 class="section-title mb-2">账号目录</h2>
               <p class="section-copy mb-0">选择一个账号后，在右侧维护权限。</p>
             </div>
-            <a class="btn btn-outline-dark" href="/accounts">账号管理</a>
+            <a class="btn btn-outline-dark" href="/console/accounts">赛区账号管理</a>
           </div>
           <div class="form-panel p-3 mb-3">
             <label class="form-label">搜索账号</label>
@@ -739,6 +828,23 @@ def handle_accounts(ctx: RequestContext, start_response):
             for item in ctx.form.get("manager_scope_key", [])
             if str(item or "").strip()
         ]
+        if role == "event_manager":
+            return start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_accounts_page(
+                    ctx,
+                    alert="赛事负责人必须在“赛区账号与权限”中创建并同时设置授权范围。",
+                    form_values={
+                        "username": username,
+                        "display_name": display_name,
+                        "role": "member",
+                        "province_name": province_name or DEFAULT_PROVINCE_NAME,
+                        "region_name": region_name or "广州市",
+                        "manager_scope_keys": [],
+                    },
+                ),
+            )
         password = form_value(ctx.form, "password")
         error = validate_account_form(
             username,
@@ -787,9 +893,23 @@ def handle_accounts(ctx: RequestContext, start_response):
                 "role": role,
                 "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
                 "region_name": normalized_region or "广州市",
+                "account_create": True,
+                "authorization_actor_username": str(
+                    (ctx.current_user or {}).get("username") or ""
+                ),
+                "authorization_actor_etag": build_user_authorization_etag(
+                    ctx.current_user
+                ),
             }
         )
-        save_users(users)
+        try:
+            save_users(users)
+        except RepositoryConflictError as exc:
+            return start_response_html(
+                start_response,
+                "409 Conflict",
+                get_accounts_page(ctx, alert=str(exc)),
+            )
         audit_action(
             ctx,
             "account.create",
@@ -825,6 +945,24 @@ def handle_accounts(ctx: RequestContext, start_response):
             )
         if editing_username == ADMIN_USERNAME and role != "admin":
             role = "admin"
+        if role == "event_manager" and existing_user.get("role") != "event_manager":
+            return start_response_html(
+                start_response,
+                "400 Bad Request",
+                get_accounts_page(
+                    ctx,
+                    alert="普通账号升级为赛事负责人时，必须在“赛区账号与权限”中同时设置授权范围。",
+                    form_values={
+                        "editing_username": editing_username,
+                        "username": editing_username,
+                        "display_name": display_name,
+                        "role": existing_user.get("role") or "member",
+                        "province_name": province_name or DEFAULT_PROVINCE_NAME,
+                        "region_name": region_name or "广州市",
+                        "manager_scope_keys": list(existing_user.get("manager_scope_keys", [])),
+                    },
+                ),
+            )
         error = validate_account_update_form(
             display_name,
             password,
@@ -865,24 +1003,65 @@ def handle_accounts(ctx: RequestContext, start_response):
                 "display_name": display_name,
                 "role": role,
                 "manager_scope_keys": (
-                    manager_scope_keys
+                    list(user.get("manager_scope_keys", []))
                     if role == "event_manager"
-                    else list(user.get("manager_scope_keys", []))
+                    else []
+                ),
+                "scope_grants": (
+                    list(user.get("scope_grants", []))
+                    if role == "event_manager"
+                    else []
+                ),
+                **(
+                    {"scope_grants_updated_by_username": str((ctx.current_user or {}).get("username") or "")}
+                    if role != "event_manager"
+                    else {}
                 ),
                 "permissions": (
                     normalize_permission_keys(user.get("permissions", []))
                     if role == "event_manager"
-                    else [key for key in normalize_permission_keys(user.get("permissions", [])) if key not in legacy.EVENT_SCOPE_PERMISSION_KEYS]
+                    else [
+                        key
+                        for key in normalize_permission_keys(user.get("permissions", []))
+                        if key
+                        not in {
+                            *legacy.EVENT_SCOPE_PERMISSION_KEYS,
+                            "player_binding_manage",
+                        }
+                    ]
                 ),
                 "province_name": normalized_province or DEFAULT_PROVINCE_NAME,
                 "region_name": normalized_region or "广州市",
+                "user_profile_write": True,
+                "authorization_actor_username": str(
+                    (ctx.current_user or {}).get("username") or ""
+                ),
+                "authorization_actor_etag": build_user_authorization_etag(
+                    ctx.current_user
+                ),
+                "expected_user_authorization_etag": build_user_authorization_etag(
+                    existing_user
+                ),
             }
             if password:
                 password_salt, password_hash = hash_password(password)
                 updated_user["password_salt"] = password_salt
                 updated_user["password_hash"] = password_hash
+                updated_user["account_password_write"] = True
+            if role != str(existing_user.get("role") or "member"):
+                updated_user["account_role_write"] = True
+                updated_user["account_permissions_write"] = True
             updated_users.append(updated_user)
-        save_users(updated_users)
+        try:
+            save_users(updated_users)
+        except RepositoryConflictError as exc:
+            return start_response_html(
+                start_response,
+                "409 Conflict",
+                get_accounts_page(ctx, alert=str(exc)),
+            )
+        if role != str(existing_user.get("role") or "member") or password:
+            revoke_user_sessions(editing_username)
         audit_action(
             ctx,
             "account.update",
@@ -934,9 +1113,45 @@ def handle_accounts(ctx: RequestContext, start_response):
                 get_accounts_page(ctx, alert=f"删除账号前，请在确认框输入完整用户名：{username}。"),
             )
 
-        users = [user for user in users if user["username"] != username]
-        revoke_user_sessions(username)
-        save_users(users)
+        expected_user_authorization_etag = form_value(
+            ctx.form,
+            "user_authorization_etag",
+        ).strip()
+        if len(expected_user_authorization_etag) != 64:
+            return start_response_html(
+                start_response,
+                "409 Conflict",
+                get_accounts_page(
+                    ctx,
+                    alert="账号状态或权限已发生变化，请刷新后重试。",
+                ),
+            )
+
+        try:
+            deleted = delete_user_account(
+                username,
+                authorization_actor_username=str(
+                    (ctx.current_user or {}).get("username") or ""
+                ),
+                authorization_actor_etag=build_user_authorization_etag(
+                    ctx.current_user
+                ),
+                expected_user_authorization_etag=(
+                    expected_user_authorization_etag
+                ),
+            )
+        except RepositoryConflictError as exc:
+            return start_response_html(
+                start_response,
+                "409 Conflict",
+                get_accounts_page(ctx, alert=str(exc)),
+            )
+        if not deleted:
+            return start_response_html(
+                start_response,
+                "409 Conflict",
+                get_accounts_page(ctx, alert="账号已经被其他管理员删除，请刷新后重试。"),
+            )
         audit_action(
             ctx,
             "account.delete",
@@ -996,7 +1211,21 @@ def handle_permission_control(ctx: RequestContext, start_response):
             ),
         )
 
-    error = validate_permission_assignment(permission_keys, manager_scope_keys)
+    submitted_event_permissions = [
+        key for key in permission_keys if key in EVENT_SCOPE_PERMISSION_KEYS
+    ]
+    if submitted_event_permissions or manager_scope_keys:
+        return start_response_html(
+            start_response,
+            "400 Bad Request",
+            get_permission_control_page(
+                ctx,
+                alert="赛事、比赛、预测和上传权限必须在“赛区账号与权限”中按系列赛设置；旧接口已拒绝本次修改。",
+                selected_username=username,
+            ),
+        )
+
+    error = validate_permission_assignment(permission_keys, [])
     if error:
         return start_response_html(
             start_response,
@@ -1008,8 +1237,27 @@ def handle_permission_control(ctx: RequestContext, start_response):
                 form_values={
                     "username": username,
                     "permission_keys": permission_keys,
-                    "manager_scope_keys": manager_scope_keys,
+                    "manager_scope_keys": list(target_user.get("manager_scope_keys", [])),
                 },
+            ),
+        )
+
+    expected_user_authorization_etag = form_value(
+        ctx.form,
+        "user_authorization_etag",
+    ).strip()
+    if (
+        len(expected_user_authorization_etag) != 64
+        or build_user_authorization_etag(target_user)
+        != expected_user_authorization_etag
+    ):
+        return start_response_html(
+            start_response,
+            "409 Conflict",
+            get_permission_control_page(
+                ctx,
+                alert="账号状态或权限已发生变化，请刷新后重试。",
+                selected_username=username,
             ),
         )
 
@@ -1021,11 +1269,33 @@ def handle_permission_control(ctx: RequestContext, start_response):
         updated_users.append(
             {
                 **user,
-                "permissions": normalize_permission_keys(permission_keys),
-                "manager_scope_keys": manager_scope_keys,
+                "permissions": [
+                    key
+                    for key in normalize_permission_keys(permission_keys)
+                    if key not in EVENT_SCOPE_PERMISSION_KEYS
+                ],
+                "account_permissions_write": True,
+                "expected_user_authorization_etag": expected_user_authorization_etag,
+                "authorization_actor_username": str(
+                    (ctx.current_user or {}).get("username") or ""
+                ),
+                "authorization_actor_etag": build_user_authorization_etag(
+                    ctx.current_user
+                ),
             }
         )
-    save_users(updated_users)
+    try:
+        save_users(updated_users)
+    except RepositoryConflictError as exc:
+        return start_response_html(
+            start_response,
+            "409 Conflict",
+            get_permission_control_page(
+                ctx,
+                alert=str(exc),
+                selected_username=username,
+            ),
+        )
     audit_action(
         ctx,
         "permission.update",
@@ -1033,8 +1303,12 @@ def handle_permission_control(ctx: RequestContext, start_response):
         target_id=username,
         summary=f"更新账号 {username} 的权限",
         metadata={
-            "permission_keys": normalize_permission_keys(permission_keys),
-            "manager_scope_keys": manager_scope_keys,
+            "permission_keys": [
+                key
+                for key in normalize_permission_keys(permission_keys)
+                if key not in EVENT_SCOPE_PERMISSION_KEYS
+            ],
+            "scope_grants_unchanged": True,
         },
     )
     return start_response_html(

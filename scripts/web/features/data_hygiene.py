@@ -214,17 +214,26 @@ def _delete_empty_player(
 
 
 def _replace_user_player_id(user: dict[str, Any], source_id: str, target_id: str) -> None:
+    changed = False
     if str(user.get("player_id") or "").strip() == source_id:
         user["player_id"] = target_id
+        changed = True
     linked = [str(item or "").strip() for item in user.get("linked_player_ids", [])]
     if source_id in linked:
         linked = [target_id if item == source_id else item for item in linked]
         user["linked_player_ids"] = list(dict.fromkeys(item for item in linked if item))
+        changed = True
     bound_players = user.get("bound_players")
     if isinstance(bound_players, list):
         for item in bound_players:
             if isinstance(item, dict) and str(item.get("player_id") or "").strip() == source_id:
                 item["player_id"] = target_id
+                changed = True
+    if changed:
+        user["user_player_bindings_write"] = True
+        user["expected_user_authorization_etag"] = (
+            legacy.build_user_authorization_etag(user)
+        )
 
 
 def _merge_player(

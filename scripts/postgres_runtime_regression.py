@@ -85,6 +85,14 @@ def cleanup_temp_rows(database_url_value: str) -> None:
                 "DELETE FROM user_sessions WHERE session_token LIKE ?",
                 (TEST_PREFIX + "%",),
             )
+            connection.execute(
+                "DELETE FROM user_scope_grants WHERE username LIKE ?",
+                (TEST_PREFIX + "%",),
+            )
+            connection.execute(
+                "DELETE FROM users WHERE username LIKE ?",
+                (TEST_PREFIX + "%",),
+            )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -136,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
             "wechat_openid": TEST_PREFIX + secrets.token_hex(8),
             "wechat_web_openid": "",
             "wechat_unionid": "",
+            "account_create": True,
         }
         save_users([*original_users, temp_user])
         users_after_create = load_users()

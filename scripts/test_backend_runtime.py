@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import import_worker
 import sqlite_store
+import web_app
 from web_app import (
     build_placeholder_player,
     get_client_ip,
@@ -201,6 +202,41 @@ class BackendRuntimeTests(unittest.TestCase):
             "",
         )
 
+    def test_import_history_cleanup_removes_expired_staged_payload(self):
+        payload_dir = sqlite_store.DB_PATH.parent / "import-jobs"
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        payload_path = payload_dir / "expired.xlsx"
+        payload_path.write_bytes(b"expired")
+        sqlite_store.create_import_job_record(
+            {
+                "batch_id": "imp_expired_payload",
+                "action": "matches.import_excel",
+                "label": "过期暂存文件",
+                "filename": payload_path.name,
+                "status": "failed",
+                "created_at": "2026-07-01 10:00:00 中国时间",
+                "created_by": "admin",
+                "payload_path": str(payload_path),
+                "metadata": {},
+            },
+            snapshot_json='{"data":{},"users":[]}',
+        )
+        with sqlite_store.connect_write_db() as connection:
+            connection.execute(
+                "UPDATE import_snapshots SET created_at_epoch = 1 WHERE job_id = ?",
+                ("imp_expired_payload",),
+            )
+
+        result = sqlite_store.cleanup_import_history(
+            retention_days=1,
+            keep_latest=1,
+            now_epoch=200000,
+        )
+
+        self.assertEqual(result["deleted_import_jobs"], 1)
+        self.assertEqual(result["deleted_payload_files"], 1)
+        self.assertFalse(payload_path.exists())
+
     def test_placeholder_player_includes_star_player_default(self):
         player = build_placeholder_player(
             "player-newcomer",
@@ -267,9 +303,11 @@ class BackendRuntimeTests(unittest.TestCase):
             "manager_scope_keys": [],
             "permissions": [],
             "role": "admin",
+            "account_create": True,
         }
         data = sqlite_store.load_repository_data()
         sqlite_store.save_repository_data(data, [user])
+        user.pop("account_create", None)
         sqlite_store.save_session("session-token", "admin")
         refreshed_data = sqlite_store.load_repository_data()
 
@@ -279,6 +317,156 @@ class BackendRuntimeTests(unittest.TestCase):
             sqlite_store.load_session_username("session-token"),
             "admin",
         )
+
+    def test_inactive_account_cannot_receive_a_new_session(self):
+        sqlite_store.save_users(
+            [
+                {
+                    "username": "inactive-user",
+                    "display_name": "停用账号",
+                    "password_salt": "salt",
+                    "password_hash": "hash",
+                    "active": False,
+                    "player_id": None,
+                    "linked_player_ids": [],
+                    "manager_scope_keys": [],
+                    "permissions": [],
+                    "role": "member",
+                    "account_create": True,
+                }
+            ]
+        )
+
+        with self.assertRaises(sqlite_store.RepositoryConflictError):
+            sqlite_store.save_session("inactive-session", "inactive-user")
+
+        self.assertIsNone(
+            sqlite_store.load_session_username("inactive-session")
+        )
+
+    def test_stale_password_check_cannot_create_session_after_reset(self):
+        user = {
+            "username": "password-user",
+            "display_name": "密码账号",
+            "password_salt": "old-salt",
+            "password_hash": "old-hash",
+            "active": True,
+            "player_id": None,
+            "linked_player_ids": [],
+            "manager_scope_keys": [],
+            "permissions": [],
+            "role": "member",
+            "account_create": True,
+        }
+        sqlite_store.save_users([user])
+        stale_etag = sqlite_store.build_user_authorization_etag(
+            sqlite_store.load_users()[0]
+        )
+        reset_user = {
+            **sqlite_store.load_users()[0],
+            "password_salt": "new-salt",
+            "password_hash": "new-hash",
+            "account_password_write": True,
+        }
+        sqlite_store.save_users([reset_user])
+
+        with self.assertRaises(sqlite_store.RepositoryConflictError):
+            sqlite_store.save_session(
+                "stale-password-session",
+                "password-user",
+                expected_user_authorization_etag=stale_etag,
+            )
+
+        self.assertIsNone(
+            sqlite_store.load_session_username("stale-password-session")
+        )
+
+    def test_repository_state_validation_runs_before_any_persistence(self):
+        invalid_data = {
+            "guilds": [],
+            "teams": [
+                {
+                    "team_id": "team-invalid",
+                    "name": "无效战队",
+                    "short_name": "无效",
+                    "logo": "assets/teams/default.svg",
+                    "active": True,
+                    "founded_on": "2026-08-20",
+                    "competition_name": "测试赛事",
+                    "season_name": "S1",
+                    "guild_id": "",
+                    "captain_player_id": None,
+                    "members": ["missing-player"],
+                    "stage_groups": [],
+                    "notes": "",
+                }
+            ],
+            "players": [],
+            "matches": [],
+        }
+        users = [
+            {
+                "username": "admin",
+                "role": "admin",
+            }
+        ]
+
+        with patch.object(web_app, "save_repository_data") as persist:
+            errors = web_app.save_repository_state(invalid_data, users)
+
+        self.assertTrue(errors)
+        persist.assert_not_called()
+
+    def test_repository_state_rejects_guild_reference_from_stale_user_snapshot(self):
+        stale_data = {
+            "guilds": [
+                {
+                    "guild_id": "guild-stale",
+                    "name": "旧公会",
+                    "short_name": "旧",
+                    "logo": "assets/guilds/default.svg",
+                    "active": True,
+                    "founded_on": "2026-08-20",
+                    "leader_username": "retired",
+                    "manager_usernames": [],
+                    "honors": [],
+                    "notes": "",
+                }
+            ],
+            "teams": [],
+            "players": [],
+            "matches": [],
+        }
+        stale_users = [{"username": "retired", "role": "member"}]
+        current_users = [{"username": "keeper", "role": "member"}]
+
+        with (
+            patch.object(web_app, "get_data_revision", return_value=7),
+            patch.object(web_app, "load_users", return_value=current_users),
+            patch.object(web_app, "save_repository_data") as persist,
+        ):
+            errors = web_app.save_repository_state(stale_data, stale_users)
+
+        self.assertTrue(
+            any("unknown username 'retired'" in error for error in errors),
+            errors,
+        )
+        persist.assert_not_called()
+
+    def test_repository_state_without_revision_pins_current_revision_before_save(self):
+        data = {"guilds": [], "teams": [], "players": [], "matches": []}
+
+        with (
+            patch.object(web_app, "get_data_revision", return_value=11),
+            patch.object(web_app, "load_users", return_value=[]),
+            patch.object(web_app, "save_repository_data") as persist,
+        ):
+            errors = web_app.save_repository_state(data, [])
+
+        self.assertEqual(errors, [])
+        persisted_data = persist.call_args.args[0]
+        self.assertEqual(persisted_data["_data_revision"], 11)
+        self.assertNotIn("_data_revision", data)
 
     def test_match_award_refs_are_persisted_as_player_ids(self):
         match = {

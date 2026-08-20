@@ -18,16 +18,28 @@ from web.features import matches as matches_feature
 class DataUploadTokenTests(unittest.TestCase):
     def setUp(self):
         self.meta: dict[str, str] = {}
-        self.user = {"username": "manager", "role": "admin"}
+        self.user = {"username": "manager", "role": "admin", "active": True}
         self.data = {
             "matches": [
                 {"match_id": "a-s1-260817-01", "competition_name": "赛事A", "season": "S1", "played_on": "2026-08-17", "round": 2, "game_no": 1, "stage": "regular_season", "table_label": "1号房"},
                 {"match_id": "a-s2-260817-01", "competition_name": "赛事A", "season": "S2", "played_on": "2026-08-17", "round": 1, "game_no": 1, "stage": "regular_season", "table_label": "1号房"},
             ]
         }
+        def mutate_json_meta(key, fallback, mutator, **_kwargs):
+            raw = self.meta.get(key, "")
+            try:
+                current = json.loads(raw) if raw else fallback
+            except json.JSONDecodeError:
+                current = fallback
+            next_value, result = mutator(current)
+            if next_value is not None:
+                self.meta[key] = json.dumps(next_value, ensure_ascii=False)
+            return result
+
         self.patches = [
             patch.object(data_upload.legacy, "load_meta_value", side_effect=lambda key: self.meta.get(key)),
             patch.object(data_upload.legacy, "save_meta_value", side_effect=lambda key, value: self.meta.__setitem__(key, value)),
+            patch.object(data_upload, "mutate_json_meta_value", side_effect=mutate_json_meta),
             patch.object(data_upload.legacy, "load_users", return_value=[self.user]),
             patch.object(data_upload.legacy, "load_validated_data", return_value=self.data),
             patch.object(data_upload.legacy, "can_manage_matches", return_value=True),
@@ -91,6 +103,29 @@ class DataUploadTokenTests(unittest.TestCase):
         tokens[0]["expires_at"] = (web_app.china_now() - timedelta(seconds=1)).isoformat()
         data_upload.save_tokens(tokens)
         self.assertIn("已过期", data_upload.authenticate(self.context(raw))[2])
+
+    def test_inactive_token_owner_is_rejected(self):
+        raw, _record = data_upload.create_token(self.user, "停用账号", "90", "all", [])
+        self.user["active"] = False
+
+        user, record, error = data_upload.authenticate(self.context(raw))
+
+        self.assertIsNone(user)
+        self.assertIsNone(record)
+        self.assertIn("账号已停用", error)
+
+    def test_stale_authentication_read_cannot_overwrite_revocation(self):
+        raw, record = data_upload.create_token(self.user, "并发撤销", "90", "all", [])
+        stale_tokens = json.loads(json.dumps(data_upload.load_tokens(), ensure_ascii=False))
+        self.assertTrue(data_upload.revoke_token("manager", record["token_id"]))
+
+        with patch.object(data_upload, "load_tokens", return_value=stale_tokens):
+            user, authenticated, error = data_upload.authenticate(self.context(raw))
+
+        self.assertIsNone(user)
+        self.assertIsNone(authenticated)
+        self.assertIn("已撤销", error)
+        self.assertTrue(json.loads(self.meta[data_upload.TOKEN_META_KEY])[0]["revoked_at"])
 
     def test_targets_api_uses_bearer_scope(self):
         target = data_upload.available_targets(self.user)[0]

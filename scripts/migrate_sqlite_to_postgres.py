@@ -6,10 +6,12 @@ import argparse
 import os
 import sqlite3
 import sys
+import tempfile
+from contextlib import closing, contextmanager
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
-from sqlite_store import DB_PATH, ensure_database
+from sqlite_store import DB_PATH, create_schema, ensure_database
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +19,7 @@ SCHEMA_PATH = Path(__file__).resolve().with_name("postgres_schema.sql")
 
 TABLE_ORDER = [
     "users",
+    "user_scope_grants",
     "app_meta",
     "ai_jobs",
     "ai_job_steps",
@@ -98,6 +101,29 @@ def sqlite_connection(path: Path) -> sqlite3.Connection:
     return connection
 
 
+@contextmanager
+def prepared_sqlite_source(path: Path) -> Iterator[Path]:
+    """Upgrade custom SQLite sources on a disposable copy before migration."""
+
+    source_path = path.expanduser()
+    if not source_path.exists():
+        raise SystemExit(f"SQLite 数据库不存在：{source_path}")
+    if source_path.resolve() == DB_PATH.resolve():
+        ensure_database()
+        yield source_path
+        return
+
+    with tempfile.TemporaryDirectory(prefix="werewolf-stats-pg-migration-") as temp_dir:
+        prepared_path = Path(temp_dir) / "source.db"
+        source_uri = f"{source_path.resolve().as_uri()}?mode=ro"
+        with closing(sqlite3.connect(source_uri, uri=True)) as source_db:
+            with closing(sqlite3.connect(prepared_path)) as prepared_db:
+                source_db.backup(prepared_db)
+        with closing(sqlite_connection(prepared_path)) as prepared_db:
+            create_schema(prepared_db)
+        yield prepared_path
+
+
 def table_columns(connection: sqlite3.Connection, table_name: str) -> list[str]:
     rows = connection.execute(f'PRAGMA table_info("{table_name}")').fetchall()
     if not rows:
@@ -170,40 +196,39 @@ def validate_counts(source: dict[str, int], target: dict[str, int]) -> list[str]
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(sys.argv[1:] if argv is None else argv)
-    if args.sqlite_db.resolve() == DB_PATH.resolve():
-        ensure_database()
-    with sqlite_connection(args.sqlite_db) as sqlite_db:
-        counts = source_counts(sqlite_db)
-        print_counts("SQLite 源库行数：", counts)
-        if not args.apply:
-            print("\n当前为 dry-run。确认目标库后加 --apply 执行迁移。")
-            return 0
-        if not args.database_url:
-            raise SystemExit("缺少 DATABASE_URL。请通过环境变量或 --database-url 指定 PostgreSQL 连接。")
-        if args.truncate is False:
-            print("\n未指定 --truncate：脚本会向目标库追加插入。若目标库已有数据，可能触发主键冲突。")
+    with prepared_sqlite_source(args.sqlite_db) as prepared_path:
+        with closing(sqlite_connection(prepared_path)) as sqlite_db:
+            counts = source_counts(sqlite_db)
+            print_counts("SQLite 源库行数：", counts)
+            if not args.apply:
+                print("\n当前为 dry-run。确认目标库后加 --apply 执行迁移。")
+                return 0
+            if not args.database_url:
+                raise SystemExit("缺少 DATABASE_URL。请通过环境变量或 --database-url 指定 PostgreSQL 连接。")
+            if args.truncate is False:
+                print("\n未指定 --truncate：脚本会向目标库追加插入。若目标库已有数据，可能触发主键冲突。")
 
-        psycopg = import_psycopg()
-        with psycopg.connect(args.database_url) as pg_connection:
-            with pg_connection.transaction():
-                if args.recreate_target_schema:
-                    recreate_target_schema(pg_connection)
-                if not args.skip_schema:
-                    execute_schema(pg_connection, args.schema)
-                if args.truncate:
-                    truncate_target(pg_connection)
-                copied_counts = {}
-                for table_name in TABLE_ORDER:
-                    copied_counts[table_name] = copy_table(sqlite_db, pg_connection, table_name)
-                print_counts("\n本次复制行数：", copied_counts)
-            target = target_counts(pg_connection)
-        errors = validate_counts(counts, target)
-        print_counts("\nPostgreSQL 目标库行数：", target)
-        if errors:
-            print("\n迁移后行数不一致：", file=sys.stderr)
-            for error in errors:
-                print(f"- {error}", file=sys.stderr)
-            return 2
+            psycopg = import_psycopg()
+            with psycopg.connect(args.database_url) as pg_connection:
+                with pg_connection.transaction():
+                    if args.recreate_target_schema:
+                        recreate_target_schema(pg_connection)
+                    if not args.skip_schema:
+                        execute_schema(pg_connection, args.schema)
+                    if args.truncate:
+                        truncate_target(pg_connection)
+                    copied_counts = {}
+                    for table_name in TABLE_ORDER:
+                        copied_counts[table_name] = copy_table(sqlite_db, pg_connection, table_name)
+                    print_counts("\n本次复制行数：", copied_counts)
+                target = target_counts(pg_connection)
+            errors = validate_counts(counts, target)
+            print_counts("\nPostgreSQL 目标库行数：", target)
+            if errors:
+                print("\n迁移后行数不一致：", file=sys.stderr)
+                for error in errors:
+                    print(f"- {error}", file=sys.stderr)
+                return 2
     print("\n迁移完成，行数校验通过。")
     return 0
 

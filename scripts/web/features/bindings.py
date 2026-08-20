@@ -11,6 +11,7 @@ audit_action = legacy.audit_action
 build_bound_player_summary = legacy.build_bound_player_summary
 build_player_binding_candidates = legacy.build_player_binding_candidates
 build_profile_binding_summary = legacy.build_profile_binding_summary
+can_manage_player_binding_scope = legacy.can_manage_player_binding_scope
 can_manage_player_bindings = legacy.can_manage_player_bindings
 china_now_label = legacy.china_now_label
 find_season_binding_conflict = legacy.find_season_binding_conflict
@@ -20,7 +21,6 @@ get_team_by_id = legacy.get_team_by_id
 get_user_bound_player_ids = legacy.get_user_bound_player_ids
 get_user_by_player_id = legacy.get_user_by_player_id
 get_user_badge_label = legacy.get_user_badge_label
-is_admin_user = legacy.is_admin_user
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
 load_users = legacy.load_users
@@ -30,31 +30,26 @@ remove_user_player_binding = legacy.remove_user_player_binding
 save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
-user_has_permission = legacy.user_has_permission
 
 
 def can_review_binding_requests(data, acting_user, target_user, source_player) -> bool:
     if not acting_user or not target_user or not source_player:
         return False
-    del data, target_user, source_player
-    return bool(
-        is_admin_user(acting_user)
-        or user_has_permission(acting_user, "player_binding_manage")
-    )
+    return can_manage_player_binding_scope(data, acting_user, source_player)
 
 
-def can_manage_other_binding_accounts(data, acting_user) -> bool:
-    del data
+def can_manage_other_binding_accounts(data, acting_user, source_player=None) -> bool:
     if not acting_user:
         return False
-    return (
-        is_admin_user(acting_user)
-        or user_has_permission(acting_user, "player_binding_manage")
+    return can_manage_player_binding_scope(
+        data,
+        acting_user,
+        source_player,
     )
 
 
-def can_direct_bind_player_ids(acting_user) -> bool:
-    return bool(acting_user and is_admin_user(acting_user))
+def can_direct_bind_player_ids(data, acting_user, source_player) -> bool:
+    return can_manage_player_binding_scope(data, acting_user, source_player)
 
 
 def release_captaincy_for_player(data: dict[str, list[dict[str, object]]], player_id: str) -> list[str]:
@@ -90,7 +85,17 @@ def get_player_bindings_page(
         or form_value(ctx.query, "username").strip()
     )
     target_name = ctx.current_user["username"]
-    if requested_target_name and can_manage_other_binding_accounts(data, ctx.current_user):
+    if requested_target_name and requested_target_name != target_name:
+        if not can_manage_other_binding_accounts(
+            data,
+            ctx.current_user,
+            selected_player,
+        ):
+            return layout(
+                "没有权限",
+                '<div class="alert alert-danger">你没有权限管理该赛事范围内的账号绑定。</div>',
+                ctx,
+            )
         target_name = requested_target_name
     target_user = next((user for user in users if user["username"] == target_name), None)
     if not target_user:
@@ -102,8 +107,37 @@ def get_player_bindings_page(
         if target_user["username"] != ctx.current_user["username"]
         else ""
     )
-    summary = build_bound_player_summary(data, target_user)
-    candidates = build_player_binding_candidates(data, users, target_user)
+    player_lookup = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if str(player.get("player_id") or "").strip()
+    }
+    visible_bound_player_ids = [
+        player_id
+        for player_id in get_user_bound_player_ids(target_user)
+        if can_manage_player_bindings(
+            data,
+            ctx.current_user,
+            target_user,
+            player_lookup.get(player_id),
+        )
+    ]
+    summary_user = {
+        **target_user,
+        "player_id": None,
+        "linked_player_ids": visible_bound_player_ids,
+    }
+    summary = build_bound_player_summary(data, summary_user)
+    candidates = [
+        item
+        for item in build_player_binding_candidates(data, users, target_user)
+        if can_manage_player_bindings(
+            data,
+            ctx.current_user,
+            target_user,
+            player_lookup.get(str(item.get("player_id") or "").strip()),
+        )
+    ]
     requests = load_membership_requests()
     pending_request_map = {
         item.get("player_id", ""): item
@@ -112,8 +146,8 @@ def get_player_bindings_page(
         and item.get("username") == target_user["username"]
     }
     bound_rows = []
-    for player_id in get_user_bound_player_ids(target_user):
-        player = next((item for item in data["players"] if item["player_id"] == player_id), None)
+    for player_id in visible_bound_player_ids:
+        player = player_lookup.get(player_id)
         scope_labels = "、".join(get_player_binding_scope_labels(data, player_id)) or "暂无比赛范围"
         team_name = (
             get_team_by_id(data, player["team_id"])["name"]
@@ -158,7 +192,11 @@ def get_player_bindings_page(
                   <button type="submit" class="btn btn-sm btn-dark">直接绑定</button>
                 </form>
                 """
-                if can_direct_bind_player_ids(ctx.current_user)
+                if can_direct_bind_player_ids(
+                    data,
+                    ctx.current_user,
+                    player_lookup.get(str(item.get("player_id") or "").strip()),
+                )
                 else (
                 '<span class="small text-secondary">绑定申请审批中</span>'
                 if item["player_id"] in pending_request_map
@@ -308,13 +346,43 @@ def handle_player_bindings(ctx: RequestContext, start_response):
     if not ctx.current_user:
         return redirect(start_response, "/login?next=/bindings")
     if ctx.method == "GET":
+        requested_target_username = form_value(ctx.query, "username").strip()
+        selected_player_id = form_value(ctx.query, "player_id").strip()
+        if (
+            requested_target_username
+            and requested_target_username != ctx.current_user["username"]
+        ):
+            data = load_validated_data()
+            selected_player = next(
+                (
+                    player
+                    for player in data.get("players", [])
+                    if str(player.get("player_id") or "").strip()
+                    == selected_player_id
+                ),
+                None,
+            )
+            if not can_manage_other_binding_accounts(
+                data,
+                ctx.current_user,
+                selected_player,
+            ):
+                return start_response_html(
+                    start_response,
+                    "403 Forbidden",
+                    layout(
+                        "没有权限",
+                        '<div class="alert alert-danger">你没有权限管理该赛事范围内的账号绑定。</div>',
+                        ctx,
+                    ),
+                )
         return start_response_html(
             start_response,
             "200 OK",
             get_player_bindings_page(
                 ctx,
-                target_username=form_value(ctx.query, "username").strip(),
-                selected_player_id=form_value(ctx.query, "player_id").strip(),
+                target_username=requested_target_username,
+                selected_player_id=selected_player_id,
             ),
         )
 
@@ -323,9 +391,31 @@ def handle_player_bindings(ctx: RequestContext, start_response):
     action = form_value(ctx.form, "action").strip()
     target_username = ctx.current_user["username"]
     requested_target_username = form_value(ctx.form, "target_username").strip()
-    if requested_target_username and can_manage_other_binding_accounts(data, ctx.current_user):
-        target_username = requested_target_username
     player_id = form_value(ctx.form, "player_id").strip()
+    source_player = next(
+        (
+            player
+            for player in data.get("players", [])
+            if str(player.get("player_id") or "").strip() == player_id
+        ),
+        None,
+    )
+    if requested_target_username and requested_target_username != target_username:
+        if not can_manage_other_binding_accounts(
+            data,
+            ctx.current_user,
+            source_player,
+        ):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout(
+                    "没有权限",
+                    '<div class="alert alert-danger">你没有权限管理该赛事范围内的账号绑定。</div>',
+                    ctx,
+                ),
+            )
+        target_username = requested_target_username
     target_user = next((user for user in users if user["username"] == target_username), None)
     if not target_user:
         return start_response_html(
@@ -335,7 +425,6 @@ def handle_player_bindings(ctx: RequestContext, start_response):
         )
 
     if action == "request_bind_player_id":
-        source_player = next((player for player in data["players"] if player["player_id"] == player_id), None)
         if not source_player:
             return start_response_html(
                 start_response,
@@ -434,13 +523,6 @@ def handle_player_bindings(ctx: RequestContext, start_response):
         )
 
     if action == "direct_bind_player_id":
-        if not can_direct_bind_player_ids(ctx.current_user):
-            return start_response_html(
-                start_response,
-                "403 Forbidden",
-                layout("没有权限", '<div class="alert alert-danger">只有管理员可以直接绑定参赛ID。</div>', ctx),
-            )
-        source_player = next((player for player in data["players"] if player["player_id"] == player_id), None)
         if not source_player:
             return start_response_html(
                 start_response,
@@ -449,6 +531,16 @@ def handle_player_bindings(ctx: RequestContext, start_response):
                     ctx,
                     alert="没有找到对应的参赛ID档案。",
                     target_username=target_username,
+                ),
+            )
+        if not can_direct_bind_player_ids(data, ctx.current_user, source_player):
+            return start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout(
+                    "没有权限",
+                    '<div class="alert alert-danger">你没有权限直接绑定这个赛事范围内的参赛ID。</div>',
+                    ctx,
                 ),
             )
         if not can_manage_player_bindings(data, ctx.current_user, target_user, source_player):
@@ -668,7 +760,6 @@ def handle_player_bindings(ctx: RequestContext, start_response):
         )
 
     if action == "unbind_player_id":
-        source_player = next((player for player in data["players"] if player["player_id"] == player_id), None)
         if not source_player:
             return start_response_html(
                 start_response,

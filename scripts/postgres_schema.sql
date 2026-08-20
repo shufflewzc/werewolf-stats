@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users (
     manager_scope_keys_json TEXT NOT NULL DEFAULT '[]',
     permissions_json TEXT NOT NULL DEFAULT '[]',
     role TEXT NOT NULL DEFAULT 'member',
+    created_by_username TEXT NOT NULL DEFAULT '',
     province_name TEXT NOT NULL DEFAULT '',
     region_name TEXT NOT NULL DEFAULT '',
     gender TEXT NOT NULL DEFAULT '',
@@ -24,6 +25,129 @@ CREATE TABLE IF NOT EXISTS users (
     wechat_web_openid TEXT NOT NULL DEFAULT '',
     wechat_unionid TEXT NOT NULL DEFAULT ''
 );
+
+ALTER TABLE users
+    ADD COLUMN IF NOT EXISTS created_by_username TEXT NOT NULL DEFAULT '';
+
+CREATE TABLE IF NOT EXISTS user_scope_grants (
+    username TEXT NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+    scope_key TEXT NOT NULL,
+    permissions_json TEXT NOT NULL DEFAULT '[]',
+    is_scope_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_scope_admin IN (0, 1)),
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by_username TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (username, scope_key)
+);
+
+DO $scope_grants_v7$
+DECLARE
+    legacy_user RECORD;
+    parsed_scopes JSONB;
+    parsed_permissions JSONB;
+    mapped_permissions JSONB;
+    scope_element JSONB;
+    raw_scope TEXT;
+    separator_at INTEGER;
+    region_name TEXT;
+    series_slug TEXT;
+    normalized_scope TEXT;
+BEGIN
+    FOR legacy_user IN
+        SELECT username, manager_scope_keys_json, permissions_json
+        FROM users
+        ORDER BY username
+    LOOP
+        BEGIN
+            parsed_scopes := COALESCE(
+                NULLIF(BTRIM(legacy_user.manager_scope_keys_json), ''),
+                '[]'
+            )::JSONB;
+        EXCEPTION
+            WHEN invalid_text_representation THEN
+                parsed_scopes := '[]'::JSONB;
+        END;
+        IF jsonb_typeof(parsed_scopes) IS DISTINCT FROM 'array' THEN
+            parsed_scopes := '[]'::JSONB;
+        END IF;
+
+        BEGIN
+            parsed_permissions := COALESCE(
+                NULLIF(BTRIM(legacy_user.permissions_json), ''),
+                '[]'
+            )::JSONB;
+        EXCEPTION
+            WHEN invalid_text_representation THEN
+                parsed_permissions := '[]'::JSONB;
+        END;
+        IF jsonb_typeof(parsed_permissions) IS DISTINCT FROM 'array' THEN
+            parsed_permissions := '[]'::JSONB;
+        END IF;
+
+        SELECT COALESCE(
+            jsonb_agg(candidate.permission_key ORDER BY candidate.permission_order),
+            '[]'::JSONB
+        )
+        INTO mapped_permissions
+        FROM (
+            VALUES
+                (1, 'competition_catalog_manage', FALSE),
+                (2, 'competition_season_manage', FALSE),
+                (10, 'match_schedule_manage', TRUE),
+                (11, 'match_result_manage', TRUE),
+                (12, 'match_import_manage', TRUE),
+                (13, 'dimension_data_manage', TRUE),
+                (14, 'season_asset_manage', TRUE),
+                (15, 'prediction_manage', TRUE),
+                (16, 'scope_audit_view', TRUE)
+        ) AS candidate(permission_order, permission_key, inherit_match_manage)
+        WHERE parsed_permissions ? candidate.permission_key
+           OR (
+               candidate.inherit_match_manage
+               AND parsed_permissions ? 'match_manage'
+           );
+
+        IF mapped_permissions = '[]'::JSONB THEN
+            CONTINUE;
+        END IF;
+
+        FOR scope_element IN
+            SELECT element
+            FROM jsonb_array_elements(parsed_scopes) AS item(element)
+        LOOP
+            IF jsonb_typeof(scope_element) IS DISTINCT FROM 'string' THEN
+                CONTINUE;
+            END IF;
+            raw_scope := scope_element #>> ARRAY[]::TEXT[];
+            separator_at := strpos(raw_scope, '::');
+            IF separator_at <= 1 THEN
+                CONTINUE;
+            END IF;
+            region_name := BTRIM(substr(raw_scope FROM 1 FOR separator_at - 1));
+            series_slug := BTRIM(substr(raw_scope FROM separator_at + 2));
+            IF region_name = '' OR series_slug = '' THEN
+                CONTINUE;
+            END IF;
+            normalized_scope := region_name || '::' || series_slug;
+
+            INSERT INTO user_scope_grants (
+                username, scope_key, permissions_json, is_scope_admin,
+                created_at, updated_at, updated_by_username
+            )
+            VALUES (
+                legacy_user.username,
+                normalized_scope,
+                mapped_permissions::TEXT,
+                0,
+                CURRENT_TIMESTAMP::TEXT,
+                CURRENT_TIMESTAMP::TEXT,
+                'system:legacy-migration'
+            )
+            ON CONFLICT (username, scope_key) DO NOTHING;
+        END LOOP;
+    END LOOP;
+END
+$scope_grants_v7$;
 
 CREATE TABLE IF NOT EXISTS app_meta (
     meta_key TEXT PRIMARY KEY,
@@ -559,11 +683,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_users_wechat_web_openid
 ON users(wechat_web_openid)
 WHERE wechat_web_openid != '';
 
+CREATE INDEX IF NOT EXISTS idx_user_scope_grants_scope
+ON user_scope_grants(scope_key, username);
+
 ALTER TABLE players
 ADD COLUMN IF NOT EXISTS is_star_player INTEGER NOT NULL DEFAULT 0;
 
 INSERT INTO app_meta (meta_key, meta_value)
-VALUES ('schema_version', '6')
+VALUES ('schema_version', '7')
 ON CONFLICT (meta_key) DO UPDATE SET meta_value = EXCLUDED.meta_value;
 
 COMMIT;

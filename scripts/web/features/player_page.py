@@ -573,7 +573,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
     ai_player_summary_actions = ""
     ai_player_summary_admin_editor = ""
     if selected_competition and selected_season:
-        if ai_configured and (not ai_player_season_summary or is_admin_user(ctx.current_user)):
+        if ai_configured and is_admin_user(ctx.current_user):
             ai_player_summary_actions = f"""
             <form method="post" action="/players/{escape(player_id)}" class="m-0">
               <input type="hidden" name="action" value="generate_ai_player_season_summary">
@@ -610,7 +610,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
                 <div>
                   <h2 class="section-title mb-2">AI 选手赛季总结</h2>
-                  <p class="section-copy mb-0">基于当前选手在这个赛事赛季下的真实战绩、角色分布和比赛记录生成总结。首次生成对所有访客开放；生成后仅管理员可重生成或编辑。</p>
+                  <p class="section-copy mb-0">基于当前选手在这个赛事赛季下的真实战绩、角色分布和比赛记录生成总结；仅平台管理员可生成、重生成或编辑。</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">{ai_player_summary_actions}</div>
               </div>
@@ -625,7 +625,7 @@ def _build_player_page_payload(ctx: RequestContext, player_id: str) -> dict[str,
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
                 <div>
                   <h2 class="section-title mb-2">AI 选手赛季总结</h2>
-                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，首次生成对所有访客开放。' if ai_configured else '当前还没有配置 AI 接口。配置后即可在这里生成选手赛季总结。')}</p>
+                  <p class="section-copy mb-0">{escape('当前赛季还没有生成 AI 总结，仅平台管理员可以生成。' if ai_configured else '当前还没有配置 AI 接口。')}</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">{ai_player_summary_actions}</div>
               </div>

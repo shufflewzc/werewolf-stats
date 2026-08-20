@@ -424,7 +424,6 @@ def load_series_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def save_series_catalog(catalog: list[dict[str, Any]]) -> None:
-    global _SERIES_CACHE_KEY, _SERIES_CACHE_VALUE, _SEASON_CACHE_KEY, _SEASON_CACHE_VALUE
     normalized_catalog = [
         entry
         for entry in (
@@ -437,6 +436,11 @@ def save_series_catalog(catalog: list[dict[str, Any]]) -> None:
         SERIES_CATALOG_META_KEY,
         json.dumps(normalized_catalog, ensure_ascii=False, indent=2),
     )
+    invalidate_series_catalog_cache()
+
+
+def invalidate_series_catalog_cache() -> None:
+    global _SERIES_CACHE_KEY, _SERIES_CACHE_VALUE, _SEASON_CACHE_KEY, _SEASON_CACHE_VALUE
     _SERIES_CACHE_KEY = None
     _SERIES_CACHE_VALUE = None
     _SEASON_CACHE_KEY = None
@@ -1040,7 +1044,6 @@ def load_season_catalog(data: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def save_season_catalog(catalog: list[dict[str, Any]]) -> None:
-    global _SEASON_CACHE_KEY, _SEASON_CACHE_VALUE
     normalized_catalog = [
         entry
         for entry in (
@@ -1053,6 +1056,11 @@ def save_season_catalog(catalog: list[dict[str, Any]]) -> None:
         SEASON_CATALOG_META_KEY,
         json.dumps(normalized_catalog, ensure_ascii=False, indent=2),
     )
+    invalidate_season_catalog_cache()
+
+
+def invalidate_season_catalog_cache() -> None:
+    global _SEASON_CACHE_KEY, _SEASON_CACHE_VALUE
     _SEASON_CACHE_KEY = None
     _SEASON_CACHE_VALUE = None
 

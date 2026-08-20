@@ -119,9 +119,15 @@ class MatchExcelImportTests(unittest.TestCase):
         with (
             patch.object(
                 matches_feature,
-                "can_manage_matches",
+                "can_manage_competition_action",
                 return_value=permission_value,
-                side_effect=permission_side_effect,
+                side_effect=(
+                    None
+                    if permission_side_effect is None
+                    else lambda user, scoped_data, competition, _permission: permission_side_effect(
+                        user, scoped_data, competition
+                    )
+                ),
             ),
             patch.object(matches_feature, "validate_match_competition_selection", return_value=""),
             patch.object(matches_feature, "validate_match_season_selection", return_value=""),

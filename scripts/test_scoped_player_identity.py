@@ -158,6 +158,134 @@ class ScopedPlayerIdentityTests(unittest.TestCase):
         self.assertEqual(payload["status"], "matched")
         self.assertEqual(payload["player"]["player_id"], "player-s2")
 
+    def test_inactive_miniprogram_session_is_rejected_and_revoked(self):
+        user = {
+            "username": "tester",
+            "active": False,
+            "player_id": "player-s1",
+            "linked_player_ids": [],
+        }
+        ctx = web_app.RequestContext(
+            method="GET",
+            path="/api/miniprogram/current-player",
+            query={"session_token": ["token"]},
+            form={},
+            files={},
+            current_user=None,
+            now_label="now",
+        )
+        response = {}
+
+        def start_response(status, headers):
+            response["status"] = status
+            response["headers"] = headers
+
+        with (
+            patch.object(web_app, "load_session_username", return_value="tester"),
+            patch.object(web_app, "load_users", return_value=[user]),
+            patch.object(web_app, "delete_session") as delete_session_mock,
+        ):
+            body = web_app.handle_miniprogram_current_player(ctx, start_response)
+
+        self.assertEqual(response["status"], "401 Unauthorized")
+        self.assertIn("已停用", json.loads(body[0])["error"])
+        delete_session_mock.assert_called_once_with("token")
+
+    def test_inactive_wechat_account_cannot_receive_new_session(self):
+        user = {
+            "username": "tester",
+            "active": False,
+            "wechat_openid": "openid",
+        }
+        ctx = web_app.RequestContext(
+            method="POST",
+            path="/api/miniprogram/login",
+            query={},
+            form={"code": ["code"]},
+            files={},
+            current_user=None,
+            now_label="now",
+        )
+        response = {}
+
+        def start_response(status, headers):
+            response["status"] = status
+            response["headers"] = headers
+
+        with (
+            patch.object(
+                web_app,
+                "request_wechat_session",
+                return_value={"openid": "openid", "unionid": ""},
+            ),
+            patch.object(web_app, "load_users", return_value=[user]),
+            patch.object(web_app, "delete_sessions_for_username") as revoke_mock,
+            patch.object(web_app, "save_session") as save_session_mock,
+        ):
+            body = web_app.handle_miniprogram_login(ctx, start_response)
+
+        self.assertEqual(response["status"], "403 Forbidden")
+        self.assertIn("已停用", json.loads(body[0])["error"])
+        revoke_mock.assert_called_once_with("tester")
+        save_session_mock.assert_not_called()
+
+    def test_miniprogram_profile_conflict_after_deactivation_returns_409(self):
+        user = {
+            "username": "tester",
+            "display_name": "测试账号",
+            "active": True,
+            "role": "member",
+            "permissions": [],
+            "scope_grants": [],
+            "password_salt": "salt",
+            "password_hash": "hash",
+            "player_id": None,
+            "linked_player_ids": [],
+        }
+        ctx = web_app.RequestContext(
+            method="POST",
+            path="/api/miniprogram/profile",
+            query={},
+            form={
+                "session_token": ["token"],
+                "display_name": ["新名称"],
+                "province_name": ["广东省"],
+                "region_name": ["深圳市"],
+                "gender": ["prefer_not_to_say"],
+                "bio": ["资料简介"],
+            },
+            files={},
+            current_user=None,
+            now_label="now",
+        )
+        response = {}
+        saved_payload = []
+
+        def start_response(status, headers):
+            response["status"] = status
+            response["headers"] = headers
+
+        def reject_stale(users):
+            saved_payload.extend(users)
+            raise web_app.RepositoryConflictError("账号已停用")
+
+        with (
+            patch.object(
+                web_app,
+                "resolve_active_miniprogram_session",
+                return_value=("tester", user, [user]),
+            ),
+            patch.object(web_app, "save_users", side_effect=reject_stale),
+        ):
+            body = web_app.handle_miniprogram_profile(ctx, start_response)
+
+        self.assertEqual(response["status"], "409 Conflict")
+        self.assertIn("已停用", json.loads(body[0])["error"])
+        self.assertEqual(
+            saved_payload[0]["expected_user_authorization_etag"],
+            web_app.build_user_authorization_etag(user),
+        )
+
     def test_miniprogram_binding_rejects_same_scope_player(self):
         user = {
             "username": "tester",
@@ -215,13 +343,16 @@ class ScopedPlayerIdentityTests(unittest.TestCase):
             patch.object(web_app, "load_session_username", return_value="tester"),
             patch.object(web_app, "load_users", return_value=[user]),
             patch.object(web_app, "load_validated_data", return_value=sample_data()),
-            patch.object(web_app, "save_repository_state", return_value=[]),
+            patch.object(web_app, "save_repository_state", return_value=[]) as save_state,
             patch.object(web_app, "audit_action"),
         ):
             body = web_app.handle_miniprogram_unbind_player(ctx, start_response)
         payload = json.loads(body[0])
         self.assertEqual(response["status"], "200 OK")
         self.assertEqual(payload["user"]["bound_player_ids"], ["player-s2"])
+        saved_users = save_state.call_args.args[1]
+        saved_user = next(item for item in saved_users if item["username"] == "tester")
+        self.assertIn("expected_user_authorization_etag", saved_user)
 
 
 if __name__ == "__main__":

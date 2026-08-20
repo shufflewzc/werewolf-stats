@@ -67,7 +67,7 @@ class DimensionImportTests(unittest.TestCase):
             "read_optional_sheet_rows",
             side_effect=[self.rows, []],
         ), patch.object(
-            matches, "can_manage_matches", return_value=True
+            matches, "can_manage_competition_action", return_value=True
         ), patch.object(
             matches, "validate_match_competition_selection", return_value=""
         ), patch.object(

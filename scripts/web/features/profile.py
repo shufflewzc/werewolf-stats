@@ -17,7 +17,7 @@ build_region_picker = legacy.build_region_picker
 build_unique_slug = legacy.build_unique_slug
 can_access_series_management = legacy.can_access_series_management
 can_manage_guild = legacy.can_manage_guild
-can_manage_matches = legacy.can_manage_matches
+user_has_any_scoped_capability = legacy.user_has_any_scoped_capability
 build_guild_honor_rows = legacy.build_guild_honor_rows
 china_now_label = legacy.china_now_label
 china_today_label = legacy.china_today_label
@@ -45,6 +45,10 @@ user_has_permission = legacy.user_has_permission
 validate_guild_creation = legacy.validate_guild_creation
 validate_profile_update = legacy.validate_profile_update
 validate_uploaded_photo = legacy.validate_uploaded_photo
+
+
+def can_access_event_console(user: dict[str, Any] | None) -> bool:
+    return user_has_any_scoped_capability(user, legacy.SCOPE_PERMISSION_KEYS)
 
 
 def can_manage_guild_honors(user: dict[str, Any] | None) -> bool:
@@ -203,8 +207,8 @@ def get_profile_page(
         '<a class="btn btn-outline-dark" href="/team-center">战队认领</a>',
         '<a class="btn btn-outline-dark" href="/bindings">赛季 ID 管理</a>',
     ]
-    if can_manage_matches(current_user):
-        shortcut_links.append('<a class="btn btn-outline-dark" href="/matches/new">比赛管理</a>')
+    if can_access_event_console(current_user):
+        shortcut_links.append('<a class="btn btn-outline-dark" href="/console">赛事控制台</a>')
     if can_access_series_management(current_user):
         shortcut_links.append('<a class="btn btn-outline-dark" href="/series-manage">系列赛管理</a>')
     if is_admin_user(current_user):

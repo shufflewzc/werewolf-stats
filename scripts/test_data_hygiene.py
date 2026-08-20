@@ -138,6 +138,7 @@ class DataHygieneTests(unittest.TestCase):
         self.assertEqual(data["matches"][0]["players"][0]["player_id"], "player-foo-2")
         self.assertEqual(data["matches"][0]["mvp_player_id"], "player-foo-2")
         self.assertEqual(users[0]["player_id"], "player-foo-2")
+        self.assertTrue(users[0]["user_player_bindings_write"])
         self.assertNotIn("player-foo", {player["player_id"] for player in data["players"]})
 
 

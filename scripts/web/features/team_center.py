@@ -5,7 +5,7 @@ from typing import Any
 import web_app as legacy
 
 RequestContext = legacy.RequestContext
-can_manage_matches = legacy.can_manage_matches
+is_competition_scope_admin = legacy.is_competition_scope_admin
 form_value = legacy.form_value
 get_team_captain_id = legacy.get_team_captain_id
 get_team_scope = legacy.get_team_scope
@@ -103,7 +103,10 @@ def can_review_team_claim_request(
     if is_admin_user(acting_user) or user_has_permission(acting_user, "team_manage"):
         return True
     competition_name, _ = get_team_scope(target_team)
-    return bool(competition_name and can_manage_matches(acting_user, data, competition_name))
+    return bool(
+        competition_name
+        and is_competition_scope_admin(acting_user, data, competition_name)
+    )
 
 
 def is_unclaimed_team(team: dict[str, Any] | None) -> bool:

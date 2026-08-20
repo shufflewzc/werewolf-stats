@@ -10,12 +10,22 @@ import secrets
 from typing import Any
 
 import web_app as legacy
-from sqlite_store import save_season_dimension_stats
+from sqlite_store import mutate_json_meta_value, save_season_dimension_stats
 
 
 TOKEN_META_KEY = "data_upload_tokens_v1"
 REQUEST_META_KEY = "data_upload_requests_v1"
 TOKEN_PREFIX = "wdu_"
+DATA_UPLOAD_SCOPE_PERMISSIONS = {"match_import_manage", "dimension_data_manage"}
+
+
+def can_manage_data_upload(user: dict[str, Any] | None) -> bool:
+    """Return whether an account may upload either supported desktop data type."""
+
+    return legacy.user_has_any_scoped_capability(
+        user,
+        DATA_UPLOAD_SCOPE_PERMISSIONS,
+    )
 
 
 def _load_json_meta(key: str, fallback):
@@ -40,6 +50,22 @@ def save_tokens(tokens: list[dict[str, Any]]) -> None:
     _save_json_meta(TOKEN_META_KEY, tokens[-500:])
 
 
+def _mutate_tokens(mutator):
+    def apply(value):
+        tokens = [dict(item) for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+        next_tokens, result = mutator(tokens)
+        if next_tokens is not None:
+            next_tokens = next_tokens[-500:]
+        return next_tokens, result
+
+    return mutate_json_meta_value(
+        TOKEN_META_KEY,
+        [],
+        apply,
+        bump_revision=False,
+    )
+
+
 def available_targets(user: dict[str, Any] | None, data: dict[str, Any] | None = None) -> list[dict[str, str]]:
     if not user:
         return []
@@ -51,7 +77,16 @@ def available_targets(user: dict[str, Any] | None, data: dict[str, Any] | None =
     return [
         {"competition_name": competition, "season_name": season, "label": f"{competition} / {season}", "scope_key": json.dumps([competition, season], ensure_ascii=False, separators=(",", ":"))}
         for competition, season in sorted(scopes)
-        if competition and season and legacy.can_manage_matches(user, current_data, competition)
+        if competition
+        and season
+        and (
+            legacy.can_manage_competition_action(
+                user, current_data, competition, "match_import_manage"
+            )
+            or legacy.can_manage_competition_action(
+                user, current_data, competition, "dimension_data_manage"
+            )
+        )
     ]
 
 
@@ -79,41 +114,56 @@ def create_token(
         "last_used_at": "",
         "revoked_at": "",
     }
-    tokens = load_tokens()
-    tokens.append(record)
-    save_tokens(tokens)
+    def append_token(tokens):
+        tokens.append(dict(record))
+        return tokens, None
+
+    _mutate_tokens(append_token)
     return raw, record
 
 
 def update_token(username: str, token_id: str, name: str, note: str) -> bool:
-    tokens = load_tokens()
-    changed = False
-    for item in tokens:
-        if item.get("token_id") != token_id or item.get("username") != username:
-            continue
-        next_name = name.strip()[:80] or "每日数据生成器"
-        next_note = note.strip()[:300]
-        if item.get("name") != next_name or str(item.get("note") or "") != next_note:
-            item["name"] = next_name
-            item["note"] = next_note
-            item["updated_at"] = legacy.china_now_label()
-            changed = True
-        break
-    if changed:
-        save_tokens(tokens)
-    return changed
+    def update(tokens):
+        changed = False
+        for item in tokens:
+            if item.get("token_id") != token_id or item.get("username") != username:
+                continue
+            next_name = name.strip()[:80] or "每日数据生成器"
+            next_note = note.strip()[:300]
+            if item.get("name") != next_name or str(item.get("note") or "") != next_note:
+                item["name"] = next_name
+                item["note"] = next_note
+                item["updated_at"] = legacy.china_now_label()
+                changed = True
+            break
+        return (tokens if changed else None), changed
+
+    return bool(_mutate_tokens(update))
 
 
 def revoke_token(username: str, token_id: str) -> bool:
-    tokens = load_tokens()
-    changed = False
-    for item in tokens:
-        if item.get("token_id") == token_id and item.get("username") == username and not item.get("revoked_at"):
-            item["revoked_at"] = legacy.china_now_label()
-            changed = True
-    if changed:
-        save_tokens(tokens)
-    return changed
+    def revoke(tokens):
+        changed = False
+        for item in tokens:
+            if item.get("token_id") == token_id and item.get("username") == username and not item.get("revoked_at"):
+                item["revoked_at"] = legacy.china_now_label()
+                changed = True
+        return (tokens if changed else None), changed
+
+    return bool(_mutate_tokens(revoke))
+
+
+def _token_validity_error(record: dict[str, Any] | None) -> str:
+    if not record or record.get("revoked_at"):
+        return "上传令牌无效或已撤销。"
+    expires_at = str(record.get("expires_at") or "")
+    if expires_at:
+        try:
+            if legacy.china_now() >= datetime.fromisoformat(expires_at):
+                return "上传令牌已过期。"
+        except ValueError:
+            return "上传令牌无效。"
+    return ""
 
 
 def authenticate(ctx) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str]:
@@ -124,21 +174,34 @@ def authenticate(ctx) -> tuple[dict[str, Any] | None, dict[str, Any] | None, str
     digest = sha256(raw.encode("utf-8")).hexdigest()
     tokens = load_tokens()
     record = next((item for item in tokens if hmac.compare_digest(str(item.get("token_hash") or ""), digest)), None)
-    if not record or record.get("revoked_at"):
-        return None, None, "上传令牌无效或已撤销。"
-    expires_at = str(record.get("expires_at") or "")
-    if expires_at:
-        try:
-            if legacy.china_now() >= datetime.fromisoformat(expires_at):
-                return None, None, "上传令牌已过期。"
-        except ValueError:
-            return None, None, "上传令牌无效。"
+    validity_error = _token_validity_error(record)
+    if validity_error:
+        return None, None, validity_error
     user = next((item for item in legacy.load_users() if item.get("username") == record.get("username")), None)
     if not user:
         return None, None, "令牌所属账号不存在。"
-    record["last_used_at"] = legacy.china_now_label()
-    save_tokens(tokens)
-    return user, record, ""
+    if not user.get("active", True):
+        return None, None, "令牌所属账号已停用。"
+
+    def touch(tokens):
+        current = next(
+            (
+                item
+                for item in tokens
+                if hmac.compare_digest(str(item.get("token_hash") or ""), digest)
+            ),
+            None,
+        )
+        current_error = _token_validity_error(current)
+        if current_error:
+            return None, (None, current_error)
+        current["last_used_at"] = legacy.china_now_label()
+        return tokens, (dict(current), "")
+
+    touched_record, touch_error = _mutate_tokens(touch)
+    if touch_error:
+        return None, None, touch_error
+    return user, touched_record, ""
 
 
 def target_allowed(record: dict[str, Any], competition: str, season: str) -> bool:
@@ -148,10 +211,18 @@ def target_allowed(record: dict[str, Any], competition: str, season: str) -> boo
 
 def token_panel(ctx, revealed_token: str = "") -> str:
     user = ctx.current_user
+    can_create_token = can_manage_data_upload(user)
+    owned_tokens = [
+        item
+        for item in load_tokens()
+        if item.get("username") == user.get("username")
+    ]
+    if not can_create_token and not owned_tokens:
+        return ""
     targets = available_targets(user)
     target_labels = {item["scope_key"]: item["label"] for item in targets}
     rows = []
-    for token in reversed([item for item in load_tokens() if item.get("username") == user.get("username")]):
+    for token in reversed(owned_tokens):
         expires_at = str(token.get("expires_at") or "")
         if token.get("revoked_at"):
             state = '<span class="badge text-bg-secondary">已撤销</span>'
@@ -201,11 +272,7 @@ def token_panel(ctx, revealed_token: str = "") -> str:
         </div>''')
     target_options = "".join(f'<label class="form-check"><input class="form-check-input" type="checkbox" name="scope_key" value="{escape(item["scope_key"])}"><span class="form-check-label">{escape(item["label"])}</span></label>' for item in targets)
     revealed = f'''<div class="alert alert-warning"><strong>请立即复制，关闭页面后无法再次查看：</strong><div class="font-monospace text-break mt-2" id="upload-token-value">{escape(revealed_token)}</div></div>''' if revealed_token else ""
-    return f'''
-    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
-      <h2 class="section-title mb-2">数据生成器上传令牌</h2>
-      <p class="section-copy">令牌用于桌面生成器上传 match 与 dimension 文件，只能访问账号有管理权限的赛季。</p>
-      {revealed}
+    create_form = f'''
       <form method="post" action="/profile" class="row g-3 mb-4">
         <input type="hidden" name="action" value="create_upload_token">
         <div class="col-md-4"><label class="form-label">令牌名称</label><input class="form-control" name="token_name" value="每日数据生成器"></div>
@@ -215,6 +282,13 @@ def token_panel(ctx, revealed_token: str = "") -> str:
         <div class="col-12"><label class="form-label">备注</label><input class="form-control" name="token_note" maxlength="300" placeholder="记录使用设备、用途或赛季，不会包含令牌原文"></div>
         <div class="col-12"><button class="btn btn-dark" type="submit">创建令牌</button></div>
       </form>
+    ''' if can_create_token else '<div class="alert alert-secondary">当前上传权限已收回；历史令牌已无法上传数据，你仍可在下方撤销或整理它们。</div>'
+    return f'''
+    <section class="panel shadow-sm p-3 p-lg-4 mb-4">
+      <h2 class="section-title mb-2">数据生成器上传令牌</h2>
+      <p class="section-copy">令牌用于桌面生成器上传 match 与 dimension 文件，只能访问账号有管理权限的赛季。</p>
+      {revealed}
+      {create_form}
       <div><h3 class="h6 mb-3">已创建令牌</h3>{''.join(rows) or '<div class="text-secondary">尚未创建令牌</div>'}</div>
     </section>'''
 
@@ -222,6 +296,8 @@ def token_panel(ctx, revealed_token: str = "") -> str:
 def handle_profile_action(ctx, start_response):
     action = legacy.form_value(ctx.form, "action").strip()
     if action == "create_upload_token":
+        if not can_manage_data_upload(ctx.current_user):
+            return False, "当前账号没有比赛数据或维度数据上传权限。", ""
         scope_mode = legacy.form_value(ctx.form, "scope_mode").strip()
         keys = [str(value) for value in ctx.form.get("scope_key", [])]
         allowed = {item["scope_key"] for item in available_targets(ctx.current_user)}
@@ -300,7 +376,7 @@ def handle_api(ctx, start_response):
 
     competition = legacy.form_value(ctx.form, "competition_name").strip()
     season = legacy.form_value(ctx.form, "season_name").strip()
-    if not target_allowed(record, competition, season) or not legacy.can_manage_matches(user, data, competition):
+    if not target_allowed(record, competition, season):
         return _json(start_response, "403 Forbidden", {"error": "令牌没有该赛事赛季的上传权限。"})
     if not any(item["competition_name"] == competition and item["season_name"] == season for item in permitted):
         return _json(start_response, "400 Bad Request", {"error": "目标赛事赛季不存在或当前不可管理。"})
@@ -334,6 +410,21 @@ def handle_api(ctx, start_response):
             validation_errors.append(issue)
     if not match_upload and not dimension_upload:
         return _json(start_response, "400 Bad Request", {"error": "请至少上传一个 Excel 文件。"})
+    required_permission = (
+        "match_import_manage" if match_upload else "dimension_data_manage"
+    )
+    if not legacy.can_manage_competition_action(
+        user,
+        data,
+        competition,
+        required_permission,
+    ):
+        permission_label = "比赛数据上传" if match_upload else "维度数据上传"
+        return _json(
+            start_response,
+            "403 Forbidden",
+            {"error": f"当前账号没有该赛事赛季的{permission_label}权限。"},
+        )
 
     match_batch_id = legacy.form_value(ctx.form, "match_batch_id").strip()
     if dimension_upload:

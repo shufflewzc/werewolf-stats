@@ -22,7 +22,6 @@ STAGE_OPTIONS = legacy.STAGE_OPTIONS
 build_match_day_path = legacy.build_match_day_path
 build_match_next_path = legacy.build_match_next_path
 build_scoped_path = legacy.build_scoped_path
-can_manage_matches = legacy.can_manage_matches
 escape = legacy.escape
 form_value = legacy.form_value
 get_match_by_id = legacy.get_match_by_id
@@ -66,6 +65,84 @@ PREDICTION_SETTING_CAMPS = [
 
 PREDICTION_DAY_SCENARIOS_KEY = "prediction_day_scenarios"
 PREDICTION_DAY_SCENARIO_VERSION = "prediction_day_scenario_v1"
+
+
+def has_explicit_scope_permission(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+    permission_key: str,
+) -> bool:
+    """Check an explicit series grant without the legacy match fallback.
+
+    Database-loaded users carry authoritative ``scope_grants``. Forcing that
+    interpretation here also keeps crafted legacy user dictionaries from
+    regaining write access through ``match_manage`` migration fallbacks.
+    """
+
+    if is_admin_user(user):
+        return True
+    if not user or not competition_name:
+        return False
+    scope_key_builder = getattr(legacy, "get_competition_scope_key", None)
+    permission_checker = getattr(legacy, "user_has_scope_permission", None)
+    if not callable(scope_key_builder) or not callable(permission_checker):
+        return False
+    scope_key = str(scope_key_builder(data, competition_name) or "").strip()
+    if not scope_key:
+        return False
+    authoritative_user = {
+        **user,
+        "scope_grants_authoritative": True,
+    }
+    return bool(
+        permission_checker(
+            authoritative_user,
+            scope_key,
+            permission_key,
+        )
+    )
+
+
+def can_manage_prediction_scope(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+) -> bool:
+    return has_explicit_scope_permission(
+        user, data, competition_name, "prediction_manage"
+    )
+
+
+def can_manage_match_result_scope(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+) -> bool:
+    return has_explicit_scope_permission(
+        user, data, competition_name, "match_result_manage"
+    )
+
+
+def prediction_accessible_competitions(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+) -> set[str]:
+    competition_names = {
+        str(entry.get("competition_name") or "").strip()
+        for entry in legacy.load_series_catalog(data)
+        if str(entry.get("competition_name") or "").strip()
+    }
+    competition_names.update(
+        get_match_competition_name(match)
+        for match in data.get("matches", [])
+        if get_match_competition_name(match)
+    )
+    return {
+        competition_name
+        for competition_name in competition_names
+        if can_manage_prediction_scope(user, data, competition_name)
+    }
 
 
 def prediction_day_scenario_key(
@@ -1240,6 +1317,11 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
         selected_region,
         selected_series_slug,
     )
+    prediction_admin_link = (
+        f'<a class="btn btn-outline-dark" href="/prediction-admin?match_id={escape(match_id)}">后台人工概率</a>'
+        if can_manage_prediction_scope(ctx.current_user, data, competition_name)
+        else ""
+    )
     prediction_panel = f"""
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3">
@@ -1249,7 +1331,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
         </div>
         <div class="d-flex flex-wrap gap-2">
           <a class="btn btn-dark" href="/matches/{escape(match_id)}/predictions?next={quote(build_scoped_path('/matches/' + match_id, competition_name, season_name))}">打开预测页</a>
-          <a class="btn btn-outline-dark" href="/prediction-admin?match_id={escape(match_id)}">后台人工概率</a>
+          {prediction_admin_link}
         </div>
       </div>
       <div class="alert alert-warning fw-semibold mb-0">当前本场已有 {len(predictions)} 名选手可预测。预测仅用于赛前参考；未录入结果的比赛不会计入历史样本。</div>
@@ -1257,7 +1339,7 @@ def _build_match_page_parts(ctx: RequestContext, match_id: str) -> tuple[str, st
     """
 
     edit_button = ""
-    if can_manage_matches(ctx.current_user, data, competition_name):
+    if can_manage_match_result_scope(ctx.current_user, data, competition_name):
         edit_button = (
             f'<a class="btn btn-dark" href="/matches/{escape(match_id)}/edit?next='
             f'{quote(build_scoped_path("/matches/" + match_id, competition_name, season_name))}">编辑比赛</a>'
@@ -1467,6 +1549,13 @@ def get_match_prediction_page(ctx: RequestContext, match_id: str, alert: str = "
     season_name = context["season_name"]
     next_path = form_value(ctx.query, "next").strip() or build_scoped_path("/matches/" + match_id, competition_name, season_name)
     table_html = render_prediction_table_html(context["predictions"])
+    prediction_admin_link = (
+        f'<a class="btn btn-dark" href="/prediction-admin?match_id={escape(match_id)}">后台填写人工概率</a>'
+        if can_manage_prediction_scope(
+            ctx.current_user, context["data"], competition_name
+        )
+        else ""
+    )
     body = f"""
     <section class="hero p-4 p-md-5 shadow-lg mb-4">
       <div class="hero-layout">
@@ -1483,7 +1572,7 @@ def get_match_prediction_page(ctx: RequestContext, match_id: str, alert: str = "
           <div class="d-flex flex-wrap gap-2 mt-3">
             <a class="btn btn-outline-dark" href="{escape(next_path)}">返回比赛详情</a>
             <a class="btn btn-outline-dark" href="/predictions?competition={quote(competition_name)}&season={quote(season_name)}&played_on={quote(str(match.get('played_on') or ''))}">查看当天三局预测</a>
-            <a class="btn btn-dark" href="/prediction-admin?match_id={escape(match_id)}">后台填写人工概率</a>
+            {prediction_admin_link}
           </div>
         </div>
       </div>
@@ -1512,12 +1601,25 @@ def _prediction_day_scope(
             str(entry.get("competition_name") or "").strip()
             for entry in series_catalog
             if str(entry.get("series_slug") or "").strip() == "jcds"
+            and can_manage_prediction_scope(
+                ctx.current_user,
+                data,
+                str(entry.get("competition_name") or "").strip(),
+            )
         }
     )
     selected_match_id = form_value(ctx.query, "match_id").strip()
     selected_match = get_match_by_id(data.get("matches", []), selected_match_id)
     selected_competition = form_value(ctx.query, "scenario_competition").strip()
-    if not selected_competition and selected_match:
+    if (
+        not selected_competition
+        and selected_match
+        and can_manage_prediction_scope(
+            ctx.current_user,
+            data,
+            get_match_competition_name(selected_match),
+        )
+    ):
         selected_competition = get_match_competition_name(selected_match)
     if selected_competition not in jcds_competitions:
         selected_competition = jcds_competitions[0] if jcds_competitions else ""
@@ -1681,8 +1783,6 @@ def _prediction_day_scenario_admin_html(
     ctx: RequestContext,
     data: dict[str, Any],
 ) -> str:
-    if not is_admin_user(ctx.current_user):
-        return ""
     (
         competitions,
         selected_competition,
@@ -1691,7 +1791,11 @@ def _prediction_day_scenario_admin_html(
         played_on,
     ) = _prediction_day_scope(ctx, data)
     if not competitions:
-        return '<div class="alert alert-secondary">当前没有 series_slug=jcds 的赛事，无法发布三局预测。</div>'
+        return '<div class="alert alert-secondary">当前账号没有可维护三局预测的赛事。</div>'
+    if not can_manage_prediction_scope(
+        ctx.current_user, data, selected_competition
+    ):
+        return '<div class="alert alert-danger">你没有权限维护所选赛事的三局预测。</div>'
     scenarios = load_prediction_day_scenarios()
     scenario = scenarios.get(
         prediction_day_scenario_key(selected_competition, selected_season, played_on)
@@ -1870,9 +1974,19 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
     if not ctx.current_user:
         return layout("胜率预测后台", '<div class="alert alert-danger">请先登录。</div>', ctx)
     data = load_validated_data()
-    scenario_editor = _prediction_day_scenario_admin_html(ctx, data)
+    requested_scenario_competition = form_value(
+        ctx.query, "scenario_competition"
+    ).strip()
+    if requested_scenario_competition and not can_manage_prediction_scope(
+        ctx.current_user, data, requested_scenario_competition
+    ):
+        return layout(
+            "胜率预测后台",
+            '<div class="alert alert-danger">你没有权限维护所选赛事的预测。</div>',
+            ctx,
+        )
     match_id = form_value(ctx.query, "match_id").strip()
-    matches = sorted(
+    all_matches = sorted(
         data.get("matches", []),
         key=lambda item: (
             str(item.get("played_on") or ""),
@@ -1882,13 +1996,44 @@ def get_prediction_admin_page(ctx: RequestContext, alert: str = "") -> str:
         ),
         reverse=True,
     )
-    selected_match = get_match_by_id(matches, match_id) if match_id else (matches[0] if matches else None)
+    requested_match = get_match_by_id(all_matches, match_id) if match_id else None
+    if match_id and not requested_match:
+        return layout(
+            "胜率预测后台",
+            '<div class="alert alert-danger">没有找到对应的比赛。</div>',
+            ctx,
+        )
+    if requested_match and not can_manage_prediction_scope(
+        ctx.current_user,
+        data,
+        get_match_competition_name(requested_match),
+    ):
+        return layout(
+            "胜率预测后台",
+            '<div class="alert alert-danger">你没有权限维护这场比赛的预测。</div>',
+            ctx,
+        )
+    matches = [
+        match
+        for match in all_matches
+        if can_manage_prediction_scope(
+            ctx.current_user,
+            data,
+            get_match_competition_name(match),
+        )
+    ]
+    scenario_editor = _prediction_day_scenario_admin_html(ctx, data)
+    selected_match = requested_match if requested_match else (matches[0] if matches else None)
     if not selected_match:
-        return layout("胜率预测后台", '<div class="alert alert-secondary">当前还没有比赛可以维护预测。</div>', ctx)
+        return layout(
+            "胜率预测后台",
+            scenario_editor
+            + '<div class="alert alert-secondary">当前授权范围还没有比赛可以维护人工概率。</div>',
+            ctx,
+            alert=alert or form_value(ctx.query, "alert").strip(),
+        )
     selected_match_id = str(selected_match.get("match_id") or "")
     competition_name = get_match_competition_name(selected_match)
-    if not can_manage_matches(ctx.current_user, data, competition_name):
-        return layout("胜率预测后台", '<div class="alert alert-danger">你没有权限维护这场比赛的预测。</div>', ctx)
     model_settings = legacy.load_prediction_model_settings()
     model_settings_form = _prediction_model_settings_form_html(model_settings, is_admin_user(ctx.current_user))
     season_name = str(selected_match.get("season") or "").strip()
@@ -1993,13 +2138,15 @@ def _handle_prediction_day_scenario_admin(
     data: dict[str, Any],
     action: str,
 ):
-    if not is_admin_user(ctx.current_user):
+    competition_name = form_value(ctx.form, "scenario_competition").strip()
+    if not can_manage_prediction_scope(
+        ctx.current_user, data, competition_name
+    ):
         return legacy.start_response_html(
             start_response,
             "403 Forbidden",
-            get_prediction_admin_page(ctx, "只有管理员可以发布比赛日三局预测。"),
+            get_prediction_admin_page(ctx, "你没有权限维护所选赛事的三局预测。"),
         )
-    competition_name = form_value(ctx.form, "scenario_competition").strip()
     season_name = form_value(ctx.form, "scenario_season").strip()
     played_on = form_value(ctx.form, "scenario_date").strip()
     selected_match_id = (
@@ -2234,6 +2381,44 @@ def handle_prediction_admin(ctx: RequestContext, start_response):
     if not ctx.current_user:
         return legacy.redirect(start_response, "/login?next=/prediction-admin")
     if ctx.method == "GET":
+        data = load_validated_data()
+        accessible_competitions = prediction_accessible_competitions(
+            ctx.current_user, data
+        )
+        requested_scenario_competition = form_value(
+            ctx.query, "scenario_competition"
+        ).strip()
+        requested_match_id = form_value(ctx.query, "match_id").strip()
+        requested_match = (
+            get_match_by_id(data.get("matches", []), requested_match_id)
+            if requested_match_id
+            else None
+        )
+        requested_match_competition = (
+            get_match_competition_name(requested_match)
+            if requested_match
+            else ""
+        )
+        if (
+            not accessible_competitions
+            or (
+                requested_scenario_competition
+                and requested_scenario_competition not in accessible_competitions
+            )
+            or (
+                requested_match_competition
+                and requested_match_competition not in accessible_competitions
+            )
+        ):
+            return legacy.start_response_html(
+                start_response,
+                "403 Forbidden",
+                layout(
+                    "胜率预测后台",
+                    '<div class="alert alert-danger">当前账号没有所选赛事的预测管理权限。</div>',
+                    ctx,
+                ),
+            )
         return legacy.start_response_html(start_response, "200 OK", get_prediction_admin_page(ctx))
     action = form_value(ctx.form, "action").strip()
     if action == "save_model_settings":
@@ -2257,7 +2442,7 @@ def handle_prediction_admin(ctx: RequestContext, start_response):
     if not match:
         return legacy.start_response_html(start_response, "200 OK", get_prediction_admin_page(ctx, "没有找到对应的比赛。"))
     competition_name = get_match_competition_name(match)
-    if not can_manage_matches(ctx.current_user, data, competition_name):
+    if not can_manage_prediction_scope(ctx.current_user, data, competition_name):
         return legacy.start_response_html(start_response, "403 Forbidden", get_prediction_admin_page(ctx, "你没有权限维护这场比赛的预测。"))
     all_manual = load_manual_score_predictions()
     next_match_values: dict[str, dict[str, float | None]] = {}
@@ -2434,7 +2619,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
                 score_payload["badges"] = [badge]
         scores.append(score_payload)
     edit_href = ""
-    if can_manage_matches(ctx.current_user, data, competition_name):
+    if can_manage_match_result_scope(ctx.current_user, data, competition_name):
         edit_href = f"/matches/{quote(match_id)}/edit?next={quote(build_scoped_path('/matches/' + match_id, competition_name, season_name))}"
     predictions = build_match_score_predictions(
         data,
@@ -2483,7 +2668,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
             "edit_href": edit_href,
             "legacy_href": legacy_href,
             "prediction_href": f"/matches/{quote(match_id)}/predictions?next={quote(build_scoped_path('/matches/' + match_id, competition_name, season_name))}",
-            "admin_href": f"/prediction-admin?match_id={quote(match_id)}" if can_manage_matches(ctx.current_user, data, competition_name) else "",
+            "admin_href": f"/prediction-admin?match_id={quote(match_id)}" if can_manage_prediction_scope(ctx.current_user, data, competition_name) else "",
         },
         "metrics": [
             {"label": "房间", "value": match.get("table_label") or "-", "copy": match.get("format") or "未记录板型"},

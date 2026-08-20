@@ -12,6 +12,7 @@ from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
 
 REQUIRED_RUNTIME_TABLES = [
     "users",
+    "user_scope_grants",
     "app_meta",
     "audit_logs",
     "access_logs",

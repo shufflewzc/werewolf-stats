@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import secrets
 import sqlite3
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
-from web_authz import DEFAULT_EVENT_MANAGER_PERMISSION_KEYS
+from web_authz import (
+    DEFAULT_EVENT_MANAGER_PERMISSION_KEYS,
+    expand_legacy_scope_permission_keys,
+    normalize_scope_grants,
+    normalize_scope_key,
+    normalize_scope_permission_keys,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,10 +31,153 @@ SQLITE_JOURNAL_MODE = os.getenv("SQLITE_JOURNAL_MODE", "WAL").strip().upper()
 SQLITE_SYNCHRONOUS = os.getenv("SQLITE_SYNCHRONOUS", "NORMAL").strip().upper()
 LOG_CLEANUP_META_KEY = "log_cleanup:last_run"
 DATA_REVISION_KEY = "repository"
+SCOPE_GRANTS_SCHEMA_VERSION = 7
+ACCOUNT_TOMBSTONE_META_PREFIX = "account_tombstone:"
+ACCOUNT_REGISTRY_LOCK_META_KEY = "account_registry:lock"
 
 
 class RepositoryConflictError(RuntimeError):
     pass
+
+
+def account_tombstone_meta_key(username: str) -> str:
+    normalized_username = str(username or "").strip()
+    digest = hashlib.sha256(normalized_username.encode("utf-8")).hexdigest()
+    return ACCOUNT_TOMBSTONE_META_PREFIX + digest
+
+
+def build_user_authorization_etag(user: dict[str, Any] | None) -> str:
+    if not user:
+        return ""
+    grants = normalize_scope_grants(user.get("scope_grants", []))
+    payload = {
+        "username": str(user.get("username") or "").strip(),
+        "active": bool(user.get("active", True)),
+        "role": str(user.get("role") or "member").strip(),
+        "password_fingerprint": hashlib.sha256(
+            (
+                str(user.get("password_salt") or "")
+                + "\0"
+                + str(user.get("password_hash") or "")
+            ).encode("utf-8")
+        ).hexdigest(),
+        "permissions": sorted(
+            {
+                str(permission_key or "").strip()
+                for permission_key in user.get("permissions", [])
+                if str(permission_key or "").strip()
+            }
+        ),
+        "scope_grants": [
+            {
+                "scope_key": grant["scope_key"],
+                "permissions": sorted(grant.get("permissions", [])),
+                "is_scope_admin": bool(grant.get("is_scope_admin")),
+            }
+            for grant in sorted(grants, key=lambda item: item["scope_key"])
+        ],
+    }
+    encoded = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def lock_account_username_registry(connection: Any) -> None:
+    connection.execute(
+        """
+        INSERT INTO app_meta (meta_key, meta_value)
+        VALUES (?, '1')
+        ON CONFLICT(meta_key) DO NOTHING
+        """,
+        (ACCOUNT_REGISTRY_LOCK_META_KEY,),
+    )
+    connection.execute(
+        """
+        UPDATE app_meta
+        SET meta_value = meta_value
+        WHERE meta_key = ?
+        RETURNING meta_key
+        """,
+        (ACCOUNT_REGISTRY_LOCK_META_KEY,),
+    ).fetchone()
+
+
+def validate_user_write_actor(connection: Any, user: dict[str, Any]) -> None:
+    actor_username = str(user.get("authorization_actor_username") or "").strip()
+    expected_etag = str(user.get("authorization_actor_etag") or "").strip()
+    if not actor_username and not expected_etag:
+        return
+    if not actor_username or len(expected_etag) != 64:
+        raise RepositoryConflictError(
+            "授权账号状态无效，请刷新后重试。"
+        )
+    actor_row = connection.execute(
+        """
+        UPDATE users
+        SET username = username
+        WHERE username = ?
+        RETURNING username
+        """,
+        (actor_username,),
+    ).fetchone()
+    if not actor_row:
+        raise RepositoryConflictError(
+            "授权账号已不存在，请重新登录。"
+        )
+    actor = next(
+        (
+            item
+            for item in load_users(connection)
+            if str(item.get("username") or "").strip() == actor_username
+        ),
+        None,
+    )
+    if not actor or build_user_authorization_etag(actor) != expected_etag:
+        raise RepositoryConflictError(
+            "当前账号的权限或状态已发生变化，请刷新后重试。"
+        )
+
+
+def validate_user_write_target(connection: Any, user: dict[str, Any]) -> None:
+    expected_etag = str(
+        user.get("expected_user_authorization_etag") or ""
+    ).strip()
+    if not expected_etag:
+        return
+    if len(expected_etag) != 64:
+        raise RepositoryConflictError(
+            "目标账号状态无效，请刷新后重试。"
+        )
+    username = str(user.get("username") or "").strip()
+    target_row = connection.execute(
+        """
+        UPDATE users
+        SET username = username
+        WHERE username = ?
+        RETURNING username
+        """,
+        (username,),
+    ).fetchone()
+    if not target_row:
+        raise RepositoryConflictError(
+            f"账号 {username} 已被删除，请刷新后重试。"
+        )
+    current_user = next(
+        (
+            item
+            for item in load_users(connection)
+            if str(item.get("username") or "").strip() == username
+        ),
+        None,
+    )
+    if not current_user or build_user_authorization_etag(current_user) != expected_etag:
+        raise RepositoryConflictError(
+            f"账号 {username} 的状态或权限已发生变化，请刷新后重试。"
+        )
 
 
 def normalize_stance_result(entry: dict[str, Any]) -> str:
@@ -275,6 +426,7 @@ def create_schema(connection: sqlite3.Connection) -> None:
             manager_scope_keys_json TEXT NOT NULL DEFAULT '[]',
             permissions_json TEXT NOT NULL DEFAULT '[]',
             role TEXT NOT NULL DEFAULT 'member',
+            created_by_username TEXT NOT NULL DEFAULT '',
             province_name TEXT NOT NULL DEFAULT '',
             region_name TEXT NOT NULL DEFAULT '',
             gender TEXT NOT NULL DEFAULT '',
@@ -283,6 +435,18 @@ def create_schema(connection: sqlite3.Connection) -> None:
             wechat_openid TEXT NOT NULL DEFAULT '',
             wechat_web_openid TEXT NOT NULL DEFAULT '',
             wechat_unionid TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS user_scope_grants (
+            username TEXT NOT NULL,
+            scope_key TEXT NOT NULL,
+            permissions_json TEXT NOT NULL DEFAULT '[]',
+            is_scope_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_scope_admin IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by_username TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (username, scope_key),
+            FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
         );
 
         CREATE TABLE IF NOT EXISTS app_meta (
@@ -530,6 +694,9 @@ def create_schema(connection: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_team_members_team_order
         ON team_members(team_id, sort_order);
 
+        CREATE INDEX IF NOT EXISTS idx_user_scope_grants_scope
+        ON user_scope_grants(scope_key, username);
+
         CREATE INDEX IF NOT EXISTS idx_match_players_match_order
         ON match_players(match_id, sort_order);
 
@@ -642,6 +809,14 @@ def create_schema(connection: sqlite3.Connection) -> None:
 
 
 def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
+    schema_version_row = connection.execute(
+        "SELECT meta_value FROM app_meta WHERE meta_key = ?",
+        (SCHEMA_VERSION_META_KEY,),
+    ).fetchone()
+    try:
+        previous_schema_version = int(schema_version_row["meta_value"] or 0) if schema_version_row else 0
+    except (TypeError, ValueError):
+        previous_schema_version = 0
     user_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()
     }
@@ -667,19 +842,54 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         connection.execute(
             "UPDATE users SET role = 'member' WHERE role IS NULL OR role = ''"
         )
+    if "created_by_username" not in user_columns:
+        connection.execute(
+            "ALTER TABLE users ADD COLUMN created_by_username TEXT NOT NULL DEFAULT ''"
+        )
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS user_scope_grants (
+            username TEXT NOT NULL,
+            scope_key TEXT NOT NULL,
+            permissions_json TEXT NOT NULL DEFAULT '[]',
+            is_scope_admin INTEGER NOT NULL DEFAULT 0 CHECK (is_scope_admin IN (0, 1)),
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            updated_by_username TEXT NOT NULL DEFAULT '',
+            PRIMARY KEY (username, scope_key),
+            FOREIGN KEY (username) REFERENCES users(username) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_user_scope_grants_scope
+        ON user_scope_grants(scope_key, username)
+        """
+    )
     updated_user_columns = {
         row["name"] for row in connection.execute("PRAGMA table_info(users)").fetchall()
     }
-    if "permissions_json" in updated_user_columns and "role" in updated_user_columns:
+    if (
+        previous_schema_version < SCOPE_GRANTS_SCHEMA_VERSION
+        and "permissions_json" in updated_user_columns
+        and "role" in updated_user_columns
+    ):
         connection.execute(
             """
             UPDATE users
             SET permissions_json = ?
             WHERE role = 'event_manager'
               AND (permissions_json IS NULL OR permissions_json = '' OR permissions_json = '[]')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM user_scope_grants AS grant
+                  WHERE grant.username = users.username
+              )
             """,
             (json.dumps(DEFAULT_EVENT_MANAGER_PERMISSION_KEYS, ensure_ascii=False),),
         )
+        migrate_legacy_user_scope_grants(connection)
     if "province_name" not in user_columns:
         connection.execute("ALTER TABLE users ADD COLUMN province_name TEXT NOT NULL DEFAULT ''")
     if "region_name" not in user_columns:
@@ -898,6 +1108,56 @@ def ensure_schema_migrations(connection: sqlite3.Connection) -> None:
         """,
         (SCHEMA_VERSION_META_KEY, str(REQUIRED_SCHEMA_VERSION)),
     )
+
+
+def migrate_legacy_user_scope_grants(connection: Any) -> int:
+    """Expand legacy event permissions into per-series grants once per scope."""
+
+    rows = connection.execute(
+        """
+        SELECT username, manager_scope_keys_json, permissions_json
+        FROM users
+        ORDER BY username
+        """
+    ).fetchall()
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    inserted = 0
+    for row in rows:
+        try:
+            legacy_scope_keys = json.loads(row["manager_scope_keys_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            legacy_scope_keys = []
+        try:
+            legacy_permissions = json.loads(row["permissions_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            legacy_permissions = []
+        permissions = expand_legacy_scope_permission_keys(legacy_permissions)
+        if not permissions:
+            continue
+        for raw_scope_key in legacy_scope_keys if isinstance(legacy_scope_keys, list) else []:
+            scope_key = normalize_scope_key(raw_scope_key)
+            if not scope_key:
+                continue
+            cursor = connection.execute(
+                """
+                INSERT INTO user_scope_grants (
+                    username, scope_key, permissions_json, is_scope_admin,
+                    created_at, updated_at, updated_by_username
+                )
+                VALUES (?, ?, ?, 0, ?, ?, ?)
+                ON CONFLICT(username, scope_key) DO NOTHING
+                """,
+                (
+                    row["username"],
+                    scope_key,
+                    json.dumps(permissions, ensure_ascii=False),
+                    now,
+                    now,
+                    "system:legacy-migration",
+                ),
+            )
+            inserted += max(0, int(cursor.rowcount))
+    return inserted
 
 
 def migrate_season_player_dimension_stats_schema(connection: sqlite3.Connection) -> None:
@@ -1274,6 +1534,159 @@ def advance_data_revision_if_current(
     )
 
 
+def reserve_data_revision(expected_revision: int) -> int:
+    """Atomically reserve the next repository revision for a queued writer."""
+
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            return advance_data_revision_if_current(
+                connection,
+                int(expected_revision),
+            )
+
+
+def _insert_user_record(
+    connection: Any,
+    user: dict[str, Any],
+    *,
+    permissions: list[str],
+    manager_scope_keys: list[str],
+) -> None:
+    lock_account_username_registry(connection)
+    tombstone = connection.execute(
+        "SELECT meta_value FROM app_meta WHERE meta_key = ?",
+        (account_tombstone_meta_key(user["username"]),),
+    ).fetchone()
+    if tombstone:
+        raise RepositoryConflictError(
+            f"账号 {user['username']} 已注销，用户名不能再次使用。"
+        )
+    inserted = connection.execute(
+        """
+        INSERT INTO users (
+            username, display_name, password_salt, password_hash, active, player_id,
+            linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
+            created_by_username,
+            province_name, region_name, gender, bio, photo,
+            wechat_openid, wechat_web_openid, wechat_unionid
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(username) DO NOTHING
+        RETURNING username
+        """,
+        (
+            user["username"],
+            user.get("display_name") or user["username"],
+            user["password_salt"],
+            user["password_hash"],
+            1 if user.get("active") else 0,
+            user.get("player_id"),
+            json.dumps(user.get("linked_player_ids", []), ensure_ascii=False),
+            json.dumps(manager_scope_keys, ensure_ascii=False),
+            json.dumps(permissions, ensure_ascii=False),
+            user.get("role")
+            or ("admin" if user["username"] == "admin" else "member"),
+            user.get("created_by_username") or "",
+            user.get("province_name") or "",
+            user.get("region_name") or "",
+            user.get("gender") or "",
+            user.get("bio") or "",
+            user.get("photo") or DEFAULT_USER_PHOTO,
+            user.get("wechat_openid") or "",
+            user.get("wechat_web_openid") or "",
+            user.get("wechat_unionid") or "",
+        ),
+    ).fetchone()
+    if not inserted:
+        raise RepositoryConflictError(
+            f"账号 {user['username']} 已存在，请刷新后重试。"
+        )
+
+
+def _update_existing_user_record(
+    connection: Any,
+    user: dict[str, Any],
+    *,
+    profile_write_requested: bool,
+    player_bindings_write_requested: bool,
+    wechat_identity_write_requested: bool,
+    password_write_requested: bool,
+    active_write_requested: bool,
+    permissions_write_requested: bool,
+    role_write_requested: bool,
+    scope_grants_write_requested: bool,
+    permissions: list[str],
+    manager_scope_keys: list[str],
+) -> None:
+    row = connection.execute(
+        """
+        UPDATE users
+        SET display_name = CASE WHEN ? = 1 THEN ? ELSE display_name END,
+            password_salt = CASE WHEN ? = 1 THEN ? ELSE password_salt END,
+            password_hash = CASE WHEN ? = 1 THEN ? ELSE password_hash END,
+            active = CASE WHEN ? = 1 THEN ? ELSE active END,
+            player_id = CASE WHEN ? = 1 THEN ? ELSE player_id END,
+            linked_player_ids_json = CASE WHEN ? = 1 THEN ? ELSE linked_player_ids_json END,
+            manager_scope_keys_json = CASE WHEN ? = 1 THEN ? ELSE manager_scope_keys_json END,
+            permissions_json = CASE WHEN ? = 1 THEN ? ELSE permissions_json END,
+            role = CASE WHEN ? = 1 THEN ? ELSE role END,
+            province_name = CASE WHEN ? = 1 THEN ? ELSE province_name END,
+            region_name = CASE WHEN ? = 1 THEN ? ELSE region_name END,
+            gender = CASE WHEN ? = 1 THEN ? ELSE gender END,
+            bio = CASE WHEN ? = 1 THEN ? ELSE bio END,
+            photo = CASE WHEN ? = 1 THEN ? ELSE photo END,
+            wechat_openid = CASE WHEN ? = 1 THEN ? ELSE wechat_openid END,
+            wechat_web_openid = CASE WHEN ? = 1 THEN ? ELSE wechat_web_openid END,
+            wechat_unionid = CASE WHEN ? = 1 THEN ? ELSE wechat_unionid END
+        WHERE username = ?
+        RETURNING username
+        """,
+        (
+            1 if profile_write_requested else 0,
+            user.get("display_name") or user["username"],
+            1 if password_write_requested else 0,
+            user["password_salt"],
+            1 if password_write_requested else 0,
+            user["password_hash"],
+            1 if active_write_requested else 0,
+            1 if user.get("active") else 0,
+            1 if player_bindings_write_requested else 0,
+            user.get("player_id"),
+            1 if player_bindings_write_requested else 0,
+            json.dumps(user.get("linked_player_ids", []), ensure_ascii=False),
+            1 if scope_grants_write_requested else 0,
+            json.dumps(manager_scope_keys, ensure_ascii=False),
+            1 if permissions_write_requested else 0,
+            json.dumps(permissions, ensure_ascii=False),
+            1 if role_write_requested else 0,
+            user.get("role")
+            or ("admin" if user["username"] == "admin" else "member"),
+            1 if profile_write_requested else 0,
+            user.get("province_name") or "",
+            1 if profile_write_requested else 0,
+            user.get("region_name") or "",
+            1 if profile_write_requested else 0,
+            user.get("gender") or "",
+            1 if profile_write_requested else 0,
+            user.get("bio") or "",
+            1 if profile_write_requested else 0,
+            user.get("photo") or DEFAULT_USER_PHOTO,
+            1 if wechat_identity_write_requested else 0,
+            user.get("wechat_openid") or "",
+            1 if wechat_identity_write_requested else 0,
+            user.get("wechat_web_openid") or "",
+            1 if wechat_identity_write_requested else 0,
+            user.get("wechat_unionid") or "",
+            user["username"],
+        ),
+    ).fetchone()
+    if not row:
+        raise RepositoryConflictError(
+            f"账号 {user['username']} 已被删除或发生变化，请刷新后重试。"
+        )
+
+
 def replace_repository_data(
     connection: Any,
     teams: list[dict[str, Any]],
@@ -1284,17 +1697,20 @@ def replace_repository_data(
     season_player_dimension_stats: list[dict[str, Any]] | None = None,
     season_team_dimension_stats: list[dict[str, Any]] | None = None,
     expected_revision: int | None = None,
+    meta_updates: dict[str, str] | None = None,
+    membership_requests: list[dict[str, Any]] | None = None,
 ) -> None:
+    initializing_database = not database_is_initialized(connection)
     guild_rows = guilds or []
     player_dimension_rows = (
         season_player_dimension_stats
         if season_player_dimension_stats is not None
-        else load_season_player_dimension_stats(connection)
+        else ([] if initializing_database else load_season_player_dimension_stats(connection))
     )
     team_dimension_rows = (
         season_team_dimension_stats
         if season_team_dimension_stats is not None
-        else load_season_team_dimension_stats(connection)
+        else ([] if initializing_database else load_season_team_dimension_stats(connection))
     )
     backend = connection_backend(connection)
     if backend == "sqlite":
@@ -1302,56 +1718,112 @@ def replace_repository_data(
     with transaction_context(connection):
         if expected_revision is not None:
             advance_data_revision_if_current(connection, int(expected_revision))
+        elif not initializing_database:
+            bump_data_revision(connection)
         for user in users:
-            connection.execute(
-                """
-                INSERT INTO users (
-                    username, display_name, password_salt, password_hash, active, player_id,
-                    linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
-                    province_name, region_name, gender, bio, photo,
-                    wechat_openid, wechat_web_openid, wechat_unionid
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(username) DO UPDATE SET
-                    display_name = excluded.display_name,
-                    password_salt = excluded.password_salt,
-                    password_hash = excluded.password_hash,
-                    active = excluded.active,
-                    player_id = excluded.player_id,
-                    linked_player_ids_json = excluded.linked_player_ids_json,
-                    manager_scope_keys_json = excluded.manager_scope_keys_json,
-                    permissions_json = excluded.permissions_json,
-                    role = excluded.role,
-                    province_name = excluded.province_name,
-                    region_name = excluded.region_name,
-                    gender = excluded.gender,
-                    bio = excluded.bio,
-                    photo = excluded.photo,
-                    wechat_openid = excluded.wechat_openid,
-                    wechat_web_openid = excluded.wechat_web_openid,
-                    wechat_unionid = excluded.wechat_unionid
-                """,
-                (
-                    user["username"],
-                    user.get("display_name") or user["username"],
-                    user["password_salt"],
-                    user["password_hash"],
-                    1 if user.get("active") else 0,
-                    user.get("player_id"),
-                    json.dumps(user.get("linked_player_ids", []), ensure_ascii=False),
-                    json.dumps(user.get("manager_scope_keys", []), ensure_ascii=False),
-                    json.dumps(user.get("permissions", []), ensure_ascii=False),
-                    user.get("role") or ("admin" if user["username"] == "admin" else "member"),
-                    user.get("province_name") or "",
-                    user.get("region_name") or "",
-                    user.get("gender") or "",
-                    user.get("bio") or "",
-                    user.get("photo") or DEFAULT_USER_PHOTO,
-                    user.get("wechat_openid") or "",
-                    user.get("wechat_web_openid") or "",
-                    user.get("wechat_unionid") or "",
-                ),
+            account_create_requested = initializing_database or bool(
+                user.get("account_create")
             )
+            profile_write_requested = initializing_database or bool(
+                user.get("user_profile_write")
+            )
+            player_bindings_write_requested = initializing_database or bool(
+                user.get("user_player_bindings_write")
+            )
+            wechat_identity_write_requested = initializing_database or bool(
+                user.get("user_wechat_identity_write")
+            )
+            legacy_auth_write_requested = initializing_database or bool(
+                user.get("account_auth_write")
+            ) or ("account_auth_updated_by_username" in user)
+            password_write_requested = legacy_auth_write_requested or bool(
+                user.get("account_password_write")
+            )
+            active_write_requested = legacy_auth_write_requested or bool(
+                user.get("account_active_write")
+            )
+            permissions_write_requested = legacy_auth_write_requested or bool(
+                user.get("account_permissions_write")
+            )
+            role_write_requested = legacy_auth_write_requested or bool(
+                user.get("account_role_write")
+            )
+            scope_grants_write_requested = bool(user.get("scope_grants_write")) or (
+                "scope_grants_updated_by_username" in user
+            )
+            should_write_scope_grants = (
+                initializing_database or scope_grants_write_requested
+            )
+            manager_scope_keys = (
+                user.get("manager_scope_keys", [])
+                if should_write_scope_grants
+                else []
+            )
+            permissions = list(user.get("permissions", []))
+            if account_create_requested:
+                # Keep account lifecycle locks in the same order everywhere:
+                # repository revision, username registry, then user rows.
+                lock_account_username_registry(connection)
+            validate_user_write_actor(connection, user)
+            validate_user_write_target(connection, user)
+            if (
+                initializing_database
+                and str(user.get("role") or "") == "event_manager"
+                and manager_scope_keys
+                and not permissions
+                and "scope_grants" not in user
+            ):
+                permissions = list(DEFAULT_EVENT_MANAGER_PERMISSION_KEYS)
+            if account_create_requested:
+                _insert_user_record(
+                    connection,
+                    user,
+                    permissions=permissions,
+                    manager_scope_keys=list(manager_scope_keys),
+                )
+            elif (
+                profile_write_requested
+                or player_bindings_write_requested
+                or wechat_identity_write_requested
+                or password_write_requested
+                or active_write_requested
+                or permissions_write_requested
+                or role_write_requested
+                or scope_grants_write_requested
+            ):
+                _update_existing_user_record(
+                    connection,
+                    user,
+                    profile_write_requested=profile_write_requested,
+                    player_bindings_write_requested=player_bindings_write_requested,
+                    wechat_identity_write_requested=wechat_identity_write_requested,
+                    password_write_requested=password_write_requested,
+                    active_write_requested=active_write_requested,
+                    permissions_write_requested=permissions_write_requested,
+                    role_write_requested=role_write_requested,
+                    scope_grants_write_requested=scope_grants_write_requested,
+                    permissions=permissions,
+                    manager_scope_keys=list(manager_scope_keys),
+                )
+            else:
+                continue
+            if "scope_grants" in user and should_write_scope_grants:
+                replace_user_scope_grants(
+                    connection,
+                    user["username"],
+                    user.get("scope_grants", []),
+                    updated_by_username=(
+                        str(user.get("scope_grants_updated_by_username") or "").strip()
+                        or str(user.get("username") or "").strip()
+                    ),
+                    expected_etag=str(
+                        user.get("scope_grants_expected_etag") or ""
+                    ).strip()
+                    or None,
+                )
+
+        if initializing_database:
+            migrate_legacy_user_scope_grants(connection)
 
         for guild in guild_rows:
             connection.execute(
@@ -1503,12 +1975,10 @@ def replace_repository_data(
             "guild_id",
             [str(guild.get("guild_id") or "") for guild in guild_rows],
         )
-        delete_rows_not_in(
-            connection,
-            "users",
-            "username",
-            [str(user.get("username") or "") for user in users],
-        )
+        # User accounts are not part of the repository's replace-set. Account
+        # creation, targeted updates and deletion carry explicit write markers
+        # so an in-flight data/profile save cannot remove a newly-created user
+        # or reinsert an account that an administrator already deleted.
         connection.execute("DELETE FROM season_player_dimension_stats")
         connection.execute("DELETE FROM season_team_dimension_stats")
         upsert_season_dimension_stats(
@@ -1516,6 +1986,18 @@ def replace_repository_data(
             player_dimension_rows,
             team_dimension_rows,
         )
+
+        for meta_key, meta_value in (meta_updates or {}).items():
+            connection.execute(
+                """
+                INSERT INTO app_meta (meta_key, meta_value)
+                VALUES (?, ?)
+                ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+                """,
+                (str(meta_key), str(meta_value)),
+            )
+        if membership_requests is not None:
+            _replace_membership_requests(connection, membership_requests)
 
         connection.execute(
             """
@@ -1532,7 +2014,7 @@ def replace_repository_data(
             """,
             (SCHEMA_VERSION_META_KEY, str(REQUIRED_SCHEMA_VERSION)),
         )
-        if expected_revision is None:
+        if initializing_database and expected_revision is None:
             bump_data_revision(connection)
     if backend == "sqlite":
         connection.execute("PRAGMA foreign_keys = ON")
@@ -1578,6 +2060,8 @@ def replace_matches_by_id(
         with transaction_context(connection):
             if expected_revision is not None:
                 advance_data_revision_if_current(connection, int(expected_revision))
+            else:
+                bump_data_revision(connection)
             for team in member_teams:
                 connection.execute(
                     """
@@ -1671,8 +2155,6 @@ def replace_matches_by_id(
                 )
             for match in upsert_matches:
                 insert_match_rows(connection, match)
-            if expected_revision is None:
-                bump_data_revision(connection)
 
 
 def ensure_database() -> None:
@@ -1726,6 +2208,274 @@ def require_initialized_database(connection: Any) -> None:
     )
 
 
+def load_user_scope_grants(
+    connection: Any | None = None,
+    *,
+    username: str | None = None,
+) -> list[dict[str, Any]]:
+    should_close = connection is None
+    if connection is None:
+        connection = connect_read_db()
+    try:
+        normalized_username = str(username or "").strip()
+        sql = """
+            SELECT username, scope_key, permissions_json, is_scope_admin,
+                   created_at, updated_at, updated_by_username
+            FROM user_scope_grants
+        """
+        params: tuple[Any, ...] = ()
+        if normalized_username:
+            sql += " WHERE username = ?"
+            params = (normalized_username,)
+        sql += " ORDER BY username, scope_key"
+        rows = connection.execute(sql, params).fetchall()
+        grants: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                raw_permissions = json.loads(row["permissions_json"] or "[]")
+            except (TypeError, json.JSONDecodeError):
+                raw_permissions = []
+            grants.append(
+                {
+                    "username": str(row["username"] or ""),
+                    "scope_key": str(row["scope_key"] or ""),
+                    "permissions": normalize_scope_permission_keys(
+                        raw_permissions if isinstance(raw_permissions, list) else []
+                    ),
+                    "is_scope_admin": bool(row["is_scope_admin"]),
+                    "created_at": str(row["created_at"] or ""),
+                    "updated_at": str(row["updated_at"] or ""),
+                    "updated_by_username": str(row["updated_by_username"] or ""),
+                }
+            )
+        return grants
+    finally:
+        if should_close:
+            connection.close()
+
+
+def build_scope_grants_etag(grants: list[dict[str, Any]]) -> str:
+    payload = [
+        {
+            "scope_key": str(grant.get("scope_key") or ""),
+            "permissions": sorted(
+                normalize_scope_permission_keys(grant.get("permissions", []))
+            ),
+            "is_scope_admin": bool(grant.get("is_scope_admin")),
+            "created_at": str(grant.get("created_at") or ""),
+            "updated_at": str(grant.get("updated_at") or ""),
+            "updated_by_username": str(
+                grant.get("updated_by_username") or ""
+            ),
+        }
+        for grant in sorted(
+            grants,
+            key=lambda item: str(item.get("scope_key") or ""),
+        )
+    ]
+    serialized = json.dumps(
+        payload,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+
+def get_user_scope_grants_etag(
+    username: str,
+    connection: Any | None = None,
+) -> str:
+    return build_scope_grants_etag(
+        load_user_scope_grants(connection, username=username)
+    )
+
+
+def _validated_scope_grants(grants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized_grants: list[dict[str, Any]] = []
+    seen_scope_keys: set[str] = set()
+    for grant in grants:
+        if not isinstance(grant, dict):
+            raise ValueError("赛区授权格式无效。")
+        scope_key = normalize_scope_key(grant.get("scope_key"))
+        if not scope_key:
+            raise ValueError("赛区授权缺少有效的地区和系列赛标识。")
+        if scope_key in seen_scope_keys:
+            raise ValueError(f"赛区授权重复：{scope_key}")
+        seen_scope_keys.add(scope_key)
+        raw_permissions = grant.get("permissions", [])
+        if not isinstance(raw_permissions, (list, tuple, set)):
+            raise ValueError(f"赛区授权权限格式无效：{scope_key}")
+        normalized_permissions = normalize_scope_permission_keys(raw_permissions)
+        requested_permissions = {
+            str(permission_key or "").strip()
+            for permission_key in raw_permissions
+            if str(permission_key or "").strip()
+        }
+        if len(normalized_permissions) != len(requested_permissions):
+            raise ValueError(f"赛区授权包含未识别的权限：{scope_key}")
+        raw_scope_admin = grant.get("is_scope_admin", False)
+        if not (
+            isinstance(raw_scope_admin, bool)
+            or (
+                type(raw_scope_admin) is int
+                and raw_scope_admin in {0, 1}
+            )
+        ):
+            raise ValueError(f"赛区负责人标记格式无效：{scope_key}")
+        normalized_grants.append(
+            {
+                **normalize_scope_grants(
+                    [
+                        {
+                            **grant,
+                            "scope_key": scope_key,
+                            "permissions": normalized_permissions,
+                        }
+                    ]
+                )[0],
+                "permissions": normalized_permissions,
+            }
+        )
+    return normalized_grants
+
+
+def replace_user_scope_grants(
+    connection: Any,
+    username: str,
+    grants: list[dict[str, Any]],
+    *,
+    updated_by_username: str = "",
+    expected_etag: str | None = None,
+) -> list[dict[str, Any]]:
+    normalized_username = str(username or "").strip()
+    if not normalized_username:
+        raise ValueError("账号不能为空。")
+    user_row = connection.execute(
+        "UPDATE users SET username = username WHERE username = ? RETURNING username",
+        (normalized_username,),
+    ).fetchone()
+    if not user_row:
+        raise ValueError(f"账号不存在：{normalized_username}")
+    current_grants = load_user_scope_grants(
+        connection,
+        username=normalized_username,
+    )
+    normalized_expected_etag = str(expected_etag or "").strip()
+    if (
+        normalized_expected_etag
+        and build_scope_grants_etag(current_grants) != normalized_expected_etag
+    ):
+        raise RepositoryConflictError(
+            f"账号 {normalized_username} 的赛区权限已被其他管理员更新，请刷新后重试。"
+        )
+    normalized_grants = _validated_scope_grants(grants)
+    existing_rows = connection.execute(
+        """
+        SELECT scope_key, permissions_json, is_scope_admin, created_at
+        FROM user_scope_grants
+        WHERE username = ?
+        """,
+        (normalized_username,),
+    ).fetchall()
+    existing_by_scope: dict[str, dict[str, Any]] = {}
+    for row in existing_rows:
+        try:
+            existing_permissions = json.loads(row["permissions_json"] or "[]")
+        except (TypeError, json.JSONDecodeError):
+            existing_permissions = []
+        existing_by_scope[str(row["scope_key"] or "")] = {
+            "permissions": normalize_scope_permission_keys(
+                existing_permissions if isinstance(existing_permissions, list) else []
+            ),
+            "is_scope_admin": bool(row["is_scope_admin"]),
+            "created_at": str(row["created_at"] or ""),
+        }
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    updater = str(updated_by_username or "").strip() or normalized_username
+    next_scope_keys = [grant["scope_key"] for grant in normalized_grants]
+    if next_scope_keys:
+        placeholders = ",".join("?" for _ in next_scope_keys)
+        connection.execute(
+            f"""
+            DELETE FROM user_scope_grants
+            WHERE username = ? AND scope_key NOT IN ({placeholders})
+            """,
+            (normalized_username, *next_scope_keys),
+        )
+    else:
+        connection.execute(
+            "DELETE FROM user_scope_grants WHERE username = ?",
+            (normalized_username,),
+        )
+    for grant in normalized_grants:
+        scope_key = grant["scope_key"]
+        existing_grant = existing_by_scope.get(scope_key)
+        if (
+            existing_grant
+            and set(existing_grant["permissions"]) == set(grant["permissions"])
+            and existing_grant["is_scope_admin"] == bool(grant.get("is_scope_admin"))
+        ):
+            continue
+        created_at = (
+            (existing_grant or {}).get("created_at")
+            or grant.get("created_at")
+            or now
+        )
+        connection.execute(
+            """
+            INSERT INTO user_scope_grants (
+                username, scope_key, permissions_json, is_scope_admin,
+                created_at, updated_at, updated_by_username
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(username, scope_key) DO UPDATE SET
+                permissions_json = excluded.permissions_json,
+                is_scope_admin = excluded.is_scope_admin,
+                updated_at = excluded.updated_at,
+                updated_by_username = excluded.updated_by_username
+            """,
+            (
+                normalized_username,
+                scope_key,
+                json.dumps(grant["permissions"], ensure_ascii=False),
+                1 if grant.get("is_scope_admin") else 0,
+                created_at,
+                now,
+                updater,
+            ),
+        )
+    # Keep old code able to discover the user's scopes during the route-by-route
+    # transition. This also prevents a removed grant from being recreated by the
+    # idempotent legacy migration.
+    connection.execute(
+        "UPDATE users SET manager_scope_keys_json = ? WHERE username = ?",
+        (json.dumps(next_scope_keys, ensure_ascii=False), normalized_username),
+    )
+    return load_user_scope_grants(connection, username=normalized_username)
+
+
+def save_user_scope_grants(
+    username: str,
+    grants: list[dict[str, Any]],
+    *,
+    updated_by_username: str = "",
+    expected_etag: str | None = None,
+) -> list[dict[str, Any]]:
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            bump_data_revision(connection)
+            saved_grants = replace_user_scope_grants(
+                connection,
+                username,
+                grants,
+                updated_by_username=updated_by_username,
+                expected_etag=expected_etag,
+            )
+        return saved_grants
+
+
 def load_users(connection: Any | None = None) -> list[dict[str, Any]]:
     should_close = connection is None
     if connection is None:
@@ -1736,12 +2486,17 @@ def load_users(connection: Any | None = None) -> list[dict[str, Any]]:
             """
             SELECT username, display_name, password_salt, password_hash, active, player_id,
                    linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
+                   created_by_username,
                    province_name, region_name, gender, bio, photo,
                    wechat_openid, wechat_web_openid, wechat_unionid
             FROM users
             ORDER BY username
             """
         ).fetchall()
+        scope_grants_by_username: dict[str, list[dict[str, Any]]] = {}
+        for grant in load_user_scope_grants(connection):
+            grant_username = str(grant.pop("username") or "")
+            scope_grants_by_username.setdefault(grant_username, []).append(grant)
         return [
             {
                 "username": row["username"],
@@ -1754,6 +2509,9 @@ def load_users(connection: Any | None = None) -> list[dict[str, Any]]:
                 "manager_scope_keys": json.loads(row["manager_scope_keys_json"] or "[]"),
                 "permissions": json.loads(row["permissions_json"] or "[]"),
                 "role": row["role"] or ("admin" if row["username"] == "admin" else "member"),
+                "created_by_username": row["created_by_username"] or "",
+                "scope_grants": scope_grants_by_username.get(row["username"], []),
+                "scope_grants_authoritative": True,
                 "province_name": row["province_name"] or "",
                 "region_name": row["region_name"] or "",
                 "gender": row["gender"] or "",
@@ -1771,96 +2529,187 @@ def load_users(connection: Any | None = None) -> list[dict[str, Any]]:
 
 
 def upsert_users_only(connection: Any, users: list[dict[str, Any]]) -> None:
-    incoming_usernames = {
-        str(user.get("username") or "").strip()
-        for user in users
-        if str(user.get("username") or "").strip()
-    }
-    existing_rows = connection.execute("SELECT username FROM users").fetchall()
-    for row in existing_rows:
-        username = str(row["username"] or "").strip()
-        if username and username not in incoming_usernames:
-            connection.execute("DELETE FROM users WHERE username = ?", (username,))
-
     for user in users:
         username = str(user.get("username") or "").strip()
         if not username:
             continue
-        connection.execute(
-            """
-            INSERT INTO users (
-                username, display_name, password_salt, password_hash, active, player_id,
-                linked_player_ids_json, manager_scope_keys_json, permissions_json, role,
-                province_name, region_name, gender, bio, photo,
-                wechat_openid, wechat_web_openid, wechat_unionid
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(username) DO UPDATE SET
-                display_name = excluded.display_name,
-                password_salt = excluded.password_salt,
-                password_hash = excluded.password_hash,
-                active = excluded.active,
-                player_id = excluded.player_id,
-                linked_player_ids_json = excluded.linked_player_ids_json,
-                manager_scope_keys_json = excluded.manager_scope_keys_json,
-                permissions_json = excluded.permissions_json,
-                role = excluded.role,
-                province_name = excluded.province_name,
-                region_name = excluded.region_name,
-                gender = excluded.gender,
-                bio = excluded.bio,
-                photo = excluded.photo,
-                wechat_openid = excluded.wechat_openid,
-                wechat_web_openid = excluded.wechat_web_openid,
-                wechat_unionid = excluded.wechat_unionid
-            """,
-            (
-                username,
-                user.get("display_name") or username,
-                user["password_salt"],
-                user["password_hash"],
-                1 if user.get("active") else 0,
-                user.get("player_id"),
-                json.dumps(user.get("linked_player_ids", []), ensure_ascii=False),
-                json.dumps(user.get("manager_scope_keys", []), ensure_ascii=False),
-                json.dumps(user.get("permissions", []), ensure_ascii=False),
-                user.get("role") or ("admin" if username == "admin" else "member"),
-                user.get("province_name") or "",
-                user.get("region_name") or "",
-                user.get("gender") or "",
-                user.get("bio") or "",
-                user.get("photo") or DEFAULT_USER_PHOTO,
-                user.get("wechat_openid") or "",
-                user.get("wechat_web_openid") or "",
-                user.get("wechat_unionid") or "",
-            ),
+        account_create_requested = bool(user.get("account_create"))
+        profile_write_requested = bool(user.get("user_profile_write"))
+        player_bindings_write_requested = bool(
+            user.get("user_player_bindings_write")
         )
+        wechat_identity_write_requested = bool(
+            user.get("user_wechat_identity_write")
+        )
+        scope_grants_write_requested = bool(user.get("scope_grants_write")) or (
+            "scope_grants_updated_by_username" in user
+        )
+        legacy_auth_write_requested = bool(user.get("account_auth_write")) or (
+            "account_auth_updated_by_username" in user
+        )
+        password_write_requested = legacy_auth_write_requested or bool(
+            user.get("account_password_write")
+        )
+        active_write_requested = legacy_auth_write_requested or bool(
+            user.get("account_active_write")
+        )
+        permissions_write_requested = legacy_auth_write_requested or bool(
+            user.get("account_permissions_write")
+        )
+        role_write_requested = legacy_auth_write_requested or bool(
+            user.get("account_role_write")
+        )
+        manager_scope_keys = (
+            user.get("manager_scope_keys", [])
+            if scope_grants_write_requested
+            else []
+        )
+        permissions = list(user.get("permissions", []))
+        if account_create_requested:
+            lock_account_username_registry(connection)
+        validate_user_write_actor(connection, user)
+        validate_user_write_target(connection, user)
+        if account_create_requested:
+            _insert_user_record(
+                connection,
+                user,
+                permissions=permissions,
+                manager_scope_keys=list(manager_scope_keys),
+            )
+        elif (
+            profile_write_requested
+            or player_bindings_write_requested
+            or wechat_identity_write_requested
+            or password_write_requested
+            or active_write_requested
+            or permissions_write_requested
+            or role_write_requested
+            or scope_grants_write_requested
+        ):
+            _update_existing_user_record(
+                connection,
+                user,
+                profile_write_requested=profile_write_requested,
+                player_bindings_write_requested=player_bindings_write_requested,
+                wechat_identity_write_requested=wechat_identity_write_requested,
+                password_write_requested=password_write_requested,
+                active_write_requested=active_write_requested,
+                permissions_write_requested=permissions_write_requested,
+                role_write_requested=role_write_requested,
+                scope_grants_write_requested=scope_grants_write_requested,
+                permissions=permissions,
+                manager_scope_keys=list(manager_scope_keys),
+            )
+        else:
+            continue
+        if "scope_grants" in user and scope_grants_write_requested:
+            replace_user_scope_grants(
+                connection,
+                username,
+                user.get("scope_grants", []),
+                updated_by_username=(
+                    str(user.get("scope_grants_updated_by_username") or "").strip()
+                    or username
+                ),
+                expected_etag=str(
+                    user.get("scope_grants_expected_etag") or ""
+                ).strip()
+                or None,
+            )
+
+
+def delete_user_account(
+    username: str,
+    *,
+    authorization_actor_username: str = "",
+    authorization_actor_etag: str = "",
+    expected_user_authorization_etag: str = "",
+) -> bool:
+    normalized_username = str(username or "").strip()
+    if not normalized_username:
+        return False
+    with connect_write_db() as connection:
+        require_initialized_database(connection)
+        with transaction_context(connection):
+            bump_data_revision(connection)
+            lock_account_username_registry(connection)
+            write_guard = {
+                "username": normalized_username,
+                "authorization_actor_username": authorization_actor_username,
+                "authorization_actor_etag": authorization_actor_etag,
+                "expected_user_authorization_etag": (
+                    expected_user_authorization_etag
+                ),
+            }
+            validate_user_write_actor(connection, write_guard)
+            validate_user_write_target(connection, write_guard)
+            existing = connection.execute(
+                "SELECT username FROM users WHERE username = ?",
+                (normalized_username,),
+            ).fetchone()
+            if not existing:
+                raise RepositoryConflictError(
+                    f"账号 {normalized_username} 已被删除，请刷新后重试。"
+                )
+            guild_blockers: list[str] = []
+            for row in connection.execute(
+                """
+                SELECT name, leader_username, manager_usernames_json
+                FROM guilds
+                ORDER BY name
+                """
+            ).fetchall():
+                guild_name = str(row["name"] or "未命名俱乐部")
+                if str(row["leader_username"] or "").strip() == normalized_username:
+                    guild_blockers.append(f"{guild_name}负责人")
+                try:
+                    manager_usernames = json.loads(
+                        row["manager_usernames_json"] or "[]"
+                    )
+                except (TypeError, ValueError):
+                    manager_usernames = []
+                if normalized_username in {
+                    str(item or "").strip() for item in manager_usernames
+                }:
+                    guild_blockers.append(f"{guild_name}管理员")
+            if guild_blockers:
+                raise RepositoryConflictError(
+                    "账号仍承担俱乐部身份（"
+                    + "、".join(guild_blockers)
+                    + "），请先移交或移除该身份后再删除。"
+                )
+            connection.execute(
+                """
+                INSERT INTO app_meta (meta_key, meta_value)
+                VALUES (?, ?)
+                ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+                """,
+                (
+                    account_tombstone_meta_key(normalized_username),
+                    datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                ),
+            )
+            connection.execute(
+                "DELETE FROM user_sessions WHERE username = ?",
+                (normalized_username,),
+            )
+            connection.execute(
+                "DELETE FROM user_scope_grants WHERE username = ?",
+                (normalized_username,),
+            )
+            deleted = connection.execute(
+                "DELETE FROM users WHERE username = ? RETURNING username",
+                (normalized_username,),
+            ).fetchone()
+            return bool(deleted)
 
 
 def save_users(users: list[dict[str, Any]]) -> None:
-    if postgres_write_mode_enabled():
-        with connect_write_db() as connection:
-            require_initialized_database(connection)
-            with connection.transaction():
-                upsert_users_only(connection, users)
-                bump_data_revision(connection)
-        return
-
-    ensure_database()
-    with connect_db() as connection:
+    with connect_write_db() as connection:
         require_initialized_database(connection)
-        guilds = load_guilds(connection)
-        teams = load_teams(connection)
-        players = load_players(connection)
-        matches = load_matches(connection)
-        replace_repository_data(
-            connection,
-            teams=teams,
-            players=players,
-            matches=matches,
-            users=users,
-            guilds=guilds,
-        )
+        with transaction_context(connection):
+            bump_data_revision(connection)
+            upsert_users_only(connection, users)
 
 
 def load_guilds(connection: Any | None = None) -> list[dict[str, Any]]:
@@ -2101,7 +2950,13 @@ def save_matches(matches: list[dict[str, Any]]) -> None:
         )
 
 
-def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | None = None) -> None:
+def save_repository_data(
+    data: dict[str, Any],
+    users: list[dict[str, Any]] | None = None,
+    *,
+    meta_updates: dict[str, str] | None = None,
+    membership_requests: list[dict[str, Any]] | None = None,
+) -> None:
     with connect_write_db() as connection:
         require_initialized_database(connection)
         replace_repository_data(
@@ -2118,6 +2973,8 @@ def save_repository_data(data: dict[str, Any], users: list[dict[str, Any]] | Non
                 if data.get("_data_revision") is not None
                 else None
             ),
+            meta_updates=meta_updates,
+            membership_requests=membership_requests,
         )
 
 
@@ -2262,10 +3119,16 @@ def upsert_season_dimension_stats(
 def save_season_dimension_stats(
     player_rows: list[dict[str, Any]],
     team_rows: list[dict[str, Any]],
+    *,
+    expected_revision: int | None = None,
 ) -> None:
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
+            if expected_revision is not None:
+                advance_data_revision_if_current(connection, int(expected_revision))
+            else:
+                bump_data_revision(connection)
             upsert_season_dimension_stats(connection, player_rows, team_rows)
 
 
@@ -2276,6 +3139,7 @@ def clear_season_dimension_stats(
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
+            bump_data_revision(connection)
             player_cursor = connection.execute(
                 """
                 DELETE FROM season_player_dimension_stats
@@ -2301,6 +3165,7 @@ def clear_season_dimension_stats_for_day(
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
+            bump_data_revision(connection)
             player_cursor = connection.execute(
                 """
                 DELETE FROM season_player_dimension_stats
@@ -2355,36 +3220,43 @@ def load_membership_requests(connection: Any | None = None) -> list[dict[str, An
             connection.close()
 
 
+def _replace_membership_requests(
+    connection: Any,
+    requests: list[dict[str, Any]],
+) -> None:
+    connection.execute("DELETE FROM membership_requests")
+    for item in requests:
+        connection.execute(
+            """
+            INSERT INTO membership_requests (
+                request_id, request_type, username, display_name, player_id,
+                source_team_id, target_team_id, target_guild_id,
+                scope_competition_name, scope_season_name, request_payload_json, created_on
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                item["request_id"],
+                item["request_type"],
+                item["username"],
+                item["display_name"],
+                item.get("player_id"),
+                item.get("source_team_id"),
+                item.get("target_team_id", ""),
+                item.get("target_guild_id", ""),
+                item.get("scope_competition_name", ""),
+                item.get("scope_season_name", ""),
+                json.dumps(item.get("request_payload", {}), ensure_ascii=False),
+                item["created_on"],
+            ),
+        )
+
+
 def save_membership_requests(requests: list[dict[str, Any]]) -> None:
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
-            connection.execute("DELETE FROM membership_requests")
-            for item in requests:
-                connection.execute(
-                    """
-                    INSERT INTO membership_requests (
-                        request_id, request_type, username, display_name, player_id,
-                        source_team_id, target_team_id, target_guild_id,
-                        scope_competition_name, scope_season_name, request_payload_json, created_on
-                    )
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        item["request_id"],
-                        item["request_type"],
-                        item["username"],
-                        item["display_name"],
-                        item.get("player_id"),
-                        item.get("source_team_id"),
-                        item.get("target_team_id", ""),
-                        item.get("target_guild_id", ""),
-                        item.get("scope_competition_name", ""),
-                        item.get("scope_season_name", ""),
-                        json.dumps(item.get("request_payload", {}), ensure_ascii=False),
-                        item["created_on"],
-                    ),
-                )
+            _replace_membership_requests(connection, requests)
 
 
 def load_meta_value(
@@ -2462,6 +3334,8 @@ def save_meta_value(
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
+            if bump_revision:
+                bump_data_revision(connection)
             connection.execute(
                 """
                 INSERT INTO app_meta (meta_key, meta_value)
@@ -2470,8 +3344,76 @@ def save_meta_value(
                 """,
                 (meta_key, meta_value),
             )
-            if bump_revision:
-                bump_data_revision(connection)
+
+
+def mutate_json_meta_value(
+    meta_key: str,
+    fallback: Any,
+    mutator: Any,
+    *,
+    bump_revision: bool = True,
+) -> Any:
+    """Atomically read, transform and optionally replace one JSON meta value.
+
+    ``mutator`` receives the decoded current value and returns
+    ``(next_value, result)``. Returning ``None`` as ``next_value`` performs a
+    locked read without writing. SQLite acquires a write reservation before the
+    read; PostgreSQL locks the selected row for the transaction.
+    """
+
+    connection = connect_write_db()
+
+    def apply_mutation() -> Any:
+        if bump_revision:
+            bump_data_revision(connection)
+        suffix = " FOR UPDATE" if connection_backend(connection) == "postgres" else ""
+        connection.execute(
+            """
+            INSERT INTO app_meta (meta_key, meta_value)
+            VALUES (?, ?)
+            ON CONFLICT(meta_key) DO NOTHING
+            """,
+            (meta_key, json.dumps(fallback, ensure_ascii=False)),
+        )
+        row = connection.execute(
+            "SELECT meta_value FROM app_meta WHERE meta_key = ?" + suffix,
+            (meta_key,),
+        ).fetchone()
+        raw_value = str(row["meta_value"] or "") if row else ""
+        try:
+            current_value = json.loads(raw_value) if raw_value else deepcopy(fallback)
+        except (TypeError, json.JSONDecodeError):
+            current_value = deepcopy(fallback)
+        next_value, result = mutator(current_value)
+        if next_value is None:
+            return result
+        serialized = json.dumps(next_value, ensure_ascii=False)
+        if not row or serialized != raw_value:
+            connection.execute(
+                """
+                INSERT INTO app_meta (meta_key, meta_value)
+                VALUES (?, ?)
+                ON CONFLICT(meta_key) DO UPDATE SET meta_value = excluded.meta_value
+                """,
+                (meta_key, serialized),
+            )
+        return result
+
+    try:
+        require_initialized_database(connection)
+        if connection_backend(connection) == "sqlite":
+            connection.execute("BEGIN IMMEDIATE")
+            try:
+                result = apply_mutation()
+                connection.commit()
+                return result
+            except Exception:
+                connection.rollback()
+                raise
+        with connection.transaction():
+            return apply_mutation()
+    finally:
+        connection.close()
 
 
 def load_web_login_challenge_record(token: str) -> dict[str, Any] | None:
@@ -2869,6 +3811,7 @@ def cleanup_import_history(
     effective_now = int(now_epoch or datetime.now(timezone.utc).timestamp())
     cutoff_epoch = effective_now - max(1, int(retention_days)) * 86400
     keep_count = max(1, int(keep_latest))
+    payload_paths_to_delete: list[str] = []
     with connect_write_db() as connection:
         require_initialized_database(connection)
         with transaction_context(connection):
@@ -2888,6 +3831,24 @@ def cleanup_import_history(
             if keep_ids:
                 keep_clause = " AND job_id NOT IN (" + ",".join("?" for _ in keep_ids) + ")"
                 params.extend(keep_ids)
+            payload_rows = connection.execute(
+                """
+                SELECT payload_path
+                FROM import_jobs
+                WHERE job_id IN (
+                    SELECT job_id
+                    FROM import_snapshots
+                    WHERE created_at_epoch < ?
+                )
+                """
+                + keep_clause,
+                params,
+            ).fetchall()
+            payload_paths_to_delete = [
+                str(row["payload_path"] or "").strip()
+                for row in payload_rows
+                if str(row["payload_path"] or "").strip()
+            ]
             cursor = connection.execute(
                 """
                 DELETE FROM import_jobs
@@ -2919,9 +3880,25 @@ def cleanup_import_history(
                     "DELETE FROM app_meta WHERE meta_key = ?",
                     (meta_key,),
                 )
+    deleted_payload_files = 0
+    safe_payload_root = (DB_PATH.parent / "import-jobs").resolve()
+    for raw_payload_path in payload_paths_to_delete:
+        candidate = Path(raw_payload_path)
+        try:
+            resolved_candidate = candidate.resolve()
+            resolved_candidate.relative_to(safe_payload_root)
+        except (OSError, ValueError):
+            continue
+        try:
+            if resolved_candidate.is_file():
+                resolved_candidate.unlink()
+                deleted_payload_files += 1
+        except OSError:
+            continue
     return {
         "deleted_import_jobs": deleted_jobs,
         "deleted_legacy_snapshots": len(legacy_delete_keys),
+        "deleted_payload_files": deleted_payload_files,
     }
 
 
@@ -3766,7 +4743,12 @@ def load_session_username(session_token: str) -> str | None:
         return str(row["username"] or "").strip() or None
 
 
-def save_session(session_token: str, username: str) -> None:
+def save_session(
+    session_token: str,
+    username: str,
+    *,
+    expected_user_authorization_etag: str | None = None,
+) -> None:
     normalized_token = str(session_token or "").strip()
     normalized_username = str(username or "").strip()
     if not normalized_token or not normalized_username:
@@ -3774,16 +4756,51 @@ def save_session(session_token: str, username: str) -> None:
     created_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     with connect_write_db() as connection:
         require_initialized_database(connection)
-        connection.execute(
-            """
-            INSERT INTO user_sessions (session_token, username, created_at)
-            VALUES (?, ?, ?)
-            ON CONFLICT(session_token) DO UPDATE SET
-                username = excluded.username,
-                created_at = excluded.created_at
-            """,
-            (normalized_token, normalized_username, created_at),
-        )
+        with transaction_context(connection):
+            active_user = connection.execute(
+                """
+                UPDATE users
+                SET username = username
+                WHERE username = ? AND active = 1
+                RETURNING username
+                """,
+                (normalized_username,),
+            ).fetchone()
+            if not active_user:
+                raise RepositoryConflictError(
+                    "账号不存在或已停用，无法创建登录会话。"
+                )
+            normalized_expected_etag = str(
+                expected_user_authorization_etag or ""
+            ).strip()
+            if normalized_expected_etag:
+                current_user = next(
+                    (
+                        item
+                        for item in load_users(connection)
+                        if str(item.get("username") or "").strip()
+                        == normalized_username
+                    ),
+                    None,
+                )
+                if (
+                    not current_user
+                    or build_user_authorization_etag(current_user)
+                    != normalized_expected_etag
+                ):
+                    raise RepositoryConflictError(
+                        "账号凭据或权限已发生变化，请重新登录。"
+                    )
+            connection.execute(
+                """
+                INSERT INTO user_sessions (session_token, username, created_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(session_token) DO UPDATE SET
+                    username = excluded.username,
+                    created_at = excluded.created_at
+                """,
+                (normalized_token, normalized_username, created_at),
+            )
 
 
 def delete_session(session_token: str) -> None:

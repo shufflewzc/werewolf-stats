@@ -29,6 +29,8 @@ get_season_entry = legacy.get_season_entry
 get_series_entry_by_competition = legacy.get_series_entry_by_competition
 is_admin_user = legacy.is_admin_user
 invalidate_public_api_cache = legacy.invalidate_public_api_cache
+invalidate_season_catalog_cache = legacy.invalidate_season_catalog_cache
+invalidate_series_catalog_cache = legacy.invalidate_series_catalog_cache
 layout = legacy.layout
 load_membership_requests = legacy.load_membership_requests
 load_season_catalog = legacy.load_season_catalog
@@ -46,11 +48,12 @@ normalize_stage_labels = legacy.normalize_stage_labels
 parse_china_datetime = legacy.parse_china_datetime
 require_competition_catalog_manager = legacy.require_competition_catalog_manager
 require_competition_season_manager = legacy.require_competition_season_manager
-save_membership_requests = legacy.save_membership_requests
 save_repository_state = legacy.save_repository_state
 save_season_catalog = legacy.save_season_catalog
 save_scoring_rule_templates = legacy.save_scoring_rule_templates
 save_series_catalog = legacy.save_series_catalog
+SEASON_CATALOG_META_KEY = legacy.SEASON_CATALOG_META_KEY
+SERIES_CATALOG_META_KEY = legacy.SERIES_CATALOG_META_KEY
 season_status_label = legacy.season_status_label
 scoring_rule_component_fields = legacy.scoring_rule_component_fields
 version_scoring_rule = legacy.version_scoring_rule
@@ -75,6 +78,30 @@ PARTICIPATION_MODE_TEAM = legacy.PARTICIPATION_MODE_TEAM
 POLICY_PRESETS = legacy.POLICY_PRESETS
 POLICY_PRESET_STANDARD = legacy.POLICY_PRESET_STANDARD
 POLICY_PRESET_TIERED = legacy.POLICY_PRESET_TIERED
+
+
+def serialize_series_catalog(catalog: list[dict]) -> str:
+    normalized = [
+        entry
+        for entry in (
+            normalize_series_catalog_entry(item) if isinstance(item, dict) else None
+            for item in catalog
+        )
+        if entry
+    ]
+    return json.dumps(normalized, ensure_ascii=False, indent=2)
+
+
+def serialize_season_catalog(catalog: list[dict]) -> str:
+    normalized = [
+        entry
+        for entry in (
+            normalize_season_catalog_entry(item) if isinstance(item, dict) else None
+            for item in catalog
+        )
+        if entry
+    ]
+    return json.dumps(normalized, ensure_ascii=False, indent=2)
 
 RESERVED_EXCEL_SCORE_LABELS = {
     "座位号",
@@ -1874,8 +1901,6 @@ def handle_series_manage(ctx: RequestContext, start_response):
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季保存失败。", form_values=form_values))
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == series_slug and item.get("competition_name", "") == competition_name and item["season_name"] == lookup_season_name)]
         updated_catalog.append(new_entry)
-        save_season_catalog(updated_catalog)
-        invalidate_public_api_cache()
         if lookup_season_name and lookup_season_name != season_name:
             for match in data["matches"]:
                 if get_match_competition_name(match) == competition_name and str(match.get("season") or "").strip() == lookup_season_name:
@@ -1883,11 +1908,33 @@ def handle_series_manage(ctx: RequestContext, start_response):
             for team in data["teams"]:
                 if str(team.get("competition_name") or "").strip() == competition_name and str(team.get("season_name") or "").strip() == lookup_season_name:
                     team["season_name"] = season_name
+            for dimension_key in (
+                "season_player_dimension_stats",
+                "season_team_dimension_stats",
+            ):
+                for row in data.get(dimension_key, []):
+                    if (
+                        str(row.get("competition_name") or "").strip()
+                        == competition_name
+                        and str(row.get("season_name") or "").strip()
+                        == lookup_season_name
+                    ):
+                        row["season_name"] = season_name
             requests = [{**item, "scope_season_name": (season_name if item.get("scope_competition_name") == competition_name and item.get("scope_season_name") == lookup_season_name else item.get("scope_season_name", ""))} for item in load_membership_requests()]
-            errors = save_repository_state(data, load_users())
+            errors = save_repository_state(
+                data,
+                load_users(),
+                meta_updates={
+                    SEASON_CATALOG_META_KEY: serialize_season_catalog(updated_catalog),
+                },
+                membership_requests=requests,
+            )
             if errors:
                 return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="赛季改名失败：" + "；".join(errors[:3]), form_values=form_values))
-            save_membership_requests(requests)
+            invalidate_season_catalog_cache()
+        else:
+            save_season_catalog(updated_catalog)
+        invalidate_public_api_cache()
         audit_action(
             ctx,
             "season.policy_save",
@@ -1917,10 +1964,6 @@ def handle_series_manage(ctx: RequestContext, start_response):
         selected_entry = get_series_entry_by_competition(catalog, competition_name)
         if not selected_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="没有找到对应的地区系列赛。"))
-        # Persist the current series directory before deleting the last season/matches,
-        # so the competition page remains visible even when its data is temporarily empty.
-        save_series_catalog(catalog)
-        invalidate_public_api_cache()
         target_entry = get_season_entry(season_catalog, selected_entry["series_slug"], season_name, competition_name=competition_name)
         if not target_entry:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="没有找到要删除的赛季。"))
@@ -1932,6 +1975,20 @@ def handle_series_manage(ctx: RequestContext, start_response):
                 and str(match.get("season") or "").strip() == season_name
             )
         ]
+        for dimension_key in (
+            "season_player_dimension_stats",
+            "season_team_dimension_stats",
+        ):
+            data[dimension_key] = [
+                row
+                for row in data.get(dimension_key, [])
+                if not (
+                    str(row.get("competition_name") or "").strip()
+                    == competition_name
+                    and str(row.get("season_name") or "").strip()
+                    == season_name
+                )
+            ]
         requests = [
             item
             for item in load_membership_requests()
@@ -1941,12 +1998,23 @@ def handle_series_manage(ctx: RequestContext, start_response):
             )
         ]
         updated_catalog = [item for item in season_catalog if not (item["series_slug"] == selected_entry["series_slug"] and item.get("competition_name", "") == competition_name and item["season_name"] == season_name)]
-        save_season_catalog(updated_catalog)
-        invalidate_public_api_cache()
-        errors = save_repository_state(data, load_users())
+        # The series directory, season directory, membership requests and core
+        # repository are one revision-CAS unit. This also persists an inferred
+        # series entry before the last season disappears without leaving a
+        # half-deleted catalog if any write fails.
+        errors = save_repository_state(
+            data,
+            load_users(),
+            meta_updates={
+                SERIES_CATALOG_META_KEY: serialize_series_catalog(catalog),
+                SEASON_CATALOG_META_KEY: serialize_season_catalog(updated_catalog),
+            },
+            membership_requests=requests,
+        )
         if errors:
             return start_response_html(start_response, "200 OK", get_series_manage_page(ctx, alert="强制删除赛季失败：" + "；".join(errors[:3])))
-        save_membership_requests(requests)
+        invalidate_series_catalog_cache()
+        invalidate_public_api_cache()
         audit_action(
             ctx,
             "season.delete",

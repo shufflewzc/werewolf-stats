@@ -40,9 +40,9 @@ append_alert_query = legacy.append_alert_query
 audit_action = legacy.audit_action
 account_role_label = legacy.account_role_label
 can_access_series_management = legacy.can_access_series_management
+can_manage_competition_action = legacy.can_manage_competition_action
 can_manage_competition_catalog = legacy.can_manage_competition_catalog
 can_manage_competition_seasons = legacy.can_manage_competition_seasons
-can_manage_matches = legacy.can_manage_matches
 can_manage_team = legacy.can_manage_team
 escape = legacy.escape
 format_datetime_local_label = legacy.format_datetime_local_label
@@ -91,6 +91,22 @@ start_response_html = legacy.start_response_html
 start_response_json = legacy.start_response_json
 team_matches_scope = legacy.team_matches_scope
 urlencode = legacy.urlencode
+
+
+def can_create_match_in_competition(
+    user: dict[str, Any] | None,
+    data: dict[str, Any],
+    competition_name: str,
+) -> bool:
+    return bool(
+        competition_name
+        and can_manage_competition_action(
+            user,
+            data,
+            competition_name,
+            "match_schedule_manage",
+        )
+    )
 
 
 def competition_latest_day_sort_key(row: dict[str, Any]) -> tuple[int, str, str]:
@@ -1218,8 +1234,10 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         selected_region,
         selected_series_slug,
     )
-    can_manage_selected_match_scope = bool(
-        selected_competition and can_manage_matches(ctx.current_user, data, selected_competition)
+    can_manage_selected_match_scope = can_create_match_in_competition(
+        ctx.current_user,
+        data,
+        selected_competition,
     )
     can_edit_selected_competition = bool(
         selected_competition and can_manage_competition_catalog(ctx.current_user, data, selected_competition)
@@ -1349,8 +1367,11 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
             "model": ai_season_summary.get("model") or ai_settings.get("model") or legacy.DEFAULT_AI_DAILY_BRIEF_MODEL,
             "html": render_ai_daily_brief_html(ai_season_summary.get("content") or ""),
         }
-    if selected_competition and selected_season and ai_configured and (
-        not ai_season_summary or is_admin_user(ctx.current_user)
+    if (
+        selected_competition
+        and selected_season
+        and ai_configured
+        and is_admin_user(ctx.current_user)
     ):
         ai_payload["generate_form"] = {
             "button_label": "重生成 AI 赛季总结" if ai_season_summary else "生成 AI 赛季总结",
@@ -1425,7 +1446,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         ],
         "actions": {
             "create_match_href": (
-                "/matches/new?"
+                "/console/matches/create?"
                 + urlencode(
                     {
                         "competition": selected_competition,
@@ -1632,7 +1653,11 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     competition_switcher = build_competition_switcher("/competitions", [row["competition_name"] for row in (filtered_rows or region_rows or competition_rows)], selected_competition, tone="light", all_label="返回地区赛事列表", region_name=selected_region, series_slug=selected_series_slug)
     season_switcher = build_season_switcher("/competitions", selected_competition, season_names, selected_season, tone="light", region_name=selected_region, series_slug=selected_series_slug)
     competition_meta = selected_entry
-    can_manage_selected_match_scope = bool(selected_competition and can_manage_matches(ctx.current_user, data, selected_competition))
+    can_manage_selected_match_scope = can_create_match_in_competition(
+        ctx.current_user,
+        data,
+        selected_competition,
+    )
     can_edit_selected_competition = bool(selected_competition and can_manage_competition_catalog(ctx.current_user, data, selected_competition))
     can_manage_selected_seasons = bool(selected_competition and can_manage_competition_seasons(ctx.current_user, data, selected_competition))
     season_entry = get_season_entry(season_catalog, selected_series_slug, selected_season, competition_name=selected_competition) if selected_series_slug and selected_season else None
@@ -1672,7 +1697,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     hero_title = competition_meta["hero_title"] if competition_meta and competition_meta.get("hero_title") else selected_competition
     hero_intro = competition_meta["hero_intro"] if competition_meta and competition_meta.get("hero_intro") else "当前页面只展示这个地区赛事站点下指定赛季的战队、队员和对局。你可以先切换地区与系列赛，再切换赛季，然后继续进入战队详情页查看更深一层的数据。"
     hero_note = competition_meta["hero_note"] if competition_meta and competition_meta.get("hero_note") else f"这里会保留 {competition_meta['series_name'] if competition_meta else selected_competition} 在 {competition_meta['region_name'] if competition_meta else selected_region or DEFAULT_REGION_NAME} 赛区当前赛季独立的排名和赛程视角。"
-    create_match_button = f'<a class="btn btn-dark" href="/matches/new?{urlencode({"competition": selected_competition, "season": selected_season or "", "next": current_competition_path})}">创建或导入比赛</a>' if can_manage_selected_match_scope else ""
+    create_match_button = f'<a class="btn btn-dark" href="/console/matches/create?{urlencode({"competition": selected_competition, "season": selected_season or "", "next": current_competition_path})}">创建比赛</a>' if can_manage_selected_match_scope else ""
     schedule_page_button = f'<a class="btn btn-outline-dark" href="{escape(build_schedule_path(selected_competition, selected_season, current_competition_path, selected_region, selected_series_slug))}">查看全部场次</a>'
     series_topic_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_topic_path(competition_meta["series_slug"], selected_season))}">查看系列专题页</a>' if competition_meta else ""
     edit_competition_button = f'<a class="btn btn-outline-dark" href="{escape(build_series_manage_path(selected_competition, current_competition_path, None, "catalog"))}">编辑赛事页信息</a>' if can_edit_selected_competition else ""
@@ -1946,11 +1971,21 @@ def get_ai_analysis_page(
     scope_label = " / ".join(item for item in [selected_competition, selected_season] if item) or "请选择赛事与赛季"
     latest_played_on = get_scheduled_match_day_label(match_rows, legacy.china_today_label()) if match_rows else "待更新"
     empty_selection_alert = "" if selected_competition and selected_season else '<div class="alert alert-secondary mb-0">当前还没有可分析的赛事赛季，请先录入赛事与赛季数据。</div>'
-    question_disabled = "" if ai_configured and selected_competition and selected_season else " disabled"
+    can_ask_ai_question = bool(
+        is_admin_user(ctx.current_user)
+        and ai_configured
+        and selected_competition
+        and selected_season
+    )
+    question_disabled = "" if can_ask_ai_question else " disabled"
     question_placeholder = (
         "例如：目前哪几支队伍晋级压力最大？哪些选手近期表现突出？"
-        if ai_configured
-        else "当前还没有配置 AI 接口。"
+        if can_ask_ai_question
+        else (
+            "仅平台管理员可以发起 AI 数据问答。"
+            if not is_admin_user(ctx.current_user)
+            else "当前还没有配置 AI 接口。"
+        )
     )
     question_action = build_scoped_path(
         "/ai-analysis",
@@ -2563,6 +2598,15 @@ def generate_ai_data_question_answer(
 
 
 def handle_ai_analysis(ctx: RequestContext, start_response):
+    action = form_value(ctx.form, "action").strip() if ctx.method != "GET" else ""
+    if action in {
+        "save_ai_season_summary",
+        "generate_ai_season_summary",
+        "ask_ai_data_question",
+    }:
+        admin_guard = require_admin(ctx, start_response)
+        if admin_guard is not None:
+            return admin_guard
     if not legacy.AI_PUBLIC_FEATURES_ENABLED:
         return start_response_html(
             start_response,
@@ -2572,7 +2616,6 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
     if ctx.method == "GET":
         return start_response_html(start_response, "200 OK", get_ai_analysis_page(ctx))
 
-    action = form_value(ctx.form, "action").strip()
     competition_name = form_value(ctx.form, "competition_name").strip()
     season_name = form_value(ctx.form, "season_name").strip()
     region_name = form_value(ctx.form, "region_name").strip()
@@ -2586,9 +2629,6 @@ def handle_ai_analysis(ctx: RequestContext, start_response):
     )
 
     if action == "save_ai_season_summary":
-        admin_guard = require_admin(ctx, start_response)
-        if admin_guard is not None:
-            return admin_guard
         summary_content = form_value(ctx.form, "summary_content").strip()
         if not summary_content:
             return redirect(start_response, append_alert_query(redirect_path, "赛季总结正文不能为空。"))
@@ -3315,7 +3355,7 @@ def build_match_day_api_payload(
             "enabled": ai_features_enabled,
             "exists": bool(ai_report),
             "configured": ai_configured,
-            "can_generate": ai_configured and (not ai_report or is_admin_user(ctx.current_user)),
+            "can_generate": bool(ai_configured and is_admin_user(ctx.current_user)),
             "can_edit": bool(is_admin_user(ctx.current_user) and ai_report),
             "action_path": action_path,
             "configure_href": "/ai-admin" if is_admin_user(ctx.current_user) and not ai_configured else "",
@@ -3325,7 +3365,7 @@ def build_match_day_api_payload(
             "html": render_ai_daily_brief_html((ai_report or {}).get("content") or "") if ai_report else "",
             "content": (ai_report or {}).get("content") or "",
             "empty_copy": (
-                "当前还没有生成日报，首次生成对所有访客开放。"
+                "当前还没有生成日报，仅平台管理员可以生成。"
                 if ai_configured
                 else f'当前还没有配置 AI 接口。{("已保存 Key " + mask_api_key(ai_settings.get("api_key") or "")) if ai_settings.get("api_key") else ""}'
             ),
@@ -3802,7 +3842,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
     ai_configured = bool(ai_settings.get("base_url") and ai_settings.get("api_key"))
     ai_actions = ""
     ai_report_admin_editor = ""
-    if ai_configured and (not ai_report or is_admin_user(ctx.current_user)):
+    if ai_configured and is_admin_user(ctx.current_user):
         ai_actions = f"""
         <form method="post" action="{escape(build_match_day_path(played_on, next_path, selected_competition, selected_season))}" class="m-0">
           <input type="hidden" name="action" value="generate_ai_daily_brief">
@@ -3848,7 +3888,7 @@ def get_match_day_page_with_alert(ctx: RequestContext, played_on: str, alert: st
               <div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3">
                 <div>
                   <h2 class="section-title mb-2">AI 比赛日报</h2>
-                  <p class="section-copy mb-0">{escape('当前还没有生成日报，首次生成对所有访客开放。' if ai_configured else f'当前还没有配置 AI 接口。{("已保存 Key " + mask_api_key(ai_settings.get("api_key") or "")) if ai_settings.get("api_key") else ""}')}</p>
+                  <p class="section-copy mb-0">{escape('当前还没有生成日报，仅平台管理员可以生成。' if ai_configured else f'当前还没有配置 AI 接口。{("已保存 Key " + mask_api_key(ai_settings.get("api_key") or "")) if ai_settings.get("api_key") else ""}')}</p>
                 </div>
                 <div class="d-flex flex-wrap gap-2">{ai_actions}</div>
               </div>
@@ -3932,12 +3972,13 @@ def handle_match_day(ctx: RequestContext, start_response, played_on: str):
     )
 
     action = form_value(ctx.form, "action").strip()
-    if action in {"save_ai_daily_brief", "generate_ai_daily_brief"} and not legacy.AI_PUBLIC_FEATURES_ENABLED:
-        return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
-    if action == "save_ai_daily_brief":
+    if action in {"save_ai_daily_brief", "generate_ai_daily_brief"}:
         admin_guard = require_admin(ctx, start_response)
         if admin_guard is not None:
             return admin_guard
+    if action in {"save_ai_daily_brief", "generate_ai_daily_brief"} and not legacy.AI_PUBLIC_FEATURES_ENABLED:
+        return redirect(start_response, append_alert_query(redirect_path, "AI 功能暂未开放。"))
+    if action == "save_ai_daily_brief":
         report_content = form_value(ctx.form, "report_content").strip()
         if not report_content:
             return redirect(start_response, append_alert_query(redirect_path, "日报正文不能为空。"))
@@ -4532,7 +4573,7 @@ def build_schedule_api_payload(
     selected_season = scope["selected_season"]
     next_path = scope["next_path"]
     create_match_href = (
-        "/matches/new?"
+        "/console/matches/create?"
         + urlencode(
             {
                 "competition": selected_competition,
@@ -4546,7 +4587,11 @@ def build_schedule_api_payload(
                 ),
             }
         )
-        if can_manage_matches(ctx.current_user, scope["data"], selected_competition)
+        if can_create_match_in_competition(
+            ctx.current_user,
+            scope["data"],
+            selected_competition,
+        )
         else ""
     )
     total_team_count = len({entry["team_id"] for match in scope["match_rows"] for entry in match["players"] if entry.get("team_id")})
@@ -4680,9 +4725,13 @@ def get_schedule_legacy_page(ctx: RequestContext) -> str:
         day_groups.setdefault(match["played_on"], []).append(match)
 
     create_match_button = ""
-    if can_manage_matches(ctx.current_user, data, selected_competition):
+    if can_create_match_in_competition(
+        ctx.current_user,
+        data,
+        selected_competition,
+    ):
         create_match_button = (
-            f'<a class="btn btn-dark" href="/matches/new?'
+            f'<a class="btn btn-dark" href="/console/matches/create?'
             f'{urlencode({"competition": selected_competition, "season": selected_season or "", "next": build_schedule_path(selected_competition, selected_season, None, selected_region, selected_series_slug)})}">比赛管理</a>'
         )
 
@@ -4802,13 +4851,13 @@ def handle_competitions(ctx: RequestContext, start_response):
         return start_response_html(start_response, "200 OK", get_competitions_page(ctx))
 
     action = form_value(ctx.form, "action").strip()
-    if action in {"save_ai_season_summary", "generate_ai_season_summary"} and not legacy.AI_PUBLIC_FEATURES_ENABLED:
-        return redirect(start_response, append_alert_query("/competitions", "AI 功能暂未开放。"))
-    if action == "save_ai_season_summary":
+    if action in {"save_ai_season_summary", "generate_ai_season_summary"}:
         admin_guard = require_admin(ctx, start_response)
         if admin_guard is not None:
             return admin_guard
-
+    if action in {"save_ai_season_summary", "generate_ai_season_summary"} and not legacy.AI_PUBLIC_FEATURES_ENABLED:
+        return redirect(start_response, append_alert_query("/competitions", "AI 功能暂未开放。"))
+    if action == "save_ai_season_summary":
         competition_name = form_value(ctx.form, "competition_name").strip()
         season_name = form_value(ctx.form, "season_name").strip()
         region_name = form_value(ctx.form, "region_name").strip()

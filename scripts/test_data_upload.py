@@ -38,7 +38,11 @@ class DataUploadTokenTests(unittest.TestCase):
 
         self.patches = [
             patch.object(data_upload.legacy, "load_meta_value", side_effect=lambda key: self.meta.get(key)),
-            patch.object(data_upload.legacy, "save_meta_value", side_effect=lambda key, value: self.meta.__setitem__(key, value)),
+            patch.object(
+                data_upload.legacy,
+                "save_meta_value",
+                side_effect=lambda key, value, **_kwargs: self.meta.__setitem__(key, value),
+            ),
             patch.object(data_upload, "mutate_json_meta_value", side_effect=mutate_json_meta),
             patch.object(data_upload.legacy, "load_users", return_value=[self.user]),
             patch.object(data_upload.legacy, "load_validated_data", return_value=self.data),
@@ -337,6 +341,70 @@ class DataUploadTokenTests(unittest.TestCase):
         self.assertEqual(action_metadata["upload_token_id"], record["token_id"])
         self.assertEqual(create_preflight.call_args.kwargs["action"], "player_photo.import_zip")
         confirm.assert_called_once()
+        self.assertFalse(data_upload.legacy.save_meta_value.call_args.kwargs["bump_revision"])
+
+    def test_player_photo_upload_retries_a_stale_cached_batch(self):
+        raw, record = data_upload.create_token(self.user, "头像匹配器", "90", "all", [])
+        identity = f"{record['token_id']}:photo-upload-retry"
+        self.meta[data_upload.REQUEST_META_KEY] = json.dumps(
+            {
+                identity: {
+                    "status": "queued",
+                    "batch_id": "imp_stale",
+                    "message": "旧任务",
+                }
+            },
+            ensure_ascii=False,
+        )
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload/player-photos"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["photo-upload-retry"],
+        }
+        ctx.files = {
+            "player_photo_zip": [
+                web_app.UploadedFile("matched-player-photos.zip", "application/zip", b"fake")
+            ],
+        }
+        preview = {
+            "summary": "头像预检完成",
+            "counts": {"matched_photos": 2},
+            "matched_scopes": [
+                {"competition_name": "赛事A", "season_name": "S2"}
+            ],
+        }
+
+        with (
+            patch.object(data_upload.legacy, "can_manage_competition_action", return_value=True),
+            patch.object(
+                data_upload.legacy,
+                "load_import_batches",
+                return_value=[{"batch_id": "imp_stale", "status": "stale"}],
+            ),
+            patch.object(matches_feature, "validate_zip_upload", return_value=""),
+            patch.object(
+                matches_feature,
+                "preflight_player_photo_zip_upload",
+                return_value=(preview, [], []),
+            ),
+            patch.object(
+                matches_feature,
+                "create_import_upload_preflight",
+                return_value="imp_retry",
+            ) as create_preflight,
+            patch.object(data_upload, "confirm_preflight"),
+            patch.object(data_upload.legacy, "audit_action"),
+        ):
+            body = data_upload.handle_api(ctx, lambda _status, _headers: None)
+
+        payload = json.loads(body[0])
+        self.assertEqual(payload["batch_id"], "imp_retry")
+        create_preflight.assert_called_once()
+        saved_requests = json.loads(self.meta[data_upload.REQUEST_META_KEY])
+        self.assertEqual(saved_requests[identity]["batch_id"], "imp_retry")
 
     def test_player_photo_upload_requires_season_asset_permission(self):
         raw, _record = data_upload.create_token(self.user, "头像匹配器", "90", "all", [])

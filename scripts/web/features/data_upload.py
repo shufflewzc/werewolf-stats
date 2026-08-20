@@ -43,7 +43,13 @@ def _load_json_meta(key: str, fallback):
 
 
 def _save_json_meta(key: str, value) -> None:
-    legacy.save_meta_value(key, json.dumps(value, ensure_ascii=False))
+    # Upload tokens and request deduplication are operational state. Updating
+    # them must not invalidate a preflight that guards the competition data.
+    legacy.save_meta_value(
+        key,
+        json.dumps(value, ensure_ascii=False),
+        bump_revision=False,
+    )
 
 
 def load_tokens() -> list[dict[str, Any]]:
@@ -387,7 +393,30 @@ def _handle_player_photo_upload(
     requests = _load_json_meta(REQUEST_META_KEY, {})
     identity = f"{record['token_id']}:{request_key}" if request_key else ""
     if identity and identity in requests:
-        return _json(start_response, "200 OK", requests[identity])
+        cached_payload = requests[identity]
+        cached_batch_id = str(
+            cached_payload.get("batch_id")
+            if isinstance(cached_payload, dict)
+            else ""
+        ).strip()
+        cached_batch = next(
+            (
+                item
+                for item in legacy.load_import_batches()
+                if str(item.get("batch_id") or "") == cached_batch_id
+            ),
+            None,
+        )
+        cached_status = str((cached_batch or {}).get("status") or "")
+        if cached_batch and cached_status in {
+            "awaiting_confirmation",
+            "queued",
+            "running",
+            "succeeded",
+        }:
+            return _json(start_response, "200 OK", cached_payload)
+        requests.pop(identity, None)
+        _save_json_meta(REQUEST_META_KEY, dict(list(requests.items())[-500:]))
 
     from web.features import matches as matches_feature
 

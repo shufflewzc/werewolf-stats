@@ -865,6 +865,9 @@ private func uploadPlayerPhotoArchive(
     if httpResponse.statusCode == 413 {
         throw UploadServiceError.server("头像 ZIP 超过服务器上传上限，请重新匹配生成较小的上传包。")
     }
+    if httpResponse.url?.path == "/login" || httpResponse.mimeType == "text/html" {
+        throw UploadServiceError.server("服务器尚未启用头像上传接口，请先部署最新后端版本。")
+    }
     guard (200..<300).contains(httpResponse.statusCode) else {
         throw UploadServiceError.server(
             serverErrorMessage(from: data, fallback: "头像上传失败（HTTP \(httpResponse.statusCode)）。")

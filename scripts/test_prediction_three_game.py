@@ -903,11 +903,33 @@ class ThreeGamePredictionTests(unittest.TestCase):
             current_user=None,
             now_label="2026-08-04 12:00:00 中国时间",
         )
-        player_id = self.data["players"][0]["player_id"]
+        player_match = next(
+            match
+            for match in self.data["matches"]
+            if web_app.get_match_competition_name(match) == SEED_COMPETITION
+            and str(match.get("season") or "") == SEED_SEASON
+            and match.get("players")
+        )
+        player_id = next(
+            str(participant.get("player_id") or "")
+            for participant in player_match["players"]
+            if str(participant.get("player_id") or "")
+            and str(participant.get("player_id") or "").upper() != "NPC"
+        )
+        player_scene = web_app.build_player_share_scene(
+            player_id,
+            SEED_COMPETITION,
+            SEED_SEASON,
+        )
         player_ctx = web_app.RequestContext(
             method="GET",
             path="/api/miniprogram/share-code",
-            query={"player_id": [player_id]},
+            query={
+                "share_type": ["player"],
+                "player_id": [player_id],
+                "competition": [SEED_COMPETITION],
+                "season": [SEED_SEASON],
+            },
             form={},
             files={},
             current_user=None,
@@ -933,7 +955,7 @@ class ThreeGamePredictionTests(unittest.TestCase):
             self.assertEqual(request_mock.call_count, 2)
             requested_scenes = {call.args[0] for call in request_mock.call_args_list}
             self.assertEqual(
-                requested_scenes, {prediction_scene, f"p:{player_id}"}
+                requested_scenes, {prediction_scene, player_scene}
             )
             self.assertEqual(statuses, ["200 OK"] * 4)
         finally:

@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 Page({
   data: {
@@ -47,6 +47,16 @@ Page({
         }))
       });
     } catch (error) {
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该战队列表" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({
         loading: false,
         error: error.message || "战队数据加载失败"

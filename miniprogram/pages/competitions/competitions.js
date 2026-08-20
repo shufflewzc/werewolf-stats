@@ -1,9 +1,27 @@
 const { request } = require("../../utils/api");
 const {
   buildScopeFromCompetition,
+  clearSelectedScope,
   getSelectedScope,
   setSelectedScope
 } = require("../../utils/scope");
+
+function scopeExistsInCatalog(payload, scope) {
+  if (!scope) {
+    return true;
+  }
+  const groupedCards = (payload.city_groups || []).reduce(
+    (result, group) => result.concat(Array.isArray(group && group.cards) ? group.cards : []),
+    []
+  );
+  const cards = groupedCards.length ? groupedCards : (payload.cards || []);
+  return cards.some((card) => (
+    card
+    && card.competition_name === scope.competition
+    && Array.isArray(card.seasons)
+    && card.seasons.includes(scope.season)
+  ));
+}
 
 function decorateCompetitionCard(card, selectedScope) {
   const seasons = Array.isArray(card.seasons) ? card.seasons : [];
@@ -24,8 +42,11 @@ function decorateCompetitionCard(card, selectedScope) {
     match_count: Number(seasonStats.match_count !== undefined ? seasonStats.match_count : card.match_count || 0),
     latest_played_on: seasonStats.latest_played_on || card.latest_played_on,
     hasMultipleSeasons: seasons.length > 1,
+    canEnter: Boolean(selectedSeason && seasons.includes(selectedSeason)),
     isSelected: Boolean(isSelectedCompetition && isSelectedSeason),
-    enterText: isSelectedCompetition && isSelectedSeason ? "重新进入当前赛季" : "进入该赛季"
+    enterText: selectedSeason
+      ? (isSelectedCompetition && isSelectedSeason ? "重新进入当前赛季" : "进入该赛季")
+      : "暂无可进入赛季"
   };
 }
 
@@ -101,7 +122,12 @@ Page({
     this.setData({ loading: true, error: "" });
     try {
       const payload = await request("/api/competitions", { grouped: "1" }, options);
-      const selectedScope = getSelectedScope();
+      let selectedScope = getSelectedScope();
+      if (selectedScope && !scopeExistsInCatalog(payload, selectedScope)) {
+        clearSelectedScope();
+        selectedScope = null;
+        wx.showToast({ title: "原赛季已失效", icon: "none" });
+      }
       const groupedData = decorateCityGroups(
         payload.city_groups,
         payload.cards,
@@ -166,8 +192,11 @@ Page({
       [`cityGroups[${cityIndex}].cards[${cardIndex}].player_count`]: Number(seasonStats.player_count !== undefined ? seasonStats.player_count : card.player_count || 0),
       [`cityGroups[${cityIndex}].cards[${cardIndex}].match_count`]: Number(seasonStats.match_count !== undefined ? seasonStats.match_count : card.match_count || 0),
       [`cityGroups[${cityIndex}].cards[${cardIndex}].latest_played_on`]: seasonStats.latest_played_on || card.latest_played_on,
+      [`cityGroups[${cityIndex}].cards[${cardIndex}].canEnter`]: Boolean(selectedSeason && card.seasons.includes(selectedSeason)),
       [`cityGroups[${cityIndex}].cards[${cardIndex}].isSelected`]: isSelectedSeason,
-      [`cityGroups[${cityIndex}].cards[${cardIndex}].enterText`]: isSelectedSeason ? "重新进入当前赛季" : "进入该赛季"
+      [`cityGroups[${cityIndex}].cards[${cardIndex}].enterText`]: selectedSeason
+        ? (isSelectedSeason ? "重新进入当前赛季" : "进入该赛季")
+        : "暂无可进入赛季"
     });
   },
 
@@ -176,10 +205,15 @@ Page({
     const cardIndex = Number(event.currentTarget.dataset.cardIndex);
     const city = this.data.cityGroups[cityIndex];
     const card = city && city.cards[cardIndex];
-    if (!card) {
+    if (!card || !card.canEnter) {
+      wx.showToast({ title: "请先选择有效赛季", icon: "none" });
       return;
     }
-    setSelectedScope(buildScopeFromCompetition(card, card.selectedSeason));
+    const selectedScope = setSelectedScope(buildScopeFromCompetition(card, card.selectedSeason));
+    if (!selectedScope) {
+      wx.showToast({ title: "赛季选择无效，请重新选择", icon: "none" });
+      return;
+    }
     wx.switchTab({ url: "/pages/dashboard/dashboard" });
   }
 });

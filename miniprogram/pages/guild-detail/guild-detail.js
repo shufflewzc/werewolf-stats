@@ -1,6 +1,6 @@
 const { request } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, optionalScopeParams, scopeActivationError } = require("../../utils/scope");
 
 function buildGuildOverview(payload) {
   const historySections = payload.history_sections || [];
@@ -45,11 +45,21 @@ Page({
   },
 
   onLoad(options) {
-    applyScopeFromOptions(options);
     this.setData({ guildId: decodeURIComponent(options.guild_id || "") });
+    this._scopeReady = applyScopeFromOptions(options, { sourceLabel: "分享的门派详情" });
   },
 
-  onShow() {
+  async onShow() {
+    if (this._scopeReady) {
+      const activation = await this._scopeReady;
+      this._scopeReady = null;
+      if (!activation.accepted) {
+        this._scopeEntryBlocked = scopeActivationError(activation);
+        this.setData({ loading: false, error: this._scopeEntryBlocked });
+        return;
+      }
+      this._scopeEntryBlocked = "";
+    }
     this.loadData({ forceRefresh: true });
   },
 
@@ -57,7 +67,23 @@ Page({
     this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    const guild = this.data.guild || {};
+    return {
+      title: `${guild.name || "门派详情"} · ${scope && scope.season ? scope.season : "赛事数据"}`,
+      path: appendScopeToPath(
+        `/pages/guild-detail/guild-detail?guild_id=${encodeURIComponent(this.data.guildId || "")}`,
+        scope
+      )
+    };
+  },
+
   async loadData(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
     const guildId = this.data.guildId;
     if (!guildId) {
       this.setData({ loading: false, error: "缺少门派 ID" });
@@ -80,7 +106,7 @@ Page({
         return;
       }
 
-      const payload = await request(`/api/guilds/${encodeURIComponent(guildId)}`, scopeParams(selectedScope), options);
+      const payload = await request(`/api/guilds/${encodeURIComponent(guildId)}`, optionalScopeParams(selectedScope), options);
       const guild = payload.guild || {};
       const overview = buildGuildOverview(payload);
       wx.setNavigationBarTitle({ title: guild.name || "门派详情" });

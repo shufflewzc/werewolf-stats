@@ -520,9 +520,26 @@ def _build_series_scope(ctx: RequestContext, series_slug: str) -> tuple[dict[str
     if not series_rows:
         return None, "该系列赛还没有关联任何地区赛事。"
 
+    requested_competition = form_value(ctx.query, "competition").strip()
+    requested_season = form_value(ctx.query, "season").strip()
+    has_explicit_scope = bool(requested_competition and requested_season)
+    if has_explicit_scope:
+        series_rows = [
+            row
+            for row in series_rows
+            if row["competition_name"] == requested_competition
+        ]
+        if not series_rows:
+            return None, "所选赛事赛季不属于该系列赛。"
+
     allowed_competitions = {row["competition_name"] for row in series_rows}
     series_data = build_filtered_data(data, allowed_competitions)
-    season_names = list_seasons(series_data, series_slug=series_slug)
+    season_names = list_seasons(
+        series_data,
+        competition_name=requested_competition if has_explicit_scope else None,
+        series_slug=series_slug,
+        include_non_ongoing=True,
+    )
     selected_season = get_selected_season(ctx, season_names)
     filtered_matches = [
         match
@@ -555,6 +572,7 @@ def _build_series_scope(ctx: RequestContext, series_slug: str) -> tuple[dict[str
             "filtered_matches": filtered_matches,
             "latest_played_on": latest_played_on,
             "region_names": region_names,
+            "has_explicit_scope": has_explicit_scope,
         },
         "",
     )
@@ -2790,11 +2808,19 @@ def build_series_api_payload(
 
     series_rows = scope["series_rows"]
     selected_season = scope["selected_season"]
+    selected_competition = (
+        form_value(ctx.query, "competition").strip()
+        or series_rows[0]["competition_name"]
+    )
     region_names = scope["region_names"]
     latest_played_on = scope["latest_played_on"]
     series_name = series_rows[0]["series_name"]
     return {
         "alert": form_value(ctx.query, "alert").strip(),
+        "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
+        },
         "hero": {
             "title": series_name,
             "copy": "这里只保留赛季入口。先切换赛季，再进入对应地区赛事页查看该赛季的战队、赛程和比赛结果。",
@@ -2871,12 +2897,19 @@ def get_series_page(ctx: RequestContext, series_slug: str) -> str:
 def handle_series_api(ctx: RequestContext, start_response, series_slug: str):
     scope, error_message = _build_series_scope(ctx, series_slug)
     if not scope:
+        requested_scope = {
+            "competition": form_value(ctx.query, "competition").strip(),
+            "season": form_value(ctx.query, "season").strip(),
+        }
         return start_response_json(
             start_response,
             "404 Not Found",
             {
+                "code": "SERIES_NOT_FOUND",
                 "error": error_message,
                 "alert": form_value(ctx.query, "alert").strip(),
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
             },
         )
     return start_response_json(
@@ -3312,6 +3345,10 @@ def build_match_day_api_payload(
     )
     return {
         "alert": form_value(ctx.query, "alert").strip(),
+        "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
+        },
         "hero": {
             "title": " · ".join(
                 item
@@ -3942,12 +3979,19 @@ def get_match_day_legacy_page(ctx: RequestContext, played_on: str) -> str:
 def handle_match_day_api(ctx: RequestContext, start_response, played_on: str):
     scope, error_message = _build_match_day_scope(ctx, played_on)
     if not scope:
+        requested_scope = {
+            "competition": form_value(ctx.query, "competition").strip(),
+            "season": form_value(ctx.query, "season").strip(),
+        }
         return start_response_json(
             start_response,
             "404 Not Found",
             {
+                "code": "DAY_NOT_FOUND",
                 "error": error_message,
                 "alert": form_value(ctx.query, "alert").strip(),
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
             },
         )
     return start_response_json(
@@ -4152,7 +4196,11 @@ def build_teams_api_payload(ctx: RequestContext) -> dict[str, Any]:
     region_rows = scope["region_rows"]
     filtered_rows = scope["filtered_rows"]
     series_rows = scope["series_rows"]
-    season_names = list_seasons(data, selected_competition) if selected_competition else []
+    season_names = (
+        list_seasons(data, selected_competition, include_non_ongoing=True)
+        if selected_competition
+        else []
+    )
     selected_season = get_selected_season(ctx, season_names)
     scoped_competition_rows = filtered_rows or region_rows or scope["competition_rows"]
     scoped_competition_names = {row["competition_name"] for row in scoped_competition_rows}
@@ -4163,7 +4211,15 @@ def build_teams_api_payload(ctx: RequestContext) -> dict[str, Any]:
     )
     team_rows = build_team_rows(stats_data, selected_competition, selected_season)
     visible_rows = [row for row in team_rows if row.get("matches_represented", 0) > 0]
-    displayed_rows = visible_rows or team_rows
+    has_explicit_scope = bool(
+        form_value(ctx.query, "competition").strip()
+        and form_value(ctx.query, "season").strip()
+    )
+    displayed_rows = (
+        visible_rows
+        if has_explicit_scope
+        else visible_rows or team_rows
+    )
     displayed_rows.sort(
         key=lambda row: (
             row.get("points_rank", row.get("rank", 9999)),
@@ -4275,6 +4331,8 @@ def build_teams_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "generated_at": legacy.china_now_label(),
         "legacy_href": build_scoped_path("/teams/legacy", selected_competition, selected_season, selected_region, selected_series_slug),
         "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
             "label": scope_label,
             "description": f"当前正在查看 {scope_label} 的战队排行、胜率和出场数据。",
             "filters": {
@@ -4319,7 +4377,11 @@ def _build_schedule_scope(ctx: RequestContext) -> tuple[dict[str, Any] | None, s
     selected_series_slug = (
         selected_entry["series_slug"] if selected_entry else scope["selected_series_slug"]
     )
-    season_names = list_seasons(data, selected_competition)
+    season_names = list_seasons(
+        data,
+        selected_competition,
+        include_non_ongoing=True,
+    )
     selected_season = get_selected_season(ctx, season_names)
     next_path = form_value(ctx.query, "next").strip() or build_scoped_path(
         "/competitions",
@@ -4602,6 +4664,10 @@ def build_schedule_api_payload(
     )
     return {
         "alert": form_value(ctx.query, "alert").strip(),
+        "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
+        },
         "hero": {
             "title": "赛程日历",
             "copy": f"{selected_competition} 当前赛季的比赛日、赛段和局数集中展示在这里。",
@@ -4838,10 +4904,20 @@ def get_schedule_page(ctx: RequestContext) -> str:
 def handle_schedule_api(ctx: RequestContext, start_response):
     scope, error_message = _build_schedule_scope(ctx)
     if not scope:
+        requested_scope = {
+            "competition": form_value(ctx.query, "competition").strip(),
+            "season": form_value(ctx.query, "season").strip(),
+        }
         return start_response_json(
             start_response,
             "404 Not Found",
-            {"error": error_message, "alert": form_value(ctx.query, "alert").strip()},
+            {
+                "code": "SCHEDULE_NOT_FOUND",
+                "error": error_message,
+                "alert": form_value(ctx.query, "alert").strip(),
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
         )
     return start_response_json(start_response, "200 OK", build_schedule_api_payload(ctx, scope))
 

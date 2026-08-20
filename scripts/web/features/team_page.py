@@ -365,7 +365,9 @@ def _build_team_page_payload(ctx: RequestContext, team_id: str) -> dict[str, Any
         if selected_competition
         else []
     )
-    selected_season = team_season_name or get_selected_season(ctx, season_names)
+    selected_season = requested_season or team_season_name or get_selected_season(
+        ctx, season_names
+    )
     team_dimension_panel = build_team_dimension_panel(
         ctx,
         data,
@@ -1053,19 +1055,43 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
     team = team_lookup.get(team_id)
     requested_competition = form_value(ctx.query, "competition").strip()
     requested_season = form_value(ctx.query, "season").strip()
+    requested_scope = {
+        "competition": requested_competition,
+        "season": requested_season,
+    }
     legacy_href = _build_team_legacy_href(team_id, requested_competition or None, requested_season or None)
     if not team:
         return {
             "not_found": True,
+            "code": "TEAM_NOT_FOUND",
             "error": "没有找到对应的战队。",
             "title": "未找到战队",
             "alert": form_value(ctx.query, "alert").strip(),
             "legacy_href": legacy_href,
+            "scope": requested_scope,
+            "requested_scope": requested_scope,
         }
 
     team_competition_name, team_season_name = get_team_scope(team)
     selected_competition = requested_competition or team_competition_name or ""
     selected_season = requested_season or team_season_name or ""
+    has_requested_scope_match = any(
+        get_match_competition_name(match) == selected_competition
+        and str(match.get("season") or "").strip() == selected_season
+        and any(
+            str(entry.get("team_id") or "").strip() == team_id
+            for entry in match.get("players", [])
+        )
+        for match in data.get("matches", [])
+    )
+    if requested_competition and requested_season and not has_requested_scope_match:
+        return {
+            "not_found": True,
+            "code": "TEAM_NOT_FOUND",
+            "error": "没有找到该战队在所选赛事赛季中的数据。",
+            "scope": requested_scope,
+            "requested_scope": requested_scope,
+        }
     stage_options = resolve_stage_options_for_scope(
         data, selected_competition, selected_season
     )
@@ -1221,6 +1247,10 @@ def _serialize_team_detail_payload(ctx: RequestContext, team_id: str) -> dict[st
         "alert": form_value(ctx.query, "alert").strip(),
         "generated_at": china_now_label(),
         "legacy_href": legacy_href,
+        "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
+        },
         "team": {
             "team_id": team_id,
             "name": team.get("name") or team_id,

@@ -1,6 +1,6 @@
 const { request, assetUrl } = require("../../utils/api");
 const { take } = require("../../utils/format");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, sameScope, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
 
@@ -10,7 +10,6 @@ Page({
     error: "",
     selectedScope: null,
     needsCompetition: false,
-    requiresScope: false,
     scope: {},
     metrics: [],
     players: [],
@@ -22,21 +21,50 @@ Page({
     loadMoreError: ""
   },
 
-  onShow() {
-    this.loadData();
+  onLoad(options) {
+    this._scopeReady = applyScopeFromOptions(options, { sourceLabel: "分享的选手列表" });
+  },
+
+  async onShow() {
+    if (this._scopeReady) {
+      const activation = await this._scopeReady;
+      this._scopeReady = null;
+      if (!activation.accepted) {
+        this._scopeEntryBlocked = scopeActivationError(activation);
+        this.setData({ loading: false, error: this._scopeEntryBlocked });
+        return false;
+      }
+    } else {
+      this._scopeEntryBlocked = "";
+    }
+    return this.loadData();
   },
 
   onPullDownRefresh() {
     this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    return {
+      title: `${scope && scope.competition ? scope.competition : "狼人杀赛事"} · ${scope && scope.season ? scope.season : "选手榜"}`,
+      path: appendScopeToPath("/pages/players/players", scope)
+    };
+  },
+
   async loadData(options = {}) {
-    this.setData({ loading: true, error: "" });
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return false;
+    }
+    const requestId = Number(this._loadRequestId || 0) + 1;
+    this._loadRequestId = requestId;
+    this._loadMoreRequestId = Number(this._loadMoreRequestId || 0) + 1;
+    this.setData({ loading: true, error: "", loadingMore: false, loadMoreError: "" });
+    const selectedScope = getRequiredScope();
     try {
-      const selectedScope = getRequiredScope();
       if (!selectedScope) {
         this.setData(needsCompetitionState({
-          requiresScope: false,
           scope: {},
           metrics: [],
           players: [],
@@ -48,22 +76,13 @@ Page({
         return;
       }
 
-      let payload = await request("/api/players", {
+      const payload = await request("/api/players", {
         ...scopeParams(selectedScope),
         limit: PAGE_SIZE,
         offset: 0
       }, options);
-      if (payload.requires_scope) {
-        const dashboard = await request("/api/dashboard", scopeParams(selectedScope), options);
-        payload = {
-          generated_at: dashboard.generated_at,
-          scope: dashboard.scope || {},
-          metrics: [
-            { label: "榜单选手", value: String((dashboard.top_players || []).length), copy: "首页聚合接口返回的选手榜。" },
-            { label: "当前范围", value: (dashboard.scope && dashboard.scope.dashboard_label) || "赛事", copy: "跟随网站首页的默认展示范围。" }
-          ],
-          players: dashboard.top_players || []
-        };
+      if (requestId !== this._loadRequestId || !sameScope(getRequiredScope(), selectedScope)) {
+        return;
       }
       const players = (payload.players || []).map((player) => ({
         ...player,
@@ -74,7 +93,6 @@ Page({
         loading: false,
         selectedScope,
         needsCompetition: false,
-        requiresScope: Boolean(payload.requires_scope),
         scope: payload.scope || {},
         metrics: take(payload.metrics, 4),
         players,
@@ -86,6 +104,19 @@ Page({
         loadMoreError: ""
       });
     } catch (error) {
+      if (requestId !== this._loadRequestId || !sameScope(getRequiredScope(), selectedScope)) {
+        return;
+      }
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该选手列表" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({
         loading: false,
         error: error.message || "选手数据加载失败"
@@ -120,17 +151,32 @@ Page({
     });
   },
 
-  loadMorePlayers() {
+  async loadMorePlayers() {
     const selectedScope = getRequiredScope();
-    if (!selectedScope || !this.data.playerHasMore || this.data.loadingMore) {
-      return;
+    if (!selectedScope || !sameScope(selectedScope, this.data.selectedScope) || !this.data.playerHasMore || this.data.loadingMore) {
+      return false;
     }
+    const requestId = Number(this._loadMoreRequestId || 0) + 1;
+    const offset = this.data.playerVisibleCount;
+    this._loadMoreRequestId = requestId;
     this.setData({ loadingMore: true, loadMoreError: "" });
-    request("/api/players", {
-      ...scopeParams(selectedScope),
-      limit: PAGE_SIZE,
-      offset: this.data.playerVisibleCount
-    }).then((payload) => {
+    try {
+      const payload = await request("/api/players", {
+        ...scopeParams(selectedScope),
+        limit: PAGE_SIZE,
+        offset
+      });
+      if (
+        requestId !== this._loadMoreRequestId
+        || !sameScope(getRequiredScope(), selectedScope)
+        || !sameScope(this.data.selectedScope, selectedScope)
+        || this.data.playerVisibleCount !== offset
+      ) {
+        if (requestId === this._loadMoreRequestId) {
+          this.setData({ loadingMore: false });
+        }
+        return false;
+      }
       const morePlayers = (payload.players || []).map((player) => ({
         ...player,
         photoUrl: assetUrl(player.photo)
@@ -146,8 +192,17 @@ Page({
         loadingMore: false,
         loadMoreError: ""
       });
-    }).catch((error) => {
+      return true;
+    } catch (error) {
+      if (requestId !== this._loadMoreRequestId) {
+        return false;
+      }
+      if (!sameScope(getRequiredScope(), selectedScope)) {
+        this.setData({ loadingMore: false });
+        return false;
+      }
       this.setData({ loadingMore: false, loadMoreError: error.message || "加载更多失败" });
-    });
+      return false;
+    }
   }
 });

@@ -31,7 +31,7 @@
         <view class="scope-main">
           <text class="scope-label">当前已进入</text>
           <text class="scope-title">{{selectedScope.competition}}</text>
-          <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+          <text class="scope-meta">{{selectedScope.displayMeta}}</text>
         </view>
       </view>
       <view class="city-list" wx:if="{{cityGroups.length}}">
@@ -50,16 +50,16 @@
               <text class="card-kicker">{{item.series_name || "系列赛"}}</text>
               <text class="card-title">{{item.competition_name}}</text>
               <text class="card-copy">最近 {{item.latest_played_on || "待更新"}}</text>
-              <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" data-city-index="{{cityIndex}}" data-card-index="{{cardIndex}}" bindchange="chooseSeason">
+              <picker mode="selector" range="{{item.seasons}}" value="{{item.selectedSeasonIndex}}" disabled="{{!item.seasons.length}}" data-city-index="{{cityIndex}}" data-card-index="{{cardIndex}}" bindchange="chooseSeason">
                 <view class="season-picker" hover-class="tap-chip-hover">
                   <view>
                     <text class="season-label">赛季</text>
                     <text class="season-value">{{item.selectedSeason || "待录入"}}</text>
                   </view>
-                  <text class="season-action">{{item.hasMultipleSeasons ? "切换" : "当前"}}</text>
+                  <text class="season-action">{{item.canEnter ? (item.hasMultipleSeasons ? "切换" : "当前") : "待录入"}}</text>
                 </view>
               </picker>
-              <button class="enter-label" hover-class="tap-button-hover" data-city-index="{{cityIndex}}" data-card-index="{{cardIndex}}" bindtap="chooseCompetition">{{item.enterText}}</button>
+              <button class="enter-label" hover-class="tap-button-hover" disabled="{{!item.canEnter}}" data-city-index="{{cityIndex}}" data-card-index="{{cardIndex}}" bindtap="chooseCompetition">{{item.enterText}}</button>
             </view>
           </view>
         </view>

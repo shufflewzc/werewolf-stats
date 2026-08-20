@@ -8561,11 +8561,150 @@ def get_selected_competition(
 
 def get_selected_season(ctx: RequestContext, season_names: list[str]) -> str | None:
     selected = form_value(ctx.query, "season").strip()
-    if selected and selected in season_names:
-        return selected
+    if selected:
+        return selected if selected in season_names else None
     if season_names:
         return season_names[0]
     return None
+
+
+def api_scope_required(ctx: RequestContext) -> bool:
+    return form_value(ctx.query, "scope_required").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
+
+
+def resolve_api_scope_request(
+    ctx: RequestContext,
+    data: dict[str, Any],
+) -> tuple[dict[str, str] | None, tuple[str, dict[str, Any]] | None]:
+    """Validate an explicitly requested public API competition/season scope.
+
+    Calls without ``scope_required=1`` retain the legacy default-browsing behavior
+    when no complete scope was supplied. Once a season is explicit, however, it
+    must belong to the requested competition and is never replaced by a default.
+    """
+
+    competition_name = form_value(ctx.query, "competition").strip()
+    season_name = form_value(ctx.query, "season").strip()
+    requested_scope = {
+        "competition": competition_name,
+        "season": season_name,
+    }
+    if api_scope_required(ctx) and (not competition_name or not season_name):
+        return None, (
+            "400 Bad Request",
+            {
+                "code": "SCOPE_REQUIRED",
+                "error": "请先选择完整的赛事和赛季。",
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
+        )
+
+    if season_name and not competition_name:
+        return None, (
+            "404 Not Found",
+            {
+                "code": "SCOPE_NOT_FOUND",
+                "error": "所选赛季缺少对应赛事，请重新选择赛事赛季。",
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
+        )
+    if not competition_name or not season_name:
+        return None, None
+
+    competition_names = {
+        row["competition_name"]
+        for row in build_competition_catalog_rows(data, load_series_catalog(data))
+    } | set(list_competitions(data))
+    if competition_name not in competition_names:
+        return None, (
+            "404 Not Found",
+            {
+                "code": "SCOPE_NOT_FOUND",
+                "error": "所选赛事不存在或已下线，请重新选择。",
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
+        )
+
+    season_names = list_seasons(
+        data,
+        competition_name,
+        include_non_ongoing=True,
+    )
+    if season_name not in season_names:
+        return None, (
+            "404 Not Found",
+            {
+                "code": "SCOPE_NOT_FOUND",
+                "error": "所选赛季不存在或不属于该赛事，请重新选择。",
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
+        )
+    return requested_scope, None
+
+
+def public_api_requires_scope_validation(path: str) -> bool:
+    return bool(
+        path in {
+            "/api/dashboard",
+            "/api/prediction-roster-search",
+            "/api/search",
+            "/api/players",
+            "/api/teams",
+            "/api/predictions",
+            "/api/schedule",
+        }
+        or path.startswith("/api/players/")
+        or path.startswith("/api/teams/")
+        or path.startswith("/api/matches/")
+        or path.startswith("/api/series/")
+        or path.startswith("/api/days/")
+    )
+
+
+def validate_public_api_scope_request(ctx: RequestContext, start_response):
+    if not public_api_requires_scope_validation(ctx.path):
+        return None
+    competition_name = form_value(ctx.query, "competition").strip()
+    season_name = form_value(ctx.query, "season").strip()
+    if not api_scope_required(ctx) and not season_name:
+        return None
+    if (
+        api_scope_required(ctx)
+        and (not competition_name or not season_name)
+    ) or (season_name and not competition_name):
+        _, error = resolve_api_scope_request(ctx, {})
+        if error is None:
+            return None
+        status, payload = error
+        return start_response_json(start_response, status, payload)
+    data = load_validated_data()
+    requested_scope, error = resolve_api_scope_request(ctx, data)
+    if error is None:
+        if requested_scope and ctx.path.startswith("/api/series/"):
+            series_slug = ctx.path.split("/", 3)[3]
+            series_entry = get_series_entry_by_competition(
+                load_series_catalog(data),
+                requested_scope["competition"],
+            )
+            if not series_entry or series_entry["series_slug"] != series_slug:
+                payload = {
+                    "code": "SCOPE_NOT_FOUND",
+                    "error": "所选赛事赛季不属于该系列赛。",
+                    "scope": requested_scope,
+                    "requested_scope": requested_scope,
+                }
+                return start_response_json(start_response, "404 Not Found", payload)
+        return None
+    status, payload = error
+    return start_response_json(start_response, status, payload)
 
 
 def build_team_scope_value(competition_name: str, season_name: str) -> str:
@@ -9628,8 +9767,20 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
     team_rows = build_team_rows(stats_data, selected_competition, selected_season)
     visible_player_rows = [row for row in player_rows if row["games_played"] > 0]
     visible_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
-    displayed_player_rows = visible_player_rows or player_rows
-    displayed_team_rows = visible_team_rows or team_rows
+    has_explicit_scope = bool(
+        form_value(ctx.query, "competition").strip()
+        and form_value(ctx.query, "season").strip()
+    )
+    displayed_player_rows = (
+        visible_player_rows
+        if has_explicit_scope
+        else visible_player_rows or player_rows
+    )
+    displayed_team_rows = (
+        visible_team_rows
+        if has_explicit_scope
+        else visible_team_rows or team_rows
+    )
     scope_label = " / ".join(
         item
         for item in [
@@ -10013,6 +10164,8 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "generated_at": ctx.now_label,
         "legacy_href": legacy_href,
         "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
             "label": scope_label,
             "dashboard_label": dashboard_scope_label,
             "summary_line": scope_summary_line,
@@ -11317,10 +11470,20 @@ def handle_match_day_api(ctx: RequestContext, start_response, played_on: str):
         return start_response_json_bytes(start_response, status, body)
     scope, error_message = _build_match_day_scope(ctx, played_on)
     if not scope:
+        requested_scope = {
+            "competition": form_value(ctx.query, "competition").strip(),
+            "season": form_value(ctx.query, "season").strip(),
+        }
         return start_response_json(
             start_response,
             "404 Not Found",
-            {"error": error_message, "alert": form_value(ctx.query, "alert").strip()},
+            {
+                "code": "DAY_NOT_FOUND",
+                "error": error_message,
+                "alert": form_value(ctx.query, "alert").strip(),
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
         )
     payload = build_match_day_api_payload(ctx, played_on, scope)
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -12477,7 +12640,15 @@ def build_search_api_payload(ctx: RequestContext, keyword: str) -> dict[str, Any
             })
     type_order = {"player": 0, "team": 1, "guild": 2}
     results.sort(key=lambda item: (type_order[item["type"]], item["title"]))
-    return {"keyword": keyword, "results": results[:20]}
+    player_scope = players_payload.get("scope") or {}
+    return {
+        "scope": {
+            "competition": player_scope.get("competition"),
+            "season": player_scope.get("season"),
+        },
+        "keyword": keyword,
+        "results": results[:20],
+    }
 
 
 def handle_search_api(ctx: RequestContext, start_response):
@@ -12491,10 +12662,19 @@ def handle_search_api(ctx: RequestContext, start_response):
         )
     keyword = form_value(ctx.query, "q").strip()
     if len(keyword) < 2:
+        requested_scope = {
+            "competition": form_value(ctx.query, "competition").strip(),
+            "season": form_value(ctx.query, "season").strip(),
+        }
         return start_response_json(
             start_response,
             "400 Bad Request",
-            {"error": "请输入至少 2 个字再搜索。"},
+            {
+                "code": "INVALID_QUERY",
+                "error": "请输入至少 2 个字再搜索。",
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
         )
     return start_cached_public_api_json(
         ctx,
@@ -12522,10 +12702,20 @@ def handle_series_api(ctx: RequestContext, start_response, series_slug: str):
         )
     scope, error_message = _build_series_scope(ctx, series_slug)
     if not scope:
+        requested_scope = {
+            "competition": form_value(ctx.query, "competition").strip(),
+            "season": form_value(ctx.query, "season").strip(),
+        }
         return start_response_json(
             start_response,
             "404 Not Found",
-            {"error": error_message, "alert": form_value(ctx.query, "alert").strip()},
+            {
+                "code": "SERIES_NOT_FOUND",
+                "error": error_message,
+                "alert": form_value(ctx.query, "alert").strip(),
+                "scope": requested_scope,
+                "requested_scope": requested_scope,
+            },
         )
     return start_cached_public_api_json(
         ctx,
@@ -13743,11 +13933,15 @@ def get_team_page(ctx: RequestContext, team_id: str, alert: str = "") -> str:
                 ]
             },
             selected_competition,
+            include_non_ongoing=True,
         )
         if selected_competition
         else []
     )
-    selected_season = team_season_name or get_selected_season(ctx, season_names)
+    requested_season = form_value(ctx.query, "season").strip()
+    selected_season = requested_season or team_season_name or get_selected_season(
+        ctx, season_names
+    )
     team_dimension_panel = build_team_dimension_panel(
         ctx,
         data,
@@ -15265,6 +15459,7 @@ def get_player_page(ctx: RequestContext, player_id: str, alert: str = "") -> str
                 ]
             },
             selected_competition,
+            include_non_ongoing=True,
         )
         if selected_competition
         else []
@@ -17812,6 +18007,8 @@ def request_wechat_miniprogram_share_code(scene: str) -> tuple[bytes, str]:
 
 PREDICTION_DAY_SHARE_SCENE_PREFIX = "d1:"
 PREDICTION_DAY_SHARE_SCENE_DIGEST_LENGTH = 24
+PLAYER_SHARE_SCENE_PREFIX = "p1:"
+PLAYER_SHARE_SCENE_DIGEST_LENGTH = 24
 
 
 def normalize_prediction_share_day(value: str) -> str:
@@ -17934,6 +18131,91 @@ def resolve_prediction_day_share_scene(
     return matches[0]
 
 
+def build_player_share_scene(
+    player_id: str,
+    competition_name: str,
+    season_name: str,
+) -> str:
+    normalized_player_id = str(player_id or "").strip()
+    competition = str(competition_name or "").strip()
+    season = str(season_name or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", normalized_player_id):
+        raise ValueError("选手 ID 无效。")
+    if not competition or not season:
+        raise ValueError("赛事和赛季不能为空。")
+    raw_value = "\x1f".join((normalized_player_id, competition, season))
+    digest = hashlib.sha256(raw_value.encode("utf-8")).hexdigest()[
+        :PLAYER_SHARE_SCENE_DIGEST_LENGTH
+    ]
+    return f"{PLAYER_SHARE_SCENE_PREFIX}{digest}"
+
+
+def list_player_share_targets(
+    data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    repository = data or load_validated_data()
+    player_ids = {
+        str(player.get("player_id") or "").strip()
+        for player in repository.get("players", [])
+        if re.fullmatch(
+            r"[A-Za-z0-9_-]{1,28}",
+            str(player.get("player_id") or "").strip(),
+        )
+        and str(player.get("player_id") or "").strip().upper() != "NPC"
+    }
+    target_keys: set[tuple[str, str, str]] = set()
+    for match in repository.get("matches", []):
+        competition_name = get_match_competition_name(match)
+        season_name = str(match.get("season") or "").strip()
+        if not competition_name or not season_name:
+            continue
+        for participant in match.get("players", []):
+            player_id = str(participant.get("player_id") or "").strip()
+            if player_id in player_ids:
+                target_keys.add((player_id, competition_name, season_name))
+
+    series_catalog = load_series_catalog(repository)
+    targets: list[dict[str, Any]] = []
+    for player_id, competition_name, season_name in sorted(target_keys):
+        series_context = build_series_context_from_competition(
+            competition_name,
+            series_catalog,
+        )
+        targets.append(
+            {
+                "scene": build_player_share_scene(
+                    player_id,
+                    competition_name,
+                    season_name,
+                ),
+                "player_id": player_id,
+                "competition": competition_name,
+                "season": season_name,
+                "region": infer_region_name_from_competition(competition_name),
+                "series": str(series_context.get("series_slug") or ""),
+                "seriesName": str(series_context.get("series_name") or ""),
+            }
+        )
+    return targets
+
+
+def resolve_player_share_scene(
+    scene: str,
+    data: dict[str, Any] | None = None,
+) -> dict[str, Any] | None:
+    normalized_scene = str(scene or "").strip()
+    if not re.fullmatch(r"p1:[0-9a-f]{24}", normalized_scene):
+        return None
+    matches = [
+        target
+        for target in list_player_share_targets(data)
+        if target["scene"] == normalized_scene
+    ]
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 def build_miniprogram_username(openid: str, existing_usernames: set[str]) -> str:
     digest = hashlib.sha1(openid.encode("utf-8")).hexdigest()[:12]
     base = f"wx_{digest}"
@@ -17970,6 +18252,32 @@ def handle_miniprogram_share_entry(ctx: RequestContext, start_response):
                 "seriesName": target["seriesName"],
             },
         })
+    if scene.startswith(PLAYER_SHARE_SCENE_PREFIX):
+        target = resolve_player_share_scene(scene)
+        if not target:
+            return start_response_json(
+                start_response,
+                "404 Not Found",
+                {
+                    "code": "SHARE_ENTRY_NOT_FOUND",
+                    "error": "分享的选手赛事数据不存在、已失效或分享码发生冲突。",
+                },
+            )
+        return start_response_json(
+            start_response,
+            "200 OK",
+            {
+                "target": "player",
+                "player_id": target["player_id"],
+                "scope": {
+                    "competition": target["competition"],
+                    "season": target["season"],
+                    "region": target["region"],
+                    "series": target["series"],
+                    "seriesName": target["seriesName"],
+                },
+            },
+        )
     player_id = scene[2:] if scene.startswith("p:") else ""
     if not player_id or not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
         return start_response_json(start_response, "400 Bad Request", {"error": "分享码无效或已过期。"})
@@ -18041,11 +18349,102 @@ def handle_miniprogram_share_code(ctx: RequestContext, start_response):
             return start_response_json(start_response, "404 Not Found", {"error": "该比赛日暂无完整可分享的预测。"})
     elif not share_type or share_type == "player":
         player_id = form_value(ctx.query, "player_id").strip()
+        competition_name = form_value(ctx.query, "competition").strip()
+        season_name = form_value(ctx.query, "season").strip()
+        requested_scope = {
+            "competition": competition_name,
+            "season": season_name,
+        }
+        if not competition_name or not season_name:
+            return start_response_json(
+                start_response,
+                "400 Bad Request",
+                {
+                    "code": "SCOPE_REQUIRED",
+                    "error": "请先选择完整的赛事和赛季。",
+                    "scope": requested_scope,
+                    "requested_scope": requested_scope,
+                },
+            )
+        _, scope_error = resolve_api_scope_request(ctx, data)
+        if scope_error is not None:
+            status, payload = scope_error
+            return start_response_json(start_response, status, payload)
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,28}", player_id):
-            return start_response_json(start_response, "400 Bad Request", {"error": "选手 ID 无效。"})
-        if not any(str(player.get("player_id") or "") == player_id for player in data["players"]):
-            return start_response_json(start_response, "404 Not Found", {"error": "选手不存在或已下线。"})
-        scene = f"p:{player_id}"
+            return start_response_json(
+                start_response,
+                "400 Bad Request",
+                {
+                    "code": "PLAYER_ID_INVALID",
+                    "error": "选手 ID 无效。",
+                    "scope": requested_scope,
+                    "requested_scope": requested_scope,
+                },
+            )
+        player_exists = any(
+            str(player.get("player_id") or "").strip() == player_id
+            for player in data.get("players", [])
+        )
+        player_in_scope = player_exists and any(
+            get_match_competition_name(match) == competition_name
+            and str(match.get("season") or "").strip() == season_name
+            and any(
+                str(participant.get("player_id") or "").strip() == player_id
+                for participant in match.get("players", [])
+            )
+            for match in data.get("matches", [])
+        )
+        if not player_in_scope:
+            return start_response_json(
+                start_response,
+                "404 Not Found",
+                {
+                    "code": "PLAYER_NOT_FOUND",
+                    "error": "该选手不在所选赛事赛季中。",
+                    "scope": requested_scope,
+                    "requested_scope": requested_scope,
+                },
+            )
+        scene = build_player_share_scene(
+            player_id,
+            competition_name,
+            season_name,
+        )
+        scene_targets = [
+            item for item in list_player_share_targets(data) if item["scene"] == scene
+        ]
+        target = next(
+            (
+                item
+                for item in scene_targets
+                if item["player_id"] == player_id
+                and item["competition"] == competition_name
+                and item["season"] == season_name
+            ),
+            None,
+        )
+        if len(scene_targets) > 1:
+            return start_response_json(
+                start_response,
+                "409 Conflict",
+                {
+                    "code": "SHARE_SCENE_CONFLICT",
+                    "error": "选手分享码发生冲突，请联系管理员。",
+                    "scope": requested_scope,
+                    "requested_scope": requested_scope,
+                },
+            )
+        if target is None:
+            return start_response_json(
+                start_response,
+                "404 Not Found",
+                {
+                    "code": "PLAYER_NOT_FOUND",
+                    "error": "该选手在所选赛事赛季中暂无可分享的数据。",
+                    "scope": requested_scope,
+                    "requested_scope": requested_scope,
+                },
+            )
     else:
         return start_response_json(start_response, "400 Bad Request", {"error": "分享类型无效。"})
     now = time.monotonic()
@@ -18321,12 +18720,21 @@ def handle_miniprogram_current_player(ctx: RequestContext, start_response):
         return start_response_json(start_response, "401 Unauthorized", {"error": "账号不存在或已停用，请重新登录。"})
     competition_name = form_value(ctx.query, "competition").strip()
     season_name = form_value(ctx.query, "season").strip()
+    data = load_validated_data()
+    resolved_scope, scope_error = resolve_api_scope_request(ctx, data)
+    if scope_error is not None:
+        status, payload = scope_error
+        return start_response_json(start_response, status, payload)
     result = resolve_user_player_for_scope(
-        load_validated_data(),
+        data,
         user,
         competition_name,
         season_name,
     )
+    result["scope"] = resolved_scope or {
+        "competition": competition_name,
+        "season": season_name,
+    }
     return start_response_json(start_response, "200 OK", result)
 
 
@@ -18870,7 +19278,13 @@ def handle_match_api(ctx: RequestContext, start_response, match_id: str):
         start_response,
         build_public_api_cache_key(ctx, "match", match_id),
         lambda: build_match_api_payload(ctx, match_id),
-        status_builder=lambda payload: "404 Not Found" if payload.get("not_found") else "200 OK",
+        status_builder=lambda payload: (
+            "409 Conflict"
+            if payload.get("scope_mismatch")
+            else "404 Not Found"
+            if payload.get("not_found")
+            else "200 OK"
+        ),
     )
 
 
@@ -18940,14 +19354,17 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
             if item.get("published")
         }
     )
-    selected_competition = get_selected_competition(ctx, competition_names)
-    if not selected_competition and jcds_competitions:
+    requested_competition = form_value(ctx.query, "competition").strip()
+    selected_competition = requested_competition or get_selected_competition(
+        ctx,
+        competition_names,
+    )
+    if not requested_competition and not selected_competition and jcds_competitions:
         selected_competition = sorted(jcds_competitions)[0]
     season_names = list_seasons(
         data,
         selected_competition,
         include_non_ongoing=True,
-        selected_season=form_value(ctx.query, "season").strip() or None,
     ) if selected_competition else []
     for scenario in scenarios.values():
         if (
@@ -19187,6 +19604,8 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
         ]
         return {
             "scope": {
+                "competition": selected_competition,
+                "season": selected_season,
                 "label": selected_competition or "请先选择赛事",
                 "selected_competition": selected_competition,
                 "selected_season": selected_season,
@@ -19388,6 +19807,8 @@ def build_predictions_api_base_payload(ctx: RequestContext) -> dict[str, Any]:
 
     return {
         "scope": {
+            "competition": selected_competition,
+            "season": selected_season,
             "label": selected_competition or "请先选择赛事",
             "selected_competition": selected_competition,
             "selected_season": selected_season,
@@ -19498,12 +19919,6 @@ def handle_prediction_roster_search_api(ctx: RequestContext, start_response):
         if get_match_competition_name(match) == competition_name
         and (not season_name or str(match.get("season") or "") == season_name)
     ]
-    if not scoped_matches:
-        scoped_matches = [
-            match
-            for match in data.get("matches", [])
-            if get_match_competition_name(match) == competition_name
-        ]
     player_ids = {
         str(participant.get("player_id") or "").strip()
         for match in scoped_matches
@@ -19903,6 +20318,9 @@ def app(environ, start_response):
             return [body]
         if path.startswith("/assets/"):
             return serve_asset(start_response, path)
+        public_scope_guard = validate_public_api_scope_request(ctx, start_response)
+        if public_scope_guard is not None:
+            return public_scope_guard
         if path == "/api/miniprogram/login":
             return handle_miniprogram_login(ctx, start_response)
         if path == "/api/miniprogram/share-entry":

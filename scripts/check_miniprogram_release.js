@@ -267,6 +267,55 @@ function checkCustomStageLabels() {
   ok("小程序自定义赛段名称与兼容回退检查通过。");
 }
 
+function checkScopeContractRegression() {
+  const scopedSharePages = [
+    "dashboard/dashboard.js",
+    "guilds/guilds.js",
+    "players/players.js",
+    "player-detail/player-detail.js",
+    "team-detail/team-detail.js",
+    "match-detail/match-detail.js",
+    "compare/compare.js",
+    "guild-detail/guild-detail.js",
+    "predictions/predictions.js",
+    "prediction-share-card/prediction-share-card.js",
+    "day-detail/day-detail.js"
+  ];
+  for (const relativePath of scopedSharePages) {
+    const source = fs.readFileSync(path.join(MINIPROGRAM_DIR, "pages", relativePath), "utf8");
+    if (!source.includes("onShareAppMessage()") || !source.includes("appendScopeToPath")) {
+      fail(`可分享业务页缺少 scoped 分享：${relativePath}`);
+    }
+    if (!source.includes("applyScopeFromOptions")) {
+      fail(`可分享业务页未在接收端确认 scope：${relativePath}`);
+    }
+  }
+  const playerShareCardSource = fs.readFileSync(
+    path.join(MINIPROGRAM_DIR, "pages", "share-card", "share-card.js"),
+    "utf8"
+  );
+  for (const required of ['share_type: "player"', "competition: scope.competition", "season: scope.season"]) {
+    if (!playerShareCardSource.includes(required)) {
+      fail(`选手战绩卡小程序码缺少 scope 参数：${required}`);
+    }
+  }
+  const scriptPath = path.join(ROOT, "scripts", "test_miniprogram_scope_contract.js");
+  if (!fs.existsSync(scriptPath)) {
+    fail("缺少小程序赛事赛季 scope 回归测试。");
+    return;
+  }
+  const completed = childProcess.spawnSync(process.execPath, [scriptPath], {
+    cwd: ROOT,
+    encoding: "utf8"
+  });
+  if (completed.status !== 0) {
+    const detail = `${completed.stdout || ""}\n${completed.stderr || ""}`.trim();
+    fail(`小程序赛事赛季 scope 回归失败：${detail}`);
+    return;
+  }
+  ok("小程序完整 scope、分享确认、响应校验与无范围拦截通过。");
+}
+
 function printReport() {
   console.log("小程序发布前自检");
   for (const message of results.ok) {
@@ -288,6 +337,7 @@ function main() {
   checkLocalAddressRisk();
   checkPredictionShareCard();
   checkCustomStageLabels();
+  checkScopeContractRegression();
   printReport();
   if (results.failures.length) {
     console.error("\n小程序发布前自检未通过，请先修正失败项。");

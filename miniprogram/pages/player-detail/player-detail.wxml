@@ -26,10 +26,10 @@
 
   <view wx:elif="{{needsCompetition}}" class="section">
     <view class="empty-card">
-      <text class="empty-title">先进入赛事</text>
-      <text class="empty-copy">选择赛事后，才能查看该赛事范围下的选手详情和维度数据。</text>
+      <text class="empty-title">先选择赛事和赛季</text>
+      <text class="empty-copy">选择完整的赛事和赛季后，才能查看该赛季的选手详情和维度数据。</text>
       <view class="button-row">
-        <button class="primary-button" hover-class="tap-button-hover" bindtap="goCompetitions">去选择赛事</button>
+        <button class="primary-button" hover-class="tap-button-hover" bindtap="goCompetitions">去选择赛事和赛季</button>
       </view>
     </view>
   </view>
@@ -49,7 +49,7 @@
         <view class="scope-main">
           <text class="scope-label">当前赛事</text>
           <text class="scope-title">{{selectedScope.competition}}</text>
-          <text class="scope-meta">{{selectedScope.region}} · {{selectedScope.seriesName || "系列赛"}} · {{selectedScope.season || "当前赛季"}}</text>
+          <text class="scope-meta">{{selectedScope.displayMeta}}</text>
         </view>
         <button class="scope-button" hover-class="tap-button-hover" bindtap="changeCompetition">切换</button>
       </view>

@@ -1,5 +1,5 @@
 const { request, assetUrl } = require("../../utils/api");
-const { getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 function text(value) {
   const result = String(value === undefined || value === null ? "--" : value).trim();
@@ -41,14 +41,49 @@ Page({
   onLoad(options) {
     this.initialType = options.type === "team" ? "team" : "player";
     this.initialLeftId = decodeURIComponent(options.left_id || "");
-    this.loadData();
+    this.initialRightId = decodeURIComponent(options.right_id || "");
+    return this.activateScopeAndLoad(options);
+  },
+
+  async activateScopeAndLoad(options) {
+    const activation = await applyScopeFromOptions(options, { sourceLabel: "分享的数据对比" });
+    if (!activation.accepted) {
+      this._scopeEntryBlocked = scopeActivationError(activation);
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return false;
+    }
+    this._scopeEntryBlocked = "";
+    await this.loadData();
+    return true;
   },
 
   onPullDownRefresh() {
     this.loadData({ forceRefresh: true }).finally(() => wx.stopPullDownRefresh());
   },
 
+  onShareAppMessage() {
+    const scope = this.data.selectedScope;
+    const type = this.data.type;
+    const left = this.data.left;
+    const right = this.data.right;
+    const query = [
+      `type=${encodeURIComponent(type)}`,
+      left && left.id ? `left_id=${encodeURIComponent(left.id)}` : "",
+      right && right.id ? `right_id=${encodeURIComponent(right.id)}` : ""
+    ].filter(Boolean).join("&");
+    return {
+      title: left && right
+        ? `${left.title} vs ${right.title} · ${scope && scope.season ? scope.season : "数据对比"}`
+        : `${scope && scope.competition ? scope.competition : "狼人杀赛事"}数据对比`,
+      path: appendScopeToPath(`/pages/compare/compare?${query}`, scope)
+    };
+  },
+
   async loadData(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
     this.setData({ loading: true, error: "" });
     try {
       const selectedScope = getRequiredScope();
@@ -65,11 +100,23 @@ Page({
       }
       const preferredLeft = this.initialLeftId || (this.data.left && this.data.left.id) || candidates[0].id;
       const leftIndex = Math.max(0, candidates.findIndex((item) => item.id === preferredLeft));
-      let rightIndex = candidates.findIndex((item) => item.id === (this.data.right && this.data.right.id));
+      const preferredRight = this.initialRightId || (this.data.right && this.data.right.id) || "";
+      let rightIndex = candidates.findIndex((item) => item.id === preferredRight);
       if (rightIndex < 0 || rightIndex === leftIndex) rightIndex = leftIndex === 0 ? 1 : 0;
       this.initialLeftId = "";
+      this.initialRightId = "";
       await this.loadComparison({ selectedScope, type, candidates, leftIndex, rightIndex, options });
     } catch (error) {
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该对比内容" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({ loading: false, error: error.message || "对比数据加载失败" });
     }
   },

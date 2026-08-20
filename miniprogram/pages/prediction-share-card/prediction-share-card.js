@@ -1,5 +1,5 @@
 const { request } = require("../../utils/api");
-const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, scopeActivationError, scopeParams } = require("../../utils/scope");
 const { apiBaseUrl } = require("../../config");
 
 const CARD_WIDTH = 750;
@@ -149,8 +149,18 @@ Page({
   },
 
   onLoad(options) {
-    applyScopeFromOptions(options);
     this.playedOn = safeDecode(options.played_on);
+    this.activateScopeAndRender(options);
+  },
+
+  async activateScopeAndRender(options) {
+    const activation = await applyScopeFromOptions(options, { sourceLabel: "分享的预测卡片" });
+    if (!activation.accepted) {
+      this._scopeEntryBlocked = scopeActivationError(activation);
+      this.setData({ loading: false, cardReady: false, error: this._scopeEntryBlocked });
+      return;
+    }
+    this._scopeEntryBlocked = "";
     this.renderCard();
   },
 
@@ -166,6 +176,10 @@ Page({
   },
 
   async renderCard(options = {}) {
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, cardReady: false, error: this._scopeEntryBlocked });
+      return;
+    }
     this.canvas = null;
     this.previewing = false;
     this.setData({ loading: true, error: "", cardReady: false });
@@ -194,6 +208,17 @@ Page({
       await this.initCanvas(payload, predictions, scope, qrPath);
       this.setData({ loading: false, error: "", cardReady: true });
     } catch (error) {
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该预测卡片" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.renderCard({ forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.canvas = null;
+          this.setData({ loading: false, cardReady: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.canvas = null;
       this.setData({
         loading: false,

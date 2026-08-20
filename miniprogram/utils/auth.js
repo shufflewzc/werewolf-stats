@@ -1,4 +1,5 @@
 const { post, request } = require("./api");
+const { scopeParams } = require("./scope");
 
 const SESSION_KEY = "werewolf:miniprogramSession";
 const USER_KEY = "werewolf:miniprogramUser";
@@ -68,8 +69,7 @@ function searchPlayers(keyword) {
 function getCurrentPlayerForScope(scope) {
   return request("/api/miniprogram/current-player", {
     session_token: getSessionToken(),
-    competition: scope && scope.competition,
-    season: scope && scope.season
+    ...scopeParams(scope)
   });
 }
 

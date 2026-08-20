@@ -1,5 +1,5 @@
 const { request } = require("../../utils/api");
-const { setSelectedScope } = require("../../utils/scope");
+const { confirmScopeSwitch, isCompleteScope } = require("../../utils/scope");
 
 Page({
   onLoad(options) {
@@ -10,10 +10,17 @@ Page({
   async openSharedPlayer(scene) {
     try {
       const payload = await request("/api/miniprogram/share-entry", { scene }, { useCache: false });
-      if (!payload.scope || !payload.scope.competition) {
+      if (!isCompleteScope(payload.scope)) {
         throw new Error("分享内容暂时无法打开。");
       }
-      setSelectedScope(payload.scope);
+      const activation = await confirmScopeSwitch(payload.scope, {
+        title: "进入分享赛季",
+        sourceLabel: "分享内容"
+      });
+      if (!activation.accepted) {
+        wx.switchTab({ url: "/pages/dashboard/dashboard" });
+        return;
+      }
       if (payload.target === "prediction_day" && payload.played_on) {
         wx.redirectTo({
           url: `/pages/predictions/predictions?played_on=${encodeURIComponent(payload.played_on)}`

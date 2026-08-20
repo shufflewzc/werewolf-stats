@@ -1,7 +1,7 @@
 const { request } = require("../../utils/api");
 const { stageLabel } = require("../../utils/format");
 const { createPagedState, nextPagedState } = require("../../utils/paging");
-const { appendScopeToPath, applyScopeFromOptions, getRequiredScope, goCompetitions, needsCompetitionState, scopeParams } = require("../../utils/scope");
+const { appendScopeToPath, applyScopeFromOptions, confirmScopeMismatch, getRequiredScope, goCompetitions, needsCompetitionState, sameScope, scopeActivationError, scopeParams } = require("../../utils/scope");
 
 const PAGE_SIZE = 30;
 
@@ -40,9 +40,19 @@ Page({
   },
 
   onLoad(options) {
-    applyScopeFromOptions(options);
     const playedOn = decodeURIComponent(options.played_on || "");
     this.setData({ playedOn });
+    this.activateScopeAndLoad(options);
+  },
+
+  async activateScopeAndLoad(options) {
+    const activation = await applyScopeFromOptions(options, { sourceLabel: "分享的比赛日" });
+    if (!activation.accepted) {
+      this._scopeEntryBlocked = scopeActivationError(activation);
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
+    this._scopeEntryBlocked = "";
     this.loadData();
   },
 
@@ -60,6 +70,14 @@ Page({
   },
 
   async loadData(options = {}) {
+    const requestId = Number(this._loadRequestId || 0) + 1;
+    this._loadRequestId = requestId;
+    this._predictionLoadMoreRequestId = Number(this._predictionLoadMoreRequestId || 0) + 1;
+    this._predictionLoadMorePending = false;
+    if (this._scopeEntryBlocked) {
+      this.setData({ loading: false, error: this._scopeEntryBlocked });
+      return;
+    }
     const playedOn = this.data.playedOn;
     if (!playedOn) {
       this.setData({ loading: false, error: "缺少比赛日期" });
@@ -98,6 +116,13 @@ Page({
           offset: 0
         }, options)
       ]);
+      if (
+        requestId !== this._loadRequestId
+        || !sameScope(getRequiredScope(), selectedScope)
+        || this.data.playedOn !== playedOn
+      ) {
+        return;
+      }
       const predictions = predictionPayload.predictions || [];
       const playerLeaderboard = dayPayload.player_leaderboard || [];
       const predictionPagination = predictionPayload.pagination || {};
@@ -124,6 +149,19 @@ Page({
         predictionHasMore: Boolean(predictionPagination.has_more)
       });
     } catch (error) {
+      if (requestId !== this._loadRequestId || !sameScope(getRequiredScope(), selectedScope)) {
+        return;
+      }
+      const recovery = await confirmScopeMismatch(error, { sourceLabel: "该比赛日" });
+      if (recovery) {
+        if (recovery.accepted && !options.scopeMismatchRetried) {
+          return this.loadData({ ...options, forceRefresh: true, scopeMismatchRetried: true });
+        }
+        if (!recovery.accepted) {
+          this.setData({ loading: false, error: scopeActivationError(recovery) });
+          return;
+        }
+      }
       this.setData({
         loading: false,
         error: error.message || "比赛日详情加载失败"
@@ -148,17 +186,37 @@ Page({
     wx.navigateTo({ url: `/pages/player-detail/player-detail?player_id=${encodeURIComponent(playerId)}` });
   },
 
-  loadMorePredictions() {
+  async loadMorePredictions() {
     const selectedScope = getRequiredScope();
-    if (!selectedScope || !this.data.predictionHasMore) {
-      return;
+    if (
+      !selectedScope
+      || !sameScope(selectedScope, this.data.selectedScope)
+      || !this.data.predictionHasMore
+      || this._predictionLoadMorePending
+    ) {
+      return false;
     }
-    request("/api/predictions", {
-      ...scopeParams(selectedScope),
-      played_on: this.data.playedOn,
-      limit: PAGE_SIZE,
-      offset: this.data.predictionVisibleCount
-    }).then((payload) => {
+    const requestId = Number(this._predictionLoadMoreRequestId || 0) + 1;
+    const playedOn = this.data.playedOn;
+    const offset = this.data.predictionVisibleCount;
+    this._predictionLoadMoreRequestId = requestId;
+    this._predictionLoadMorePending = true;
+    try {
+      const payload = await request("/api/predictions", {
+        ...scopeParams(selectedScope),
+        played_on: playedOn,
+        limit: PAGE_SIZE,
+        offset
+      });
+      if (
+        requestId !== this._predictionLoadMoreRequestId
+        || !sameScope(getRequiredScope(), selectedScope)
+        || !sameScope(this.data.selectedScope, selectedScope)
+        || this.data.playedOn !== playedOn
+        || this.data.predictionVisibleCount !== offset
+      ) {
+        return false;
+      }
       const predictions = this.data.predictions.concat(payload.predictions || []);
       const pagination = payload.pagination || {};
       this.setData({
@@ -168,9 +226,18 @@ Page({
         predictionTotalCount: Number(pagination.total || this.data.predictionTotalCount || predictions.length),
         predictionHasMore: Boolean(pagination.has_more)
       });
-    }).catch((error) => {
+      return true;
+    } catch (error) {
+      if (requestId !== this._predictionLoadMoreRequestId || !sameScope(getRequiredScope(), selectedScope)) {
+        return false;
+      }
       this.setData({ error: error.message || "加载更多失败" });
-    });
+      return false;
+    } finally {
+      if (requestId === this._predictionLoadMoreRequestId) {
+        this._predictionLoadMorePending = false;
+      }
+    }
   },
 
   loadMorePlayers() {

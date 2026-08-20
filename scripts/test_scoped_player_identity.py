@@ -151,6 +151,14 @@ class ScopedPlayerIdentityTests(unittest.TestCase):
             patch.object(web_app, "load_session_username", return_value="tester"),
             patch.object(web_app, "load_users", return_value=[user]),
             patch.object(web_app, "load_validated_data", return_value=sample_data()),
+            patch.object(
+                web_app,
+                "resolve_api_scope_request",
+                return_value=(
+                    {"competition": "测试赛事", "season": "S2"},
+                    None,
+                ),
+            ),
         ):
             body = web_app.handle_miniprogram_current_player(ctx, start_response)
         payload = json.loads(body[0])

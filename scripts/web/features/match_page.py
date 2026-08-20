@@ -2499,19 +2499,42 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
     data = load_validated_data()
     match = get_match_by_id(data["matches"], match_id)
     legacy_href = _build_match_legacy_href(ctx, match or {"match_id": match_id})
+    requested_scope = {
+        "competition": form_value(ctx.query, "competition").strip(),
+        "season": form_value(ctx.query, "season").strip(),
+    }
     if not match:
         return {
             "not_found": True,
+            "code": "MATCH_NOT_FOUND",
             "error": "没有找到对应的比赛。",
             "title": "未找到比赛",
             "alert": form_value(ctx.query, "alert").strip(),
             "legacy_href": legacy_href,
+            "scope": requested_scope,
+            "requested_scope": requested_scope,
         }
 
     team_lookup = {team["team_id"]: team for team in data["teams"]}
     player_lookup = {player["player_id"]: player for player in data["players"]}
     competition_name = get_match_competition_name(match)
     season_name = str(match.get("season") or "").strip()
+    resource_scope = {
+        "competition": competition_name,
+        "season": season_name,
+    }
+    if (
+        requested_scope["competition"]
+        and requested_scope["season"]
+        and requested_scope != resource_scope
+    ):
+        return {
+            "scope_mismatch": True,
+            "code": "SCOPE_MISMATCH",
+            "error": "该比赛属于另一个赛事赛季，切换前需要确认。",
+            "requested_scope": requested_scope,
+            "resource_scope": resource_scope,
+        }
     match_stage = str(match.get("stage") or "").strip()
     team_group_map = match_team_group_map(data, match)
     regular_season_group_labels = match_group_labels(data, match)
@@ -2662,6 +2685,7 @@ def _serialize_match_detail_payload(ctx: RequestContext, match_id: str) -> dict[
         "title": f"{match_id} 详情",
         "alert": form_value(ctx.query, "alert").strip(),
         "legacy_href": legacy_href,
+        "scope": resource_scope,
         "match": match_payload,
         "actions": {
             "next_href": next_path,
@@ -2706,5 +2730,11 @@ def handle_match_api(ctx: RequestContext, start_response, match_id: str):
             headers=[("Allow", "GET")],
         )
     payload = build_match_api_payload(ctx, match_id)
-    status = "404 Not Found" if payload.get("not_found") else "200 OK"
+    status = (
+        "409 Conflict"
+        if payload.get("scope_mismatch")
+        else "404 Not Found"
+        if payload.get("not_found")
+        else "200 OK"
+    )
     return start_response_json(start_response, status, payload)

@@ -19,6 +19,23 @@ save_repository_state = legacy.save_repository_state
 start_response_html = legacy.start_response_html
 
 SeasonScope = tuple[str, str]
+DEFAULT_PLAYER_PHOTO = "assets/players/default-player.svg"
+
+
+def _normalized_player_photo(player: dict[str, Any]) -> str:
+    return str(player.get("photo") or DEFAULT_PLAYER_PHOTO).strip() or DEFAULT_PLAYER_PHOTO
+
+
+def _preserve_player_photo(source: dict[str, Any], target: dict[str, Any]) -> None:
+    source_photo = _normalized_player_photo(source)
+    target_photo = _normalized_player_photo(target)
+    if source_photo == DEFAULT_PLAYER_PHOTO:
+        return
+    if target_photo == DEFAULT_PLAYER_PHOTO:
+        target["photo"] = source_photo
+        return
+    if source_photo != target_photo:
+        raise ValueError("源档案和目标档案都有不同的自定义头像，请先明确保留哪一个头像。")
 
 
 def _team_season_scope(team: dict[str, Any] | None) -> SeasonScope | None:
@@ -252,6 +269,7 @@ def _merge_player(
     player_scopes = _player_season_scope_map(data)
     if not all(expected_scope == player_scopes.get(player_id, set()) for player_id in (source_id, target_id)):
         raise ValueError("只能合并唯一归属于同一赛事赛季的选手档案。")
+    _preserve_player_photo(source, target)
     moved_appearances = 0
     for match in data.get("matches", []):
         for entry in match.get("players", []):

@@ -141,6 +141,26 @@ class DataHygieneTests(unittest.TestCase):
         self.assertTrue(users[0]["user_player_bindings_write"])
         self.assertNotIn("player-foo", {player["player_id"] for player in data["players"]})
 
+    def test_merge_preserves_uploaded_source_photo_when_target_is_default(self):
+        data = build_data()
+        data["players"][0]["photo"] = "assets/players/uploads/player-foo-source.png"
+        data["players"][1]["photo"] = "assets/players/default-player.svg"
+
+        _merge_player(data, [], "player-foo", "player-foo-2", "赛事", "S2")
+
+        target = next(player for player in data["players"] if player["player_id"] == "player-foo-2")
+        self.assertEqual(target["photo"], "assets/players/uploads/player-foo-source.png")
+
+    def test_merge_rejects_conflicting_uploaded_photos(self):
+        data = build_data()
+        data["players"][0]["photo"] = "assets/players/uploads/player-foo-source.png"
+        data["players"][1]["photo"] = "assets/players/uploads/player-foo-target.png"
+
+        with self.assertRaisesRegex(ValueError, "都有不同的自定义头像"):
+            _merge_player(data, [], "player-foo", "player-foo-2", "赛事", "S2")
+
+        self.assertIn("player-foo", {player["player_id"] for player in data["players"]})
+
 
 if __name__ == "__main__":
     unittest.main()

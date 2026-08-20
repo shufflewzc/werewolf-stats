@@ -64,7 +64,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--output-dir", type=Path, default=BACKUP_DIR, help="Backup output directory.")
     parser.add_argument("--keep", type=int, default=14, help="Number of recent backups to keep.")
-    parser.add_argument("--no-assets", action="store_true", help="Skip uploaded asset archive in SQLite mode.")
+    parser.add_argument("--no-assets", action="store_true", help="Skip uploaded asset archive.")
     parser.add_argument(
         "--allow-unsafe-restore-target",
         action="store_true",
@@ -225,7 +225,8 @@ def prune_postgres_backups(output_dir: Path, keep: int) -> None:
     if keep <= 0 or not output_dir.exists():
         return
     backups = sorted(output_dir.glob("postgres-*.dump"), key=lambda item: item.name, reverse=True)
-    for stale_path in backups[keep:]:
+    asset_backups = sorted(output_dir.glob("assets-*.tar.gz"), key=lambda item: item.name, reverse=True)
+    for stale_path in backups[keep:] + asset_backups[keep:]:
         stale_path.unlink(missing_ok=True)
 
 
@@ -236,17 +237,22 @@ def check_postgres_backup(
     keep: int,
     *,
     allow_unsafe_restore_target: bool = False,
+    no_assets: bool = False,
 ) -> None:
     pg_dump = require_command("pg_dump")
     pg_restore = require_command("pg_restore")
     output_dir.mkdir(parents=True, exist_ok=True)
-    backup_path = output_dir / f"postgres-{timestamp_label()}.dump"
+    label = timestamp_label()
+    backup_path = output_dir / f"postgres-{label}.dump"
+    asset_backup_path = output_dir / f"assets-{label}.tar.gz"
     source_counts = runtime_table_counts(source_url)
     run_command(
         [pg_dump, "--format=custom", "--no-owner", "--no-acl", "--file", str(backup_path), source_url],
         label="PostgreSQL 备份",
     )
     run_command([pg_restore, "--list", str(backup_path)], label="PostgreSQL 备份读取")
+    archived_assets = False if no_assets else archive_assets(asset_backup_path)
+    asset_count = verify_asset_archive(asset_backup_path) if archived_assets else 0
     if restore_test_url:
         assert_safe_restore_target(
             source_url,
@@ -281,6 +287,10 @@ def check_postgres_backup(
         print("- 恢复演练：已恢复到测试库并通过检查")
     else:
         print("- 恢复演练：未提供测试库连接串，本次只验证备份可读取")
+    if archived_assets:
+        print(f"- 上传资源包：{asset_backup_path}，条目 {asset_count}")
+    elif not no_assets:
+        print("- 上传资源包：未发现 uploads 目录，已跳过")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -298,6 +308,7 @@ def main(argv: list[str] | None = None) -> int:
                 args.output_dir.resolve(),
                 args.keep,
                 allow_unsafe_restore_target=args.allow_unsafe_restore_target,
+                no_assets=args.no_assets,
             )
         else:
             check_sqlite_backup(args.output_dir.resolve(), args.keep, args.no_assets)

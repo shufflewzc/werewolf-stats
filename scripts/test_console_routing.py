@@ -427,6 +427,7 @@ class ConsoleRoutingIntegrationTests(unittest.TestCase):
                 )
                 self.assertIn('<body class="app-admin">', html)
                 self.assertIn('<aside class="admin-sidebar">', html)
+                self.assertIn('<details class="admin-sidebar-menu" open>', html)
 
     def test_public_predictions_api_keeps_its_existing_dispatch(self):
         marker = {"called": False}

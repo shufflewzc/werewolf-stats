@@ -3749,7 +3749,7 @@ def layout(title: str, body: str, ctx: RequestContext, alert: str = "") -> str:
               <div class="brand-title">{brand_title}</div>
               <div class="small text-secondary">{brand_copy}</div>
             </div>
-            <details class="admin-sidebar-menu">
+            <details class="admin-sidebar-menu" open>
               <summary>
                 <span>后台导航</span>
                 <span class="admin-sidebar-menu-state" aria-hidden="true">

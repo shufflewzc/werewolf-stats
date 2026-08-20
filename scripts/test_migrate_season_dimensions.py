@@ -242,7 +242,7 @@ class SeasonDimensionMigrationTest(unittest.TestCase):
                 migration.subprocess,
                 "run",
                 side_effect=[toc_result, revision_result],
-            ):
+            ) as run_mock:
                 metadata = migration.verify_backup(
                     args,
                     digest,
@@ -253,6 +253,8 @@ class SeasonDimensionMigrationTest(unittest.TestCase):
                         "database_user": "user",
                     },
                 )
+
+        self.assertIn("--file=-", run_mock.call_args_list[1].args[0])
 
         self.assertEqual(metadata["sha256"], digest)
         self.assertEqual(metadata["path"], str(backup_path.resolve()))

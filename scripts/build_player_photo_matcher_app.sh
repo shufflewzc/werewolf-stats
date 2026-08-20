@@ -26,10 +26,12 @@ mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 if [ ! -x "$PYINSTALLER" ]; then
   echo "[build] preparing standalone Python packager"
   python3 -m venv "$TOOLS_DIR"
-  "$TOOLS_DIR/bin/python" -m pip install \
-    --disable-pip-version-check \
-    pyinstaller
 fi
+
+"$TOOLS_DIR/bin/python" -m pip install \
+  --disable-pip-version-check \
+  pyinstaller \
+  Pillow==11.3.0
 
 echo "[build] packaging standalone matching engine"
 "$PYINSTALLER" \
@@ -50,6 +52,7 @@ xcrun swiftc \
   -target arm64-apple-macos13.0 \
   -framework SwiftUI \
   -framework AppKit \
+  -framework Security \
   "$SOURCE_DIR/PlayerPhotoMatcherApp.swift" \
   -o "$APP_DIR/Contents/MacOS/PlayerPhotoMatcher"
 

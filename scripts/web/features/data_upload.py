@@ -10,13 +10,18 @@ import secrets
 from typing import Any
 
 import web_app as legacy
+from import_preflight import PreflightError, confirm_preflight
 from sqlite_store import mutate_json_meta_value, save_season_dimension_stats
 
 
 TOKEN_META_KEY = "data_upload_tokens_v1"
 REQUEST_META_KEY = "data_upload_requests_v1"
 TOKEN_PREFIX = "wdu_"
-DATA_UPLOAD_SCOPE_PERMISSIONS = {"match_import_manage", "dimension_data_manage"}
+DATA_UPLOAD_SCOPE_PERMISSIONS = {
+    "match_import_manage",
+    "dimension_data_manage",
+    "season_asset_manage",
+}
 
 
 def can_manage_data_upload(user: dict[str, Any] | None) -> bool:
@@ -85,6 +90,9 @@ def available_targets(user: dict[str, Any] | None, data: dict[str, Any] | None =
             )
             or legacy.can_manage_competition_action(
                 user, current_data, competition, "dimension_data_manage"
+            )
+            or legacy.can_manage_competition_action(
+                user, current_data, competition, "season_asset_manage"
             )
         )
     ]
@@ -286,7 +294,7 @@ def token_panel(ctx, revealed_token: str = "") -> str:
     return f'''
     <section class="panel shadow-sm p-3 p-lg-4 mb-4">
       <h2 class="section-title mb-2">数据生成器上传令牌</h2>
-      <p class="section-copy">令牌用于桌面生成器上传 match 与 dimension 文件，只能访问账号有管理权限的赛季。</p>
+      <p class="section-copy">令牌用于桌面工具上传比赛、维度和赛季头像文件，只能访问账号有管理权限的赛季。</p>
       {revealed}
       {create_form}
       <div><h3 class="h6 mb-3">已创建令牌</h3>{''.join(rows) or '<div class="text-secondary">尚未创建令牌</div>'}</div>
@@ -330,6 +338,164 @@ def _json(start_response, status: str, payload: dict[str, Any]):
     return legacy.start_response_json(start_response, status, payload)
 
 
+def _handle_player_photo_upload(
+    ctx,
+    start_response,
+    *,
+    user: dict[str, Any],
+    record: dict[str, Any],
+    data: dict[str, Any],
+    permitted: list[dict[str, str]],
+):
+    if ctx.method != "POST":
+        return _json(
+            start_response,
+            "405 Method Not Allowed",
+            {"error": "头像上传只支持 POST。"},
+        )
+
+    competition = legacy.form_value(ctx.form, "competition_name").strip()
+    season = legacy.form_value(ctx.form, "season_name").strip()
+    if not target_allowed(record, competition, season):
+        return _json(
+            start_response,
+            "403 Forbidden",
+            {"error": "令牌没有该赛事赛季的上传权限。"},
+        )
+    if not any(
+        item["competition_name"] == competition and item["season_name"] == season
+        for item in permitted
+    ):
+        return _json(
+            start_response,
+            "400 Bad Request",
+            {"error": "目标赛事赛季不存在或当前不可管理。"},
+        )
+    if not legacy.can_manage_competition_action(
+        user,
+        data,
+        competition,
+        "season_asset_manage",
+    ):
+        return _json(
+            start_response,
+            "403 Forbidden",
+            {"error": "当前账号没有该赛事赛季的头像上传权限。"},
+        )
+
+    request_key = legacy.form_value(ctx.form, "request_id").strip()[:100]
+    requests = _load_json_meta(REQUEST_META_KEY, {})
+    identity = f"{record['token_id']}:{request_key}" if request_key else ""
+    if identity and identity in requests:
+        return _json(start_response, "200 OK", requests[identity])
+
+    from web.features import matches as matches_feature
+
+    upload = legacy.file_value(ctx.files, "player_photo_zip")
+    upload_error = matches_feature.validate_zip_upload(upload)
+    if upload_error:
+        return _json(
+            start_response,
+            "422 Unprocessable Entity",
+            {"status": "failed", "error": upload_error},
+        )
+
+    preview, blocking_errors, warnings = (
+        matches_feature.preflight_player_photo_zip_upload(
+            ctx,
+            data,
+            upload,
+            competition,
+            season,
+        )
+    )
+    if blocking_errors:
+        return _json(
+            start_response,
+            "422 Unprocessable Entity",
+            {
+                "status": "failed",
+                "error": "；".join(blocking_errors[:3]),
+                "preview": preview,
+                "warnings": warnings,
+            },
+        )
+
+    try:
+        batch_id = matches_feature.create_import_upload_preflight(
+            ctx,
+            data,
+            upload,
+            action="player_photo.import_zip",
+            preview=preview,
+            action_metadata={
+                "competition_name": competition,
+                "season_name": season,
+                "source": "player-photo-matcher",
+                "request_id": request_key,
+                "upload_token_id": record.get("token_id"),
+            },
+            competition_names={competition},
+            warnings=warnings,
+        )
+        confirm_preflight(
+            batch_id,
+            actor=str(user.get("username") or ""),
+            creator_check=lambda actor, created_by, _job: actor == created_by,
+            permission_check=lambda _actor, scope_key, permission_key: bool(
+                legacy.user_has_scope_permission(user, scope_key, permission_key)
+            ),
+            now_label=ctx.now_label,
+        )
+    except PreflightError as exc:
+        return _json(
+            start_response,
+            "409 Conflict",
+            {"status": "failed", "error": str(exc)},
+        )
+    except Exception as exc:
+        legacy.emit_structured_log(
+            "player_photo_upload.enqueue_failed",
+            "error",
+            request_id=str(getattr(ctx, "request_id", "") or ""),
+            username=str(user.get("username") or ""),
+            competition_name=competition,
+            season_name=season,
+            error_type=type(exc).__name__,
+            error=str(exc),
+        )
+        return _json(
+            start_response,
+            "500 Internal Server Error",
+            {"status": "failed", "error": "创建头像导入任务失败，请稍后重试。"},
+        )
+
+    matched_count = int((preview.get("counts") or {}).get("matched_photos") or 0)
+    payload = {
+        "status": "queued",
+        "batch_id": batch_id,
+        "message": f"头像 ZIP 已通过预检，{matched_count} 张头像进入后台导入队列。",
+        "preview": preview,
+        "warnings": warnings,
+    }
+    if identity:
+        requests[identity] = payload
+        _save_json_meta(REQUEST_META_KEY, dict(list(requests.items())[-500:]))
+    legacy.audit_action(
+        ctx,
+        "data_upload.player_photos",
+        target_type="season",
+        target_id=f"{competition}/{season}",
+        summary="头像匹配器上传选手头像 ZIP",
+        metadata={
+            "request_id": request_key,
+            "batch_id": batch_id,
+            "matched_photos": matched_count,
+        },
+    )
+    return _json(start_response, "200 OK", payload)
+
+
 def handle_api(ctx, start_response):
     user, record, error = authenticate(ctx)
     if error:
@@ -369,6 +535,15 @@ def handle_api(ctx, start_response):
         if not batch or metadata.get("upload_token_id") != record.get("token_id"):
             return _json(start_response, "404 Not Found", {"error": "没有找到该上传批次。"})
         return _json(start_response, "200 OK", {"batch_id": batch_id, "status": batch.get("status"), "summary": batch.get("summary") or "", "completed_at": batch.get("completed_at") or ""})
+    if ctx.path == "/api/data-upload/player-photos":
+        return _handle_player_photo_upload(
+            ctx,
+            start_response,
+            user=user,
+            record=record,
+            data=data,
+            permitted=permitted,
+        )
     if ctx.path != "/api/data-upload":
         return _json(start_response, "405 Method Not Allowed", {"error": "请求方法或路径不受支持。"})
     if ctx.method != "POST":

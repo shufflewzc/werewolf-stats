@@ -20433,7 +20433,7 @@ def app(environ, start_response):
             return handle_match_day_api(ctx, start_response, played_on)
         if path == "/api/schedule":
             return handle_schedule_api(ctx, start_response)
-        if path in {"/api/data-upload/targets", "/api/data-upload/matches", "/api/data-upload"} or path.startswith("/api/data-upload/jobs/"):
+        if path in {"/api/data-upload/targets", "/api/data-upload/matches", "/api/data-upload/player-photos", "/api/data-upload"} or path.startswith("/api/data-upload/jobs/"):
             from web.features.data_upload import handle_api
             return handle_api(ctx, start_response)
         if path == "/login":

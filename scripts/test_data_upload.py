@@ -283,6 +283,93 @@ class DataUploadTokenTests(unittest.TestCase):
         self.assertEqual(accepted["results"]["dimension"]["status"], "succeeded")
         save_dimension.assert_called_once()
 
+    def test_player_photo_upload_is_preflighted_and_queued_for_owned_target(self):
+        raw, record = data_upload.create_token(self.user, "头像匹配器", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload/player-photos"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["photo-upload-1"],
+        }
+        ctx.files = {
+            "player_photo_zip": [
+                web_app.UploadedFile("matched-player-photos.zip", "application/zip", b"fake")
+            ],
+        }
+        preview = {
+            "summary": "头像预检完成",
+            "counts": {"matched_photos": 3, "unmatched_photos": 0, "conflicts": 0},
+            "matched_scopes": [
+                {"competition_name": "赛事A", "season_name": "S2"}
+            ],
+        }
+
+        with (
+            patch.object(data_upload.legacy, "can_manage_competition_action", return_value=True),
+            patch.object(matches_feature, "validate_zip_upload", return_value=""),
+            patch.object(
+                matches_feature,
+                "preflight_player_photo_zip_upload",
+                return_value=(preview, [], []),
+            ),
+            patch.object(
+                matches_feature,
+                "create_import_upload_preflight",
+                return_value="imp_photos",
+            ) as create_preflight,
+            patch.object(data_upload, "confirm_preflight") as confirm,
+            patch.object(data_upload.legacy, "audit_action"),
+        ):
+            response_status = []
+            body = data_upload.handle_api(
+                ctx,
+                lambda status, _headers: response_status.append(status),
+            )
+
+        payload = json.loads(body[0])
+        self.assertEqual(response_status, ["200 OK"])
+        self.assertEqual(payload["status"], "queued")
+        self.assertEqual(payload["batch_id"], "imp_photos")
+        self.assertIn("3 张头像", payload["message"])
+        action_metadata = create_preflight.call_args.kwargs["action_metadata"]
+        self.assertEqual(action_metadata["upload_token_id"], record["token_id"])
+        self.assertEqual(create_preflight.call_args.kwargs["action"], "player_photo.import_zip")
+        confirm.assert_called_once()
+
+    def test_player_photo_upload_requires_season_asset_permission(self):
+        raw, _record = data_upload.create_token(self.user, "头像匹配器", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload/player-photos"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+        }
+        ctx.files = {
+            "player_photo_zip": [
+                web_app.UploadedFile("matched-player-photos.zip", "application/zip", b"fake")
+            ],
+        }
+
+        def scoped_permission(_user, _data, _competition, permission):
+            return permission == "match_import_manage"
+
+        with patch.object(
+            data_upload.legacy,
+            "can_manage_competition_action",
+            side_effect=scoped_permission,
+        ):
+            response_status = []
+            body = data_upload.handle_api(
+                ctx,
+                lambda status, _headers: response_status.append(status),
+            )
+
+        self.assertEqual(response_status, ["403 Forbidden"])
+        self.assertIn("头像上传权限", json.loads(body[0])["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

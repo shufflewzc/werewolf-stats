@@ -5126,6 +5126,223 @@ def import_job_revision_changed(
     return True
 
 
+MATCH_IMPORT_CONFIRMATION_ATTEMPTS = 3
+MATCH_IMPORT_CONFIRMATION_RETRY_SECONDS = 0.2
+
+
+def build_match_import_confirmation_expectation(
+    data: dict[str, object],
+    matches: list[dict[str, object]],
+    match_ids: list[str],
+) -> dict[str, object]:
+    """Capture the persisted relationships that must exist before a job succeeds."""
+
+    expected_match_ids = {
+        str(match_id or "").strip()
+        for match_id in match_ids
+        if str(match_id or "").strip()
+    }
+    expected_matches = {
+        str(match.get("match_id") or "").strip(): deepcopy(match)
+        for match in matches
+        if str(match.get("match_id") or "").strip() in expected_match_ids
+    }
+    participant_player_ids = {
+        str(participant.get("player_id") or "").strip()
+        for match in expected_matches.values()
+        for participant in match.get("players", [])
+        if isinstance(participant, dict)
+        and str(participant.get("player_id") or "").strip()
+        and not is_non_profile_player_id(participant.get("player_id"))
+    }
+    expected_players = {
+        str(player.get("player_id") or "").strip(): deepcopy(player)
+        for player in data.get("players", [])
+        if isinstance(player, dict)
+        and str(player.get("player_id") or "").strip() in participant_player_ids
+    }
+    participant_team_ids = {
+        str(participant.get("team_id") or "").strip()
+        for match in expected_matches.values()
+        for participant in match.get("players", [])
+        if isinstance(participant, dict)
+        and str(participant.get("team_id") or "").strip()
+    }
+    expected_teams = {
+        str(team.get("team_id") or "").strip(): deepcopy(team)
+        for team in data.get("teams", [])
+        if isinstance(team, dict)
+        and str(team.get("team_id") or "").strip() in participant_team_ids
+    }
+    return {
+        "match_ids": sorted(expected_match_ids),
+        "matches": expected_matches,
+        "players": expected_players,
+        "teams": expected_teams,
+    }
+
+
+def validate_completed_match_import(
+    data: dict[str, object],
+    match_ids: list[str],
+    competition_name: str = "",
+    season_name: str = "",
+) -> list[str]:
+    """Verify that persisted matches can resolve every profile player by scope."""
+
+    normalized_match_ids = [
+        str(match_id or "").strip()
+        for match_id in match_ids
+        if str(match_id or "").strip()
+    ]
+    if not normalized_match_ids:
+        return ["比赛批次缺少可确认的比赛编号"]
+    match_by_id = {
+        str(match.get("match_id") or "").strip(): match
+        for match in data.get("matches", [])
+        if isinstance(match, dict) and str(match.get("match_id") or "").strip()
+    }
+    player_by_id = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if isinstance(player, dict) and str(player.get("player_id") or "").strip()
+    }
+    team_by_id = {
+        str(team.get("team_id") or "").strip(): team
+        for team in data.get("teams", [])
+        if isinstance(team, dict) and str(team.get("team_id") or "").strip()
+    }
+    errors: list[str] = []
+    for match_id in normalized_match_ids:
+        match = match_by_id.get(match_id)
+        if not match:
+            errors.append(f"比赛 {match_id} 尚未写入数据库")
+            continue
+        match_competition = get_match_competition_name(match)
+        match_season = str(match.get("season") or "").strip()
+        if competition_name and match_competition != competition_name:
+            errors.append(f"比赛 {match_id} 的赛事范围不一致")
+            continue
+        if season_name and match_season != season_name:
+            errors.append(f"比赛 {match_id} 的赛季范围不一致")
+            continue
+        for participant in match.get("players", []):
+            if not isinstance(participant, dict):
+                continue
+            player_id = str(participant.get("player_id") or "").strip()
+            if not player_id or is_non_profile_player_id(player_id):
+                continue
+            player = player_by_id.get(player_id)
+            if not player:
+                errors.append(f"比赛 {match_id} 的选手 {player_id} 尚未创建")
+                continue
+            team_id = str(participant.get("team_id") or "").strip()
+            if str(player.get("team_id") or "").strip() != team_id:
+                errors.append(f"比赛 {match_id} 的选手 {player_id} 所属战队尚未确认")
+                continue
+            team = team_by_id.get(team_id) if team_id else None
+            if team_id and not team:
+                errors.append(f"比赛 {match_id} 的战队 {team_id} 尚未创建")
+                continue
+            if team and player_id not in {
+                str(member_id or "").strip() for member_id in team.get("members", [])
+            }:
+                errors.append(f"比赛 {match_id} 的选手 {player_id} 尚未加入战队")
+                continue
+            display_name = str(player.get("display_name") or "").strip()
+            team_name = str((team or {}).get("name") or "").strip()
+            resolved_player = legacy.find_player_by_name_in_scope(
+                data,
+                match_competition,
+                match_season,
+                display_name,
+                team_name,
+            )
+            if not resolved_player or str(resolved_player.get("player_id") or "") != player_id:
+                errors.append(f"比赛 {match_id} 的选手 {display_name or player_id} 尚不能被维度数据匹配")
+    return errors
+
+
+def validate_match_import_confirmation(
+    data: dict[str, object],
+    expectation: dict[str, object],
+) -> list[str]:
+    expected_matches = expectation.get("matches") or {}
+    persisted_match_by_id = {
+        str(match.get("match_id") or "").strip(): match
+        for match in data.get("matches", [])
+        if isinstance(match, dict) and str(match.get("match_id") or "").strip()
+    }
+    errors: list[str] = []
+    for match_id, expected_match in expected_matches.items():
+        persisted_match = persisted_match_by_id.get(match_id)
+        if not persisted_match:
+            continue
+        expected_participants = sorted(
+            (
+                str(participant.get("player_id") or "").strip(),
+                str(participant.get("team_id") or "").strip(),
+            )
+            for participant in expected_match.get("players", [])
+            if isinstance(participant, dict)
+        )
+        persisted_participants = sorted(
+            (
+                str(participant.get("player_id") or "").strip(),
+                str(participant.get("team_id") or "").strip(),
+            )
+            for participant in persisted_match.get("players", [])
+            if isinstance(participant, dict)
+        )
+        if expected_participants != persisted_participants:
+            errors.append(f"比赛 {match_id} 的参赛选手尚未完整写入")
+    expected_players = expectation.get("players") or {}
+    persisted_player_by_id = {
+        str(player.get("player_id") or "").strip(): player
+        for player in data.get("players", [])
+        if isinstance(player, dict) and str(player.get("player_id") or "").strip()
+    }
+    for player_id, expected_player in expected_players.items():
+        persisted_player = persisted_player_by_id.get(player_id)
+        if not persisted_player:
+            continue
+        if (
+            str(persisted_player.get("display_name") or "").strip()
+            != str(expected_player.get("display_name") or "").strip()
+            or str(persisted_player.get("team_id") or "").strip()
+            != str(expected_player.get("team_id") or "").strip()
+        ):
+            errors.append(f"选手 {player_id} 的档案尚未完整写入")
+    errors.extend(
+        validate_completed_match_import(
+            data,
+            list(expectation.get("match_ids") or []),
+        )
+    )
+    return list(dict.fromkeys(errors))
+
+
+def wait_for_match_import_confirmation(
+    expectation: dict[str, object],
+    *,
+    attempts: int = MATCH_IMPORT_CONFIRMATION_ATTEMPTS,
+    retry_seconds: float = MATCH_IMPORT_CONFIRMATION_RETRY_SECONDS,
+) -> tuple[dict[str, object] | None, list[str]]:
+    last_errors = ["比赛和选手尚未完成持久化确认"]
+    for attempt in range(max(1, attempts)):
+        try:
+            invalidate_validated_data_cache()
+            confirmed_data = load_validated_data()
+            last_errors = validate_match_import_confirmation(confirmed_data, expectation)
+            if not last_errors:
+                return confirmed_data, []
+        except Exception as exc:
+            last_errors = [f"重新读取数据库失败：{exc}"]
+        if attempt + 1 < max(1, attempts) and retry_seconds > 0:
+            time.sleep(retry_seconds)
+    return None, last_errors
+
+
 def run_match_excel_import_job(
     ctx: RequestContext,
     upload: UploadedFile,
@@ -5188,13 +5405,36 @@ def run_match_excel_import_job(
         ]
         normalized_matches, _ = canonicalize_match_ids(sanitized_next_matches)
         data["matches"] = normalized_matches
-        created_player_ids = ensure_placeholder_players_for_matches(data, normalized_matches)
+        ensure_placeholder_players_for_matches(data, normalized_matches)
+        before_player_ids = {
+            str(player.get("player_id") or "").strip()
+            for player in before_players
+            if str(player.get("player_id") or "").strip()
+        }
+        created_player_ids = sorted(
+            {
+                str(player.get("player_id") or "").strip()
+                for player in data.get("players", [])
+                if str(player.get("player_id") or "").strip()
+            }
+            - before_player_ids
+        )
         created_player_id_set = set(created_player_ids)
         for player in data.get("players", []):
             if str(player.get("player_id") or "") in created_player_id_set:
                 player["profile_status"] = "auto_created"
                 player["created_source"] = "excel_import"
         users = ensure_placeholder_users_for_player_ids(data, users, created_player_ids)
+        matched_match_ids = [
+            str(match_id or "").strip()
+            for match_id in import_result_metadata.get("matched_match_ids", [])
+            if str(match_id or "").strip()
+        ]
+        confirmation_expectation = build_match_import_confirmation_expectation(
+            data,
+            normalized_matches,
+            matched_match_ids,
+        )
         errors = legacy.save_imported_matches_state(
             data,
             users,
@@ -5216,6 +5456,27 @@ def run_match_excel_import_job(
                 ctx=ctx,
             )
             return
+        confirmed_data, confirmation_errors = wait_for_match_import_confirmation(
+            confirmation_expectation
+        )
+        if confirmation_errors or confirmed_data is None:
+            update_import_batch(
+                import_batch_id,
+                status="failed",
+                summary=(
+                    "match 已保存，但比赛和新选手的持久化确认未完成："
+                    + "；".join(confirmation_errors[:3])
+                    + "。dimension 未上传，请重试 match。"
+                ),
+                metadata={
+                    "dimension_ready": False,
+                    "confirmation_errors": confirmation_errors[:10],
+                    "matched_match_ids": matched_match_ids[:100],
+                },
+                ctx=ctx,
+            )
+            return
+        confirmed_revision = confirmed_data.get("_data_revision")
         update_import_batch(
             import_batch_id,
             status="succeeded",
@@ -5226,6 +5487,9 @@ def run_match_excel_import_job(
                 "created_players": len(created_player_ids),
                 "created_match_ids": created_match_ids[:100],
                 "updated_match_ids": updated_match_ids[:100],
+                "dimension_ready": True,
+                "match_confirmed_at": ctx.now_label,
+                "match_confirmed_revision": confirmed_revision,
                 **import_result_metadata,
             },
             ctx=ctx,

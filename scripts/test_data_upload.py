@@ -299,6 +299,8 @@ class DataUploadTokenTests(unittest.TestCase):
                 "upload_token_id": record["token_id"],
                 "competition_name": "赛事A",
                 "season_name": "S2",
+                "dimension_ready": True,
+                "matched_match_ids": ["a-s2-260817-01"],
             },
         }
 
@@ -307,7 +309,7 @@ class DataUploadTokenTests(unittest.TestCase):
             patch.object(data_upload.legacy, "load_import_batches", return_value=[]),
         ):
             rejected = json.loads(data_upload.handle_api(ctx, lambda _status, _headers: None)[0])
-        self.assertIn("必须先完成", rejected["results"]["dimension"]["message"])
+        self.assertIn("必须等待", rejected["results"]["dimension"]["message"])
 
         with (
             patch.object(matches_feature, "validate_excel_upload", return_value=""),
@@ -320,6 +322,215 @@ class DataUploadTokenTests(unittest.TestCase):
             accepted = json.loads(data_upload.handle_api(ctx, lambda _status, _headers: None)[0])
         self.assertEqual(accepted["results"]["dimension"]["status"], "succeeded")
         save_dimension.assert_called_once()
+
+    def test_dimension_rejects_succeeded_batch_before_player_confirmation(self):
+        raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["dimension-before-confirmation"],
+            "match_batch_id": ["imp_unconfirmed"],
+        }
+        ctx.files = {
+            "dimension_file": [
+                web_app.UploadedFile(
+                    "dimension.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    b"fake",
+                )
+            ]
+        }
+        batch = {
+            "batch_id": "imp_unconfirmed",
+            "status": "succeeded",
+            "metadata": {
+                "upload_token_id": record["token_id"],
+                "competition_name": "赛事A",
+                "season_name": "S2",
+                "dimension_ready": False,
+                "matched_match_ids": ["a-s2-260817-01"],
+            },
+        }
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(data_upload.legacy, "load_import_batches", return_value=[batch]),
+            patch.object(matches_feature, "import_dimension_stats_from_excel") as importer,
+            patch.object(data_upload, "save_season_dimension_stats") as save_dimension,
+        ):
+            response_status = []
+            payload = json.loads(
+                data_upload.handle_api(
+                    ctx,
+                    lambda status, _headers: response_status.append(status),
+                )[0]
+            )
+
+        self.assertEqual(response_status, ["409 Conflict"])
+        self.assertIn("完成比赛和新选手确认", payload["results"]["dimension"]["message"])
+        importer.assert_not_called()
+        save_dimension.assert_not_called()
+
+    def test_dimension_reloads_confirmed_players_before_parsing_and_uses_revision(self):
+        raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["dimension-fresh-confirmed-data"],
+            "match_batch_id": ["imp_confirmed"],
+        }
+        ctx.files = {
+            "dimension_file": [
+                web_app.UploadedFile(
+                    "dimension.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    b"fake",
+                )
+            ]
+        }
+        stale_data = {
+            **self.data,
+            "players": [],
+            "teams": [],
+            "_data_revision": 7,
+        }
+        fresh_data = {
+            "matches": [
+                {
+                    "match_id": "a-s2-260817-01",
+                    "competition_name": "赛事A",
+                    "season": "S2",
+                    "played_on": "2026-08-17",
+                    "round": 1,
+                    "game_no": 1,
+                    "stage": "regular_season",
+                    "table_label": "1号房",
+                    "players": [{"player_id": "p-new", "team_id": "team-a"}],
+                }
+            ],
+            "players": [
+                {
+                    "player_id": "p-new",
+                    "display_name": "新选手",
+                    "team_id": "team-a",
+                }
+            ],
+            "teams": [
+                {
+                    "team_id": "team-a",
+                    "name": "战队A",
+                    "competition_name": "赛事A",
+                    "season_name": "S2",
+                    "members": ["p-new"],
+                }
+            ],
+            "_data_revision": 8,
+        }
+        batch = {
+            "batch_id": "imp_confirmed",
+            "status": "succeeded",
+            "metadata": {
+                "upload_token_id": record["token_id"],
+                "competition_name": "赛事A",
+                "season_name": "S2",
+                "dimension_ready": True,
+                "matched_match_ids": ["a-s2-260817-01"],
+            },
+        }
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(data_upload.legacy, "load_import_batches", return_value=[batch]),
+            patch.object(
+                data_upload.legacy,
+                "load_validated_data",
+                side_effect=[stale_data, fresh_data],
+            ),
+            patch.object(
+                matches_feature,
+                "import_dimension_stats_from_excel",
+                return_value=([{"player_id": "p-new"}], [], "dimension 完成"),
+            ) as importer,
+            patch.object(data_upload, "save_season_dimension_stats") as save_dimension,
+            patch.object(data_upload.legacy, "invalidate_validated_data_cache"),
+            patch.object(data_upload.legacy, "audit_action"),
+        ):
+            payload = json.loads(
+                data_upload.handle_api(ctx, lambda _status, _headers: None)[0]
+            )
+
+        self.assertEqual(payload["results"]["dimension"]["status"], "succeeded")
+        self.assertIs(importer.call_args.args[1], fresh_data)
+        save_dimension.assert_called_once_with(
+            [{"player_id": "p-new"}],
+            [],
+            expected_revision=8,
+        )
+
+    def test_dimension_revision_conflict_returns_409_without_success(self):
+        raw, record = data_upload.create_token(self.user, "全部", "90", "all", [])
+        ctx = self.context(raw)
+        ctx.method = "POST"
+        ctx.path = "/api/data-upload"
+        ctx.form = {
+            "competition_name": ["赛事A"],
+            "season_name": ["S2"],
+            "request_id": ["dimension-revision-conflict"],
+            "match_batch_id": ["imp_conflict"],
+        }
+        ctx.files = {
+            "dimension_file": [
+                web_app.UploadedFile(
+                    "dimension.xlsx",
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    b"fake",
+                )
+            ]
+        }
+        batch = {
+            "batch_id": "imp_conflict",
+            "status": "succeeded",
+            "metadata": {
+                "upload_token_id": record["token_id"],
+                "competition_name": "赛事A",
+                "season_name": "S2",
+                "dimension_ready": True,
+                "matched_match_ids": ["a-s2-260817-01"],
+            },
+        }
+
+        with (
+            patch.object(matches_feature, "validate_excel_upload", return_value=""),
+            patch.object(data_upload.legacy, "load_import_batches", return_value=[batch]),
+            patch.object(
+                matches_feature,
+                "import_dimension_stats_from_excel",
+                return_value=([{"player_id": "p1"}], [], "dimension 完成"),
+            ),
+            patch.object(
+                data_upload,
+                "save_season_dimension_stats",
+                side_effect=data_upload.RepositoryConflictError("版本变化"),
+            ),
+            patch.object(data_upload.legacy, "invalidate_validated_data_cache"),
+        ):
+            response_status = []
+            payload = json.loads(
+                data_upload.handle_api(
+                    ctx,
+                    lambda status, _headers: response_status.append(status),
+                )[0]
+            )
+
+        self.assertEqual(response_status, ["409 Conflict"])
+        self.assertEqual(payload["results"]["dimension"]["status"], "failed")
+        self.assertIn("本次未写入", payload["results"]["dimension"]["message"])
 
     def test_player_photo_upload_is_preflighted_and_queued_for_owned_target(self):
         raw, record = data_upload.create_token(self.user, "头像匹配器", "90", "all", [])
@@ -471,6 +682,215 @@ class DataUploadTokenTests(unittest.TestCase):
 
         self.assertEqual(response_status, ["403 Forbidden"])
         self.assertIn("头像上传权限", json.loads(body[0])["error"])
+
+
+class MatchImportPersistenceConfirmationTests(unittest.TestCase):
+    def confirmed_data(self):
+        return {
+            "matches": [
+                {
+                    "match_id": "match-1",
+                    "competition_name": "赛事A",
+                    "season": "S2",
+                    "players": [
+                        {"player_id": "player-new", "team_id": "team-a"},
+                        {"player_id": "NPC", "team_id": "team-a"},
+                    ],
+                }
+            ],
+            "players": [
+                {
+                    "player_id": "player-new",
+                    "display_name": "新选手",
+                    "team_id": "team-a",
+                }
+            ],
+            "teams": [
+                {
+                    "team_id": "team-a",
+                    "name": "战队A",
+                    "competition_name": "赛事A",
+                    "season_name": "S2",
+                    "members": ["player-new"],
+                }
+            ],
+        }
+
+    def test_completed_match_import_requires_persisted_player(self):
+        data = self.confirmed_data()
+        data["players"] = []
+
+        errors = matches_feature.validate_completed_match_import(
+            data,
+            ["match-1"],
+            "赛事A",
+            "S2",
+        )
+
+        self.assertTrue(any("尚未创建" in error for error in errors))
+
+    def test_completed_match_import_accepts_resolvable_player_and_team(self):
+        errors = matches_feature.validate_completed_match_import(
+            self.confirmed_data(),
+            ["match-1"],
+            "赛事A",
+            "S2",
+        )
+
+        self.assertEqual(errors, [])
+
+    def test_match_job_waits_for_persistence_confirmation_before_succeeding(self):
+        ctx = web_app.RequestContext(
+            method="POST",
+            path="/api/data-upload",
+            query={},
+            form={},
+            files={},
+            current_user={"username": "manager", "role": "admin", "active": True},
+            now_label="2026-08-21 12:00:00",
+        )
+        source_data = {
+            "_data_revision": 7,
+            "matches": [
+                {
+                    "match_id": "match-1",
+                    "competition_name": "赛事A",
+                    "season": "S2",
+                    "players": [],
+                }
+            ],
+            "players": [],
+            "teams": [
+                {
+                    "team_id": "team-a",
+                    "name": "战队A",
+                    "competition_name": "赛事A",
+                    "season_name": "S2",
+                    "members": [],
+                }
+            ],
+        }
+        imported_player = {
+            "player_id": "player-new",
+            "display_name": "新选手",
+            "team_id": "team-a",
+        }
+        imported_match = {
+            "match_id": "match-1",
+            "competition_name": "赛事A",
+            "season": "S2",
+            "players": [{"player_id": "player-new", "team_id": "team-a"}],
+        }
+        confirmed_data = self.confirmed_data()
+        confirmed_data["_data_revision"] = 9
+        events = []
+
+        def import_match(_ctx, data, _upload, _label, result_metadata=None):
+            data["players"].append(imported_player)
+            data["teams"][0]["members"].append("player-new")
+            result_metadata["matched_match_ids"] = ["match-1"]
+            return [imported_match], "match 完成"
+
+        def record_update(_batch_id, **kwargs):
+            events.append(("status", kwargs["status"], kwargs.get("metadata") or {}))
+
+        def confirm_persistence(_expectation):
+            events.append(("confirm", "", {}))
+            return confirmed_data, []
+
+        upload = web_app.UploadedFile(
+            "match.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            b"fake",
+        )
+        with (
+            patch.object(matches_feature, "load_validated_data", return_value=source_data),
+            patch.object(matches_feature, "import_matches_from_excel", side_effect=import_match),
+            patch.object(matches_feature, "canonicalize_match_ids", side_effect=lambda rows: (rows, "match-1")),
+            patch.object(matches_feature, "load_users", return_value=[]),
+            patch.object(matches_feature, "ensure_placeholder_players_for_matches", return_value=[]),
+            patch.object(matches_feature, "ensure_placeholder_users_for_player_ids", return_value=[]),
+            patch.object(matches_feature.legacy, "save_imported_matches_state", return_value=[]),
+            patch.object(
+                matches_feature,
+                "wait_for_match_import_confirmation",
+                side_effect=confirm_persistence,
+            ),
+            patch.object(matches_feature, "update_import_batch", side_effect=record_update),
+            patch.object(matches_feature, "audit_action"),
+        ):
+            matches_feature.run_match_excel_import_job(
+                ctx,
+                upload,
+                "赛事A / S2",
+                "imp-confirm",
+            )
+
+        self.assertEqual(events[0][0], "confirm")
+        self.assertEqual(events[1][0:2], ("status", "succeeded"))
+        self.assertTrue(events[1][2]["dimension_ready"])
+        self.assertEqual(events[1][2]["match_confirmed_revision"], 9)
+        self.assertEqual(events[1][2]["created_players"], 1)
+
+    def test_match_job_does_not_succeed_when_confirmation_fails(self):
+        ctx = web_app.RequestContext(
+            method="POST",
+            path="/api/data-upload",
+            query={},
+            form={},
+            files={},
+            current_user={"username": "manager", "role": "admin", "active": True},
+            now_label="2026-08-21 12:00:00",
+        )
+        source_data = {
+            "matches": [{"match_id": "match-1", "competition_name": "赛事A", "season": "S2", "players": []}],
+            "players": [],
+            "teams": [],
+        }
+        updates = []
+        upload = web_app.UploadedFile(
+            "match.xlsx",
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            b"fake",
+        )
+        with (
+            patch.object(matches_feature, "load_validated_data", return_value=source_data),
+            patch.object(
+                matches_feature,
+                "import_matches_from_excel",
+                side_effect=lambda _ctx, _data, _upload, _label, result_metadata=None: (
+                    result_metadata.update({"matched_match_ids": ["match-1"]})
+                    or source_data["matches"],
+                    "match 完成",
+                ),
+            ),
+            patch.object(matches_feature, "canonicalize_match_ids", side_effect=lambda rows: (rows, "match-1")),
+            patch.object(matches_feature, "load_users", return_value=[]),
+            patch.object(matches_feature, "ensure_placeholder_players_for_matches", return_value=[]),
+            patch.object(matches_feature, "ensure_placeholder_users_for_player_ids", return_value=[]),
+            patch.object(matches_feature.legacy, "save_imported_matches_state", return_value=[]),
+            patch.object(
+                matches_feature,
+                "wait_for_match_import_confirmation",
+                return_value=(None, ["选手 player-new 尚未创建"]),
+            ),
+            patch.object(
+                matches_feature,
+                "update_import_batch",
+                side_effect=lambda _batch_id, **kwargs: updates.append(kwargs),
+            ),
+            patch.object(matches_feature, "audit_action"),
+        ):
+            matches_feature.run_match_excel_import_job(
+                ctx,
+                upload,
+                "赛事A / S2",
+                "imp-unconfirmed",
+            )
+
+        self.assertEqual([item["status"] for item in updates], ["failed"])
+        self.assertFalse(updates[0]["metadata"]["dimension_ready"])
+        self.assertIn("dimension 未上传", updates[0]["summary"])
 
 
 if __name__ == "__main__":

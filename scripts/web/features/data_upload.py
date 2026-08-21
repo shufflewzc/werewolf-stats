@@ -10,7 +10,11 @@ from typing import Any
 
 import web_app as legacy
 from import_preflight import PreflightError, confirm_preflight
-from sqlite_store import mutate_json_meta_value, save_season_dimension_stats
+from sqlite_store import (
+    RepositoryConflictError,
+    mutate_json_meta_value,
+    save_season_dimension_stats,
+)
 
 
 TOKEN_META_KEY = "data_upload_tokens_v1"
@@ -646,9 +650,63 @@ def handle_api(ctx, start_response):
             and batch_metadata.get("upload_token_id") == record.get("token_id")
             and batch_metadata.get("competition_name") == competition
             and batch_metadata.get("season_name") == season
+            and (
+                "dimension_ready" not in batch_metadata
+                or batch_metadata.get("dimension_ready") is True
+            )
         )
         if not valid_batch:
-            message = "dimension 上传前必须先完成同一令牌、同一赛季的 match 导入。"
+            message = (
+                "dimension 上传前必须等待同一令牌、同一赛季的 match 完成比赛和新选手确认。"
+            )
+            return _json(start_response, "409 Conflict", {
+                "status": "failed",
+                "results": {"dimension": {"status": "failed", "message": message}},
+            })
+        legacy.invalidate_validated_data_cache()
+        data = legacy.load_validated_data()
+        refreshed_targets = [
+            item
+            for item in available_targets(user, data)
+            if target_allowed(
+                record,
+                item["competition_name"],
+                item["season_name"],
+            )
+        ]
+        if not any(
+            item["competition_name"] == competition
+            and item["season_name"] == season
+            for item in refreshed_targets
+        ):
+            return _json(
+                start_response,
+                "403 Forbidden",
+                {"error": "match 完成后账号已失去该赛事赛季的 dimension 上传权限。"},
+            )
+        matched_match_ids = [
+            str(match_id or "").strip()
+            for match_id in (
+                batch_metadata.get("matched_match_ids")
+                or [
+                    *(batch_metadata.get("created_match_ids") or []),
+                    *(batch_metadata.get("updated_match_ids") or []),
+                ]
+            )
+            if str(match_id or "").strip()
+        ]
+        confirmation_errors = matches_feature.validate_completed_match_import(
+            data,
+            matched_match_ids,
+            competition,
+            season,
+        )
+        if confirmation_errors:
+            message = (
+                "match 尚未完成比赛和新选手确认："
+                + "；".join(confirmation_errors[:3])
+                + "。dimension 未上传，请重新上传 match 后重试。"
+            )
             return _json(start_response, "409 Conflict", {
                 "status": "failed",
                 "results": {"dimension": {"status": "failed", "message": message}},
@@ -709,9 +767,27 @@ def handle_api(ctx, start_response):
 
     if dimension_upload:
         try:
-            save_season_dimension_stats(next_player_rows, next_team_rows)
+            expected_revision = data.get("_data_revision")
+            save_season_dimension_stats(
+                next_player_rows,
+                next_team_rows,
+                expected_revision=(
+                    int(expected_revision)
+                    if expected_revision is not None
+                    else None
+                ),
+            )
             legacy.invalidate_validated_data_cache()
             results["dimension"] = {"status": "succeeded", "message": dimension_message}
+        except RepositoryConflictError as exc:
+            message = (
+                "dimension 校验后服务器数据发生变化，本次未写入，请重新上传："
+                + str(exc)
+            )
+            return _json(start_response, "409 Conflict", {
+                "status": "failed",
+                "results": {"dimension": {"status": "failed", "message": message}},
+            })
         except Exception as exc:
             results["dimension"] = {"status": "failed", "message": f"维度数据保存失败：{exc}"}
 

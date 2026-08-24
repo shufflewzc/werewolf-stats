@@ -89,6 +89,26 @@ AI 能力目前定位为**单模型内容生成辅助**：它读取系统已经�
 python3 scripts/migrate_json_to_sqlite.py
 ```
 
+### 导出赛事赛季到 Business 版
+
+历史赛事使用严格白名单 ZIP 迁移。导出包只包含赛事目录、战队、选手、比赛、
+赛季维度统计和被引用的上传图片，不包含账号、OpenID、会话、门派、关注或日志。
+
+```bash
+# 查看可以导出的赛事/赛季
+python3 scripts/export_public_dataset.py --list-scopes
+
+# 导出一个或多个精确赛季；--scope 可以重复
+python3 scripts/export_public_dataset.py /tmp/pilot.zip \
+  --scope "赛事名称" "赛季名称"
+
+# 显式导出全部赛季
+python3 scripts/export_public_dataset.py /tmp/all-seasons.zip --all-scopes
+```
+
+导出会校验战队、选手、比赛参与者、维度数据和图片引用闭包。上传图片缺失、
+引用跨赛季或出现悬空 ID 时会拒绝生成正式迁移包。
+
 迁移完成后，正式服务应设置 `DATABASE_URL` 和 `ENABLE_POSTGRES_WRITES=1`，以 PostgreSQL 作为唯一生产主库。
 
 ---

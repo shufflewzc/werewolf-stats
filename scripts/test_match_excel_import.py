@@ -9,6 +9,7 @@ from generate_match_result_excel_template import (
 )
 from web.features import matches as matches_feature
 from web_app import RequestContext, UploadedFile
+from validate_data import validate_matches
 
 
 RECORD_COLUMNS = [
@@ -94,6 +95,22 @@ class MatchExcelImportTests(unittest.TestCase):
             current_user={"username": "admin", "role": "admin"},
             now_label="2026-08-17 12:00:00 中国时间",
         )
+
+    def test_batch_create_placeholders_match_repository_schema(self):
+        matches = matches_feature.batch_create_matches(
+            "测试赛事",
+            "测试赛季",
+            "regular_season",
+            "2026-08-27",
+            "2026-08-27",
+            1,
+            3,
+            "1号房",
+        )
+
+        self.assertEqual(3, len(matches))
+        normalized_matches, _ = matches_feature.canonicalize_match_ids(matches)
+        self.assertEqual([], validate_matches(normalized_matches, set(), set()))
 
     def import_rows(
         self,

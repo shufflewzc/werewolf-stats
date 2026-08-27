@@ -313,7 +313,7 @@ def build_placeholder_match(
     match["scapegoat_player_name"] = ""
     match["notes"] = "批量创建的待补录比赛，请稍后完善比赛详情。"
     match["players"] = []
-    return match
+    return strip_excel_import_helper_fields(match)
 
 
 def ensure_match_form_players(current: dict[str, object]) -> dict[str, object]:

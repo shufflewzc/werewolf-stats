@@ -352,7 +352,7 @@ class PlayerScopeContractTests(unittest.TestCase):
             [("player-s2", "8.00", 1)],
         )
 
-    def test_competitions_api_keeps_total_board_and_adds_average_board(self) -> None:
+    def test_competitions_api_filters_average_board_below_nine_games(self) -> None:
         payload = competitions.build_competitions_api_payload(
             self.context(
                 "/api/competitions",
@@ -362,14 +362,8 @@ class PlayerScopeContractTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["view"], "detail")
-        self.assertEqual(
-            payload["leaderboards"]["players"],
-            payload["leaderboards"]["players_average"],
-        )
-        self.assertEqual(
-            payload["leaderboards"]["players_average"][0]["average_points"],
-            "75.00",
-        )
+        self.assertEqual(1, len(payload["leaderboards"]["players"]))
+        self.assertEqual([], payload["leaderboards"]["players_average"])
 
     def test_legacy_web_pages_render_total_and_average_controls(self) -> None:
         competition_html = competitions.get_competitions_page(
@@ -408,35 +402,31 @@ class PlayerScopeContractTests(unittest.TestCase):
                 _team("team-average", "场均更高队", ENDED_SEASON, "player-average"),
             ]
         )
-        first_win = _match(
-            "match-win-rate-1",
-            ENDED_SEASON,
-            "player-win-rate",
-            "team-win-rate",
-            5,
-            "2025-08-02",
-        )
-        second_win = _match(
-            "match-win-rate-2",
-            ENDED_SEASON,
-            "player-win-rate",
-            "team-win-rate",
-            5,
-            "2025-08-03",
-        )
-        high_average_loss = _match(
-            "match-average-1",
-            ENDED_SEASON,
-            "player-average",
-            "team-average",
-            10,
-            "2025-08-04",
-        )
-        high_average_loss["winning_camp"] = "werewolves"
-        high_average_loss["players"][0]["result"] = "loss"
-        self.data["matches"].extend(
-            [first_win, second_win, high_average_loss]
-        )
+        win_rate_matches = [
+            _match(
+                f"match-win-rate-{index}",
+                ENDED_SEASON,
+                "player-win-rate",
+                "team-win-rate",
+                1,
+                f"2025-08-{index + 1:02d}",
+            )
+            for index in range(1, 11)
+        ]
+        high_average_losses = []
+        for index in range(1, 10):
+            match = _match(
+                f"match-average-{index}",
+                ENDED_SEASON,
+                "player-average",
+                "team-average",
+                2 if index == 1 else 1,
+                f"2025-09-{index:02d}",
+            )
+            match["winning_camp"] = "werewolves"
+            match["players"][0]["result"] = "loss"
+            high_average_losses.append(match)
+        self.data["matches"].extend([*win_rate_matches, *high_average_losses])
 
         ctx = self.context(
             "/api/players",
@@ -476,8 +466,8 @@ class PlayerScopeContractTests(unittest.TestCase):
         self.assertEqual(list_rows["player-average"]["points_total"], "10.00")
         self.assertEqual(list_rows["player-win-rate"]["win_rate"], "100.0%")
         self.assertEqual(list_rows["player-average"]["win_rate"], "0.0%")
-        self.assertEqual(list_rows["player-win-rate"]["average_points"], "5.00")
-        self.assertEqual(list_rows["player-average"]["average_points"], "10.00")
+        self.assertEqual(list_rows["player-win-rate"]["average_points"], "1.00")
+        self.assertEqual(list_rows["player-average"]["average_points"], "1.11")
         self.assertLess(
             list_rows["player-win-rate"]["rank"],
             list_rows["player-average"]["rank"],
@@ -490,8 +480,8 @@ class PlayerScopeContractTests(unittest.TestCase):
             list_rows["player-average"]["rank"],
             dashboard_rows["player-average"]["rank"],
         )
-        self.assertEqual(dashboard_rows["player-win-rate"]["average_points"], "5.00")
-        self.assertEqual(dashboard_rows["player-average"]["average_points"], "10.00")
+        self.assertEqual(dashboard_rows["player-win-rate"]["average_points"], "1.00")
+        self.assertEqual(dashboard_rows["player-average"]["average_points"], "1.11")
         self.assertLess(
             dashboard_average_rows["player-average"]["rank"],
             dashboard_average_rows["player-win-rate"]["rank"],

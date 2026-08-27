@@ -46,6 +46,7 @@ STANCE_TO_CHINESE = {
     "third_party": "站第三方",
 }
 NON_PROFILE_PLAYER_IDS = {"NPC"}
+PLAYER_AVERAGE_MIN_GAMES = 9
 
 
 def is_non_profile_player_id(value: Any) -> bool:
@@ -302,8 +303,12 @@ def build_player_rows(
 
 
 def build_player_average_rows(player_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Return an independently ranked average-points board for active players."""
-    leaderboard = [dict(row) for row in player_rows if row["games_played"] > 0]
+    """Return the average-points board for players with at least nine games."""
+    leaderboard = [
+        dict(row)
+        for row in player_rows
+        if row["games_played"] >= PLAYER_AVERAGE_MIN_GAMES
+    ]
     leaderboard.sort(
         key=lambda item: (
             -item["average_points"],

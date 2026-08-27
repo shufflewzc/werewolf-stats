@@ -484,6 +484,14 @@ select {
   display: none;
 }
 
+.competitions-player-tabs {
+  margin-top: 0;
+}
+
+.competitions-player-panel[hidden] {
+  display: none;
+}
+
 .competitions-table {
   width: 100%;
   border-collapse: collapse;

@@ -352,6 +352,49 @@ class PlayerScopeContractTests(unittest.TestCase):
             [("player-s2", "8.00", 1)],
         )
 
+    def test_competitions_api_keeps_total_board_and_adds_average_board(self) -> None:
+        payload = competitions.build_competitions_api_payload(
+            self.context(
+                "/api/competitions",
+                competition=COMPETITION,
+                season=ENDED_SEASON,
+            )
+        )
+
+        self.assertEqual(payload["view"], "detail")
+        self.assertEqual(
+            payload["leaderboards"]["players"],
+            payload["leaderboards"]["players_average"],
+        )
+        self.assertEqual(
+            payload["leaderboards"]["players_average"][0]["average_points"],
+            "75.00",
+        )
+
+    def test_legacy_web_pages_render_total_and_average_controls(self) -> None:
+        competition_html = competitions.get_competitions_page(
+            self.context(
+                "/competitions/legacy",
+                competition=COMPETITION,
+                season=ENDED_SEASON,
+            )
+        )
+        self.assertIn('data-season-player-metric="total"', competition_html)
+        self.assertIn('data-season-player-metric="average"', competition_html)
+        self.assertIn('data-season-player-panel="average" hidden', competition_html)
+
+        dashboard_html = web_app.get_dashboard_page(
+            self.context(
+                "/dashboard/legacy",
+                competition=COMPETITION,
+                season=ENDED_SEASON,
+                board="player",
+                player_metric="average",
+            )
+        )
+        self.assertIn('<option value="average" selected>场均分榜</option>', dashboard_html)
+        self.assertIn("全赛段 · 个人场均分榜", dashboard_html)
+
     def test_equal_points_keep_win_rate_ranking_before_average_points(self) -> None:
         self.data["players"].extend(
             [
@@ -424,6 +467,11 @@ class PlayerScopeContractTests(unittest.TestCase):
             for row in dashboard_payload["leaderboards"]["players"]
             if row["player_id"] in {"player-win-rate", "player-average"}
         }
+        dashboard_average_rows = {
+            row["player_id"]: row
+            for row in dashboard_payload["leaderboards"]["players_average"]
+            if row["player_id"] in {"player-win-rate", "player-average"}
+        }
         self.assertEqual(list_rows["player-win-rate"]["points_total"], "10.00")
         self.assertEqual(list_rows["player-average"]["points_total"], "10.00")
         self.assertEqual(list_rows["player-win-rate"]["win_rate"], "100.0%")
@@ -442,6 +490,22 @@ class PlayerScopeContractTests(unittest.TestCase):
             list_rows["player-average"]["rank"],
             dashboard_rows["player-average"]["rank"],
         )
+        self.assertEqual(dashboard_rows["player-win-rate"]["average_points"], "5.00")
+        self.assertEqual(dashboard_rows["player-average"]["average_points"], "10.00")
+        self.assertLess(
+            dashboard_average_rows["player-average"]["rank"],
+            dashboard_average_rows["player-win-rate"]["rank"],
+        )
+        self.assertEqual(
+            dashboard_payload["top_players"],
+            dashboard_payload["leaderboards"]["players"][:5],
+        )
+        self.assertEqual(
+            dashboard_payload["top_players_average"],
+            dashboard_payload["leaderboards"]["players_average"][:5],
+        )
+        regular_season_board = dashboard_payload["leaderboards_by_stage"]["regular_season"]
+        self.assertIn("players_average", regular_season_board)
         for player_id in ("player-win-rate", "player-average"):
             detail_status, detail_payload = self.call(
                 web_app.handle_player_api,

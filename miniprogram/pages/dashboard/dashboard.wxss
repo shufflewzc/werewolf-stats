@@ -369,6 +369,33 @@
   background: #111827;
 }
 
+.player-metric-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8rpx;
+  margin-bottom: 16rpx;
+  padding: 6rpx;
+  border: 1rpx solid #d8e0eb;
+  border-radius: 12rpx;
+  background: #edf1f6;
+}
+
+.player-metric-tab {
+  height: 56rpx;
+  border-radius: 8rpx;
+  color: #526176;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 56rpx;
+  text-align: center;
+}
+
+.player-metric-tab.is-active {
+  color: #1f5fd1;
+  background: #ffffff;
+  box-shadow: 0 3rpx 10rpx rgba(15, 23, 42, 0.08);
+}
+
 .workbench-card {
   border: 1rpx solid #e2e8f0;
   border-radius: 14rpx;

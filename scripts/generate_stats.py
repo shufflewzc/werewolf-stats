@@ -301,6 +301,23 @@ def build_player_rows(
     return leaderboard
 
 
+def build_player_average_rows(player_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Return an independently ranked average-points board for active players."""
+    leaderboard = [dict(row) for row in player_rows if row["games_played"] > 0]
+    leaderboard.sort(
+        key=lambda item: (
+            -item["average_points"],
+            -item["points_earned_total"],
+            -item["win_rate"],
+            -item["stance_rate"],
+            item["display_name"],
+        )
+    )
+    for rank, row in enumerate(leaderboard, start=1):
+        row["rank"] = rank
+    return leaderboard
+
+
 def build_team_rows(
     data: dict[str, Any],
     competition_name: str | None = None,

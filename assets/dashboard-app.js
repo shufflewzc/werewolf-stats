@@ -198,7 +198,7 @@
     `;
   }
 
-  function renderRankingItems(items, kind) {
+  function renderRankingItems(items, kind, metric) {
     if (!Array.isArray(items) || items.length === 0) {
       return '<div class="dashboard-select-note">当前口径下暂无榜单数据。</div>';
     }
@@ -208,8 +208,15 @@
           .slice(0, 5)
           .map((item) => {
             const name = kind === "team" ? item.name : item.display_name;
-            const meta = kind === "team" ? `${item.win_rate} 胜率 · ${item.matches_represented} 场` : `${item.team_name} · ${item.games_played} 场`;
+            const isAveragePlayer = kind === "player" && metric === "average";
+            const meta = kind === "team"
+              ? `${item.win_rate} 胜率 · ${item.matches_represented} 场`
+              : isAveragePlayer
+                ? `${item.team_name} · 总分 ${item.points_total} · ${item.games_played} 场`
+                : `${item.team_name} · 场均 ${item.average_points || "--"} · ${item.games_played} 场`;
             const avatar = kind === "team" ? item.logo : item.photo;
+            const value = isAveragePlayer ? item.average_points : item.points_total;
+            const valueLabel = kind === "team" ? "分" : (isAveragePlayer ? "场均分" : "总分");
             return `
               <a class="dashboard-ranking-item" href="${escapeHtml(item.href)}">
                 <span class="dashboard-ranking-rank">${escapeHtml(item.rank)}</span>
@@ -220,7 +227,7 @@
                     <div class="dashboard-ranking-meta">${escapeHtml(meta)}</div>
                   </div>
                 </div>
-                <div class="dashboard-ranking-value">${escapeHtml(item.points_total)}<small>分</small></div>
+                <div class="dashboard-ranking-value">${escapeHtml(value)}<small>${valueLabel}</small></div>
               </a>
             `;
           })
@@ -420,7 +427,16 @@
               <div><div class="dashboard-section-kicker">Player Ranking</div><h2 class="dashboard-section-title">选手排行榜</h2></div>
               <a class="dashboard-section-action" href="/competitions">更多</a>
             </div>
-            ${renderRankingItems(payload.top_players, "player")}
+            <div class="dashboard-ranking-tabs" aria-label="个人积分榜类型">
+              <button class="dashboard-ranking-tab is-active" data-dashboard-player-metric="total" type="button">总分榜</button>
+              <button class="dashboard-ranking-tab" data-dashboard-player-metric="average" type="button">场均分榜</button>
+            </div>
+            <div data-dashboard-player-panel="total">
+              ${renderRankingItems(payload.top_players, "player", "total")}
+            </div>
+            <div data-dashboard-player-panel="average" hidden>
+              ${renderRankingItems(payload.top_players_average || [], "player", "average")}
+            </div>
           </section>
         </section>
 
@@ -460,6 +476,23 @@
         }
       });
     }
+
+    const playerMetricTabs = Array.from(root.querySelectorAll("[data-dashboard-player-metric]"));
+    const playerMetricPanels = Array.from(root.querySelectorAll("[data-dashboard-player-panel]"));
+    playerMetricTabs.forEach((tab) => {
+      tab.addEventListener("click", function () {
+        const selected = tab.getAttribute("data-dashboard-player-metric");
+        playerMetricTabs.forEach((item) =>
+          item.classList.toggle(
+            "is-active",
+            item.getAttribute("data-dashboard-player-metric") === selected
+          )
+        );
+        playerMetricPanels.forEach((panel) => {
+          panel.hidden = panel.getAttribute("data-dashboard-player-panel") !== selected;
+        });
+      });
+    });
   }
 
   function renderError(message) {

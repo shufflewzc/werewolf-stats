@@ -50,7 +50,12 @@ const LEADERBOARD_TABS = [
   { key: "svp", label: "个人SVP" }
 ];
 
-function decorateLeaderboardRows(key, rows) {
+const PLAYER_METRIC_TABS = [
+  { key: "total", label: "总分榜" },
+  { key: "average", label: "场均分榜" }
+];
+
+function decorateLeaderboardRows(key, rows, playerMetric = "total") {
   return (rows || []).map((row) => {
     if (key === "teams") {
       const progressStatus = row.progress_status || "";
@@ -95,6 +100,7 @@ function decorateLeaderboardRows(key, rows) {
       };
     }
     if (key === "players") {
+      const isAverage = playerMetric === "average";
       return {
         key: `player:${row.player_id}`,
         type: "player",
@@ -102,9 +108,11 @@ function decorateLeaderboardRows(key, rows) {
         rank: row.rank,
         title: row.display_name,
         is_star_player: Boolean(row.is_star_player),
-        meta: `${row.team_name || "未绑定战队"} · 出场 ${row.games_played} 局`,
-        value: row.points_total,
-        valueLabel: "积分"
+        meta: isAverage
+          ? `${row.team_name || "未绑定战队"} · 总分 ${row.points_total} · 出场 ${row.games_played} 局`
+          : `${row.team_name || "未绑定战队"} · 场均 ${row.average_points || "--"} · 出场 ${row.games_played} 局`,
+        value: isAverage ? row.average_points : row.points_total,
+        valueLabel: isAverage ? "场均分" : "总分"
       };
     }
     return {
@@ -121,7 +129,15 @@ function decorateLeaderboardRows(key, rows) {
   });
 }
 
-function selectedLeaderboardRows(key, stage, leaderboards, leaderboardsByStage, teamSectionsByStage, sectionKey) {
+function selectedLeaderboardRows(
+  key,
+  stage,
+  leaderboards,
+  leaderboardsByStage,
+  teamSectionsByStage,
+  sectionKey,
+  playerMetric = "total"
+) {
   const sections = (teamSectionsByStage && teamSectionsByStage[stage]) || [];
   if (key === "teams" && sections.length) {
     const section = sections.find((item) => item.key === sectionKey) || sections[0];
@@ -130,7 +146,10 @@ function selectedLeaderboardRows(key, stage, leaderboards, leaderboardsByStage, 
   const boards = stage === "all"
     ? (leaderboards || {})
     : ((leaderboardsByStage || {})[stage] || {});
-  return boards[key] || [];
+  const boardKey = key === "players" && playerMetric === "average"
+    ? "players_average"
+    : key;
+  return boards[boardKey] || [];
 }
 
 async function hydrateFollowedPlayers(items, scope, options) {
@@ -184,8 +203,10 @@ Page({
     searchSearched: false,
     searchResults: [],
     leaderboardTabs: LEADERBOARD_TABS,
+    playerMetricTabs: PLAYER_METRIC_TABS,
     teamSectionTabs: [],
     activeLeaderboard: "teams",
+    activePlayerMetric: "total",
     leaderboardStages: [{ key: "all", label: "全部" }],
     activeLeaderboardStage: "all",
     activeTeamSection: "",
@@ -305,6 +326,7 @@ Page({
           }));
       }
       const activeLeaderboard = this.data.activeLeaderboard || "teams";
+      const activePlayerMetric = this.data.activePlayerMetric === "average" ? "average" : "total";
       const currentStage = this.data.activeLeaderboardStage || "all";
       const activeLeaderboardStage = leaderboardStages.some((item) => item.key === currentStage)
         ? currentStage
@@ -388,6 +410,7 @@ Page({
         leaderboards,
         leaderboardStages,
         activeLeaderboardStage,
+        activePlayerMetric,
         activeTeamSection,
         teamSectionTabs,
         leaderboardsByStage,
@@ -401,8 +424,10 @@ Page({
             leaderboards,
             leaderboardsByStage,
             teamLeaderboardSections,
-            activeTeamSection
-          )
+            activeTeamSection,
+            activePlayerMetric
+          ),
+          activePlayerMetric
         ),
         matchDays,
         latestDay,
@@ -632,8 +657,30 @@ Page({
           this.data.leaderboards,
           this.data.leaderboardsByStage,
           this.data.teamLeaderboardSections,
-          this.data.activeTeamSection
-        )
+          this.data.activeTeamSection,
+          this.data.activePlayerMetric
+        ),
+        this.data.activePlayerMetric
+      )
+    });
+  },
+
+  changePlayerMetric(event) {
+    const metric = event.currentTarget.dataset.metric === "average" ? "average" : "total";
+    this.setData({
+      activePlayerMetric: metric,
+      leaderboardRows: decorateLeaderboardRows(
+        "players",
+        selectedLeaderboardRows(
+          "players",
+          this.data.activeLeaderboardStage,
+          this.data.leaderboards,
+          this.data.leaderboardsByStage,
+          this.data.teamLeaderboardSections,
+          this.data.activeTeamSection,
+          metric
+        ),
+        metric
       )
     });
   },
@@ -660,8 +707,10 @@ Page({
           this.data.leaderboards,
           this.data.leaderboardsByStage,
           this.data.teamLeaderboardSections,
-          activeSection
-        )
+          activeSection,
+          this.data.activePlayerMetric
+        ),
+        this.data.activePlayerMetric
       )
     });
   },

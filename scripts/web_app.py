@@ -37,6 +37,7 @@ sys.modules.setdefault("web_app", sys.modules[__name__])
 from db_runtime import database_backend, database_url
 from generate_stats import (
     build_player_details as build_base_player_details,
+    build_player_average_rows,
     build_player_rows,
     build_team_rows,
     format_pct,
@@ -9431,6 +9432,7 @@ def _serialize_dashboard_player_row(row: dict[str, Any]) -> dict[str, Any]:
         "photo": row["photo"],
         "games_played": int(row["games_played"]),
         "points_total": f'{float(row["points_earned_total"]):.2f}',
+        "average_points": f'{float(row["average_points"]):.2f}',
         "win_rate": format_pct(float(row["win_rate"])),
         "stance_rate": format_pct(float(row["stance_rate"])),
         "href": f'/players/{quote(row["player_id"])}',
@@ -9529,6 +9531,7 @@ def build_dashboard_leaderboards(
     player_rows = build_player_rows(scoped_data, selected_competition, selected_season)
     team_rows = build_team_rows(scoped_data, selected_competition, selected_season)
     displayed_player_rows = [row for row in player_rows if row["games_played"] > 0]
+    displayed_player_average_rows = build_player_average_rows(displayed_player_rows)
     displayed_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
     stage_names = {
         str(match.get("stage") or "").strip()
@@ -9559,6 +9562,10 @@ def build_dashboard_leaderboards(
     return {
         "teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows],
         "players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows],
+        "players_average": [
+            _serialize_dashboard_player_row(row)
+            for row in displayed_player_average_rows
+        ],
         "mvp": [_serialize_dashboard_award_row(row, "MVP") for row in mvp_rows],
         "svp": [_serialize_dashboard_award_row(row, "SVP") for row in svp_rows],
     }
@@ -9828,6 +9835,7 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         if has_explicit_scope
         else visible_player_rows or player_rows
     )
+    displayed_player_average_rows = build_player_average_rows(displayed_player_rows)
     displayed_team_rows = (
         visible_team_rows
         if has_explicit_scope
@@ -10286,6 +10294,10 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         "leaderboards": {
             "teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows],
             "players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows],
+            "players_average": [
+                _serialize_dashboard_player_row(row)
+                for row in displayed_player_average_rows
+            ],
             "mvp": [_serialize_dashboard_award_row(row, "MVP") for row in mvp_rows],
             "svp": [_serialize_dashboard_award_row(row, "SVP") for row in svp_rows],
         },
@@ -10313,6 +10325,10 @@ def build_dashboard_api_payload(ctx: RequestContext) -> dict[str, Any]:
         **({"season_policy": season_policy_meta} if season_policy_meta else {}),
         "top_teams": [_serialize_dashboard_team_row(row) for row in displayed_team_rows[:5]],
         "top_players": [_serialize_dashboard_player_row(row) for row in displayed_player_rows[:5]],
+        "top_players_average": [
+            _serialize_dashboard_player_row(row)
+            for row in displayed_player_average_rows[:5]
+        ],
         "match_days": match_days,
         "schedule_matches": schedule_matches,
         "activity_feed": activity_feed,
@@ -10782,6 +10798,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     visible_player_rows = [row for row in player_rows if row["games_played"] > 0]
     visible_team_rows = [row for row in team_rows if row["matches_represented"] > 0]
     displayed_player_rows = visible_player_rows or player_rows
+    displayed_player_average_rows = build_player_average_rows(displayed_player_rows)
     displayed_team_rows = visible_team_rows or team_rows
     scope_label = " / ".join(
         item
@@ -11103,6 +11120,12 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
     ]
     requested_board = form_value(ctx.query, "board").strip()
     selected_board = requested_board if requested_board in {"group", "player"} else "group"
+    requested_player_metric = form_value(ctx.query, "player_metric").strip()
+    selected_player_metric = (
+        requested_player_metric
+        if requested_player_metric in {"total", "average"}
+        else "total"
+    )
     requested_stage = form_value(ctx.query, "stage").strip()
     selected_stage_key = select_dashboard_stage_key(
         season_entry,
@@ -11187,7 +11210,12 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
         for row in group_board_rows
     )
     group_empty_colspan = 8 if show_regular_progress else 7
-    player_total_table_rows = "".join(
+    selected_player_rows = (
+        displayed_player_average_rows
+        if selected_player_metric == "average"
+        else displayed_player_rows
+    )
+    player_table_rows = "".join(
         f"""
         <tr>
           <td>{row['rank']}</td>
@@ -11200,24 +11228,25 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
           <td>{format_pct(row['win_rate'])}</td>
         </tr>
         """
-        for row in displayed_player_rows
+        for row in selected_player_rows
     )
     board_stage_group_attrs = ' data-dashboard-board-filter="stage-group"' + (" hidden" if selected_board == "player" else "")
+    board_player_metric_attrs = ' data-dashboard-board-filter="player-metric"' + ("" if selected_board == "player" else " hidden")
     group_board_empty_html = f'<tr><td colspan="{group_empty_colspan}" class="text-secondary">当前赛段分组还没有积分数据。</td></tr>'
-    player_total_empty_html = '<tr><td colspan="8" class="text-secondary">当前口径下没有个人积分数据。</td></tr>'
+    player_empty_html = '<tr><td colspan="8" class="text-secondary">当前口径下没有个人积分数据。</td></tr>'
     group_board_table_html = (
         '<div class="table-responsive"><table class="table align-middle mb-0">'
         f"<thead><tr><th>排名</th><th>战队</th><th>场次</th><th>上场队员</th><th>总积分</th><th>场均</th><th>胜率</th>{progress_header_html}</tr></thead>"
         f"<tbody>{group_board_table_rows or group_board_empty_html}</tbody>"
         "</table></div>"
     )
-    player_total_table_html = (
+    player_table_html = (
         '<div class="table-responsive"><table class="table align-middle mb-0">'
         "<thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>总积分</th><th>场均</th><th>胜率</th></tr></thead>"
-        f"<tbody>{player_total_table_rows or player_total_empty_html}</tbody>"
+        f"<tbody>{player_table_rows or player_empty_html}</tbody>"
         "</table></div>"
     )
-    dashboard_board_table_html = group_board_table_html if selected_board == "group" else player_total_table_html
+    dashboard_board_table_html = group_board_table_html if selected_board == "group" else player_table_html
     promotion_context = build_dashboard_promotion_context(
         data,
         scoped_played_matches,
@@ -11275,7 +11304,7 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
       <div class="dashboard-section-head">
         <div>
           <h2 class="section-title mb-2">榜单中心</h2>
-          <p class="dashboard-section-copy mb-0">默认显示距离当前北京时间最近赛段的分组积分榜，也可以切到其他赛段、分组或个人总积分。</p>
+          <p class="dashboard-section-copy mb-0">默认显示距离当前北京时间最近赛段的分组积分榜，也可以切换个人总分榜或场均分榜。</p>
         </div>
       </div>
       <form method="get" action="/dashboard" class="row g-3 align-items-end mb-4">
@@ -11284,7 +11313,14 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
           <label class="form-label">榜单类型</label>
           <select class="form-select" name="board" data-dashboard-board-select>
             <option value="group"{" selected" if selected_board == "group" else ""}>分组战队积分</option>
-            <option value="player"{" selected" if selected_board == "player" else ""}>个人总积分</option>
+            <option value="player"{" selected" if selected_board == "player" else ""}>个人积分</option>
+          </select>
+        </div>
+        <div class="col-12 col-md-3"{board_player_metric_attrs}>
+          <label class="form-label">个人榜类型</label>
+          <select class="form-select" name="player_metric">
+            <option value="total"{" selected" if selected_player_metric == "total" else ""}>总分榜</option>
+            <option value="average"{" selected" if selected_player_metric == "average" else ""}>场均分榜</option>
           </select>
         </div>
         <div class="col-12 col-md-3"{board_stage_group_attrs}>
@@ -11299,19 +11335,26 @@ def get_dashboard_page(ctx: RequestContext, alert: str = "") -> str:
           <button type="submit" class="btn btn-dark w-100">更新榜单</button>
         </div>
       </form>
-      <div class="dashboard-panel-kicker mb-3">{escape(dashboard_stage_options.get(selected_stage_key, selected_stage_key)) + (f" · {escape(selected_group)}" if selected_group else "") if selected_board == "group" else "全赛段 · 个人总积分"}</div>
+      <div class="dashboard-panel-kicker mb-3">{escape(dashboard_stage_options.get(selected_stage_key, selected_stage_key)) + (f" · {escape(selected_group)}" if selected_group else "") if selected_board == "group" else ("全赛段 · 个人场均分榜" if selected_player_metric == "average" else "全赛段 · 个人总分榜")}</div>
       {dashboard_board_table_html}
       <script>
         (() => {{
           const select = document.querySelector("[data-dashboard-board-select]");
           if (!select) return;
-          const filterBlocks = Array.from(document.querySelectorAll("[data-dashboard-board-filter='stage-group']"));
+          const stageGroupBlocks = Array.from(document.querySelectorAll("[data-dashboard-board-filter='stage-group']"));
+          const playerMetricBlocks = Array.from(document.querySelectorAll("[data-dashboard-board-filter='player-metric']"));
           const syncBoardFilters = () => {{
             const isPlayerBoard = select.value === "player";
-            filterBlocks.forEach((block) => {{
+            stageGroupBlocks.forEach((block) => {{
               block.hidden = isPlayerBoard;
               block.querySelectorAll("select, input").forEach((field) => {{
                 field.disabled = isPlayerBoard;
+              }});
+            }});
+            playerMetricBlocks.forEach((block) => {{
+              block.hidden = !isPlayerBoard;
+              block.querySelectorAll("select, input").forEach((field) => {{
+                field.disabled = !isPlayerBoard;
               }});
             }});
           }};

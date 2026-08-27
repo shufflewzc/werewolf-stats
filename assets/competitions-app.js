@@ -301,6 +301,21 @@
     `;
   }
 
+  function renderPlayerBoards(totalRows, averageRows) {
+    return `
+      <div class="competitions-board-tabs competitions-player-tabs" aria-label="个人积分榜类型">
+        <button class="competitions-tab is-active" data-player-metric-tab="total" type="button">总分榜</button>
+        <button class="competitions-tab" data-player-metric-tab="average" type="button">场均分榜</button>
+      </div>
+      <div class="competitions-player-panel" data-player-metric-panel="total">
+        ${renderPlayerTable(totalRows)}
+      </div>
+      <div class="competitions-player-panel" data-player-metric-panel="average" hidden>
+        ${renderPlayerTable(averageRows)}
+      </div>
+    `;
+  }
+
   function renderMvpTable(rows) {
     if (!rows.length) {
       return '<div class="competitions-chip-empty">当前还没有 MVP 数据。</div>';
@@ -605,7 +620,10 @@
             ${renderGroupBoards(leaderboards.group_team || [])}
           </div>
           <div class="competitions-board-panel" data-board-panel="player" hidden>
-            ${renderPlayerTable(leaderboards.players || [])}
+            ${renderPlayerBoards(
+              leaderboards.players || [],
+              leaderboards.players_average || []
+            )}
           </div>
           <div class="competitions-board-panel" data-board-panel="mvp" hidden>
             ${renderMvpTable(leaderboards.mvp || [])}
@@ -680,6 +698,23 @@
         );
         panels.forEach((panel) => {
           panel.hidden = panel.getAttribute("data-board-panel") !== selected;
+        });
+      });
+    });
+
+    const playerMetricTabs = Array.from(root.querySelectorAll("[data-player-metric-tab]"));
+    const playerMetricPanels = Array.from(root.querySelectorAll("[data-player-metric-panel]"));
+    playerMetricTabs.forEach((tab) => {
+      tab.addEventListener("click", function () {
+        const selected = tab.getAttribute("data-player-metric-tab");
+        playerMetricTabs.forEach((item) =>
+          item.classList.toggle(
+            "is-active",
+            item.getAttribute("data-player-metric-tab") === selected
+          )
+        );
+        playerMetricPanels.forEach((panel) => {
+          panel.hidden = panel.getAttribute("data-player-metric-panel") !== selected;
         });
       });
     });

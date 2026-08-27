@@ -423,6 +423,62 @@ async function testDashboardAndCompareBlockUnacceptedDeepLinks() {
   assert.ok(shared.path.includes("season=S1"), "compare 分享必须携带 season");
 }
 
+function testDashboardPlayerMetricSwitchKeepsStageSelection() {
+  resetState();
+  const dashboard = loadPageWithApi(dashboardPagePath, async () => ({}));
+  const totalRow = {
+    player_id: "total-player",
+    display_name: "总分选手",
+    team_name: "测试队",
+    games_played: 3,
+    points_total: "18.00",
+    average_points: "6.00",
+    rank: 1
+  };
+  const averageRow = {
+    player_id: "average-player",
+    display_name: "场均选手",
+    team_name: "测试队",
+    games_played: 1,
+    points_total: "10.00",
+    average_points: "10.00",
+    rank: 1
+  };
+  dashboard.setData({
+    activeLeaderboard: "players",
+    activeLeaderboardStage: "all",
+    activePlayerMetric: "total",
+    leaderboards: {
+      players: [totalRow],
+      players_average: [averageRow]
+    },
+    leaderboardsByStage: {
+      regular_season: {
+        players: [{ ...totalRow, rank: 2 }],
+        players_average: [{ ...averageRow, rank: 2 }]
+      }
+    },
+    teamLeaderboardSections: {},
+    activeTeamSection: ""
+  });
+
+  dashboard.changePlayerMetric({ currentTarget: { dataset: { metric: "average" } } });
+  assert.strictEqual(dashboard.data.activePlayerMetric, "average");
+  assert.strictEqual(dashboard.data.leaderboardRows[0].id, "average-player");
+  assert.strictEqual(dashboard.data.leaderboardRows[0].value, "10.00");
+  assert.strictEqual(dashboard.data.leaderboardRows[0].valueLabel, "场均分");
+  assert.ok(dashboard.data.leaderboardRows[0].meta.includes("总分 10.00"));
+
+  dashboard.changeLeaderboardStage({ currentTarget: { dataset: { stage: "regular_season" } } });
+  assert.strictEqual(dashboard.data.activePlayerMetric, "average");
+  assert.strictEqual(dashboard.data.leaderboardRows[0].rank, 2);
+  assert.strictEqual(dashboard.data.leaderboardRows[0].id, "average-player");
+
+  dashboard.changePlayerMetric({ currentTarget: { dataset: { metric: "total" } } });
+  assert.strictEqual(dashboard.data.leaderboardRows[0].id, "total-player");
+  assert.strictEqual(dashboard.data.leaderboardRows[0].valueLabel, "总分");
+}
+
 async function testPaginationRejectsResponsesAfterScopeSwitch() {
   resetState();
   const scope = loadFresh(scopePath);
@@ -504,6 +560,7 @@ async function run() {
   await testPlayersPageDoesNotRequestWithoutCompleteScope();
   await testSharedPlayerScopeMustBeConfirmedBeforeRequest();
   await testDashboardAndCompareBlockUnacceptedDeepLinks();
+  testDashboardPlayerMetricSwitchKeepsStageSelection();
   await testPaginationRejectsResponsesAfterScopeSwitch();
   testPlayerShareCodeCarriesScope();
   console.log("小程序赛事赛季 scope 回归测试通过。");

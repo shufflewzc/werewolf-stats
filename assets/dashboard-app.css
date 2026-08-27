@@ -2715,3 +2715,35 @@ body.dashboard-app-shell .dashboard-loading-shell,
 body.dashboard-app-shell .dashboard-error-shell {
   overflow: visible !important;
 }
+
+.dashboard-ranking-tabs {
+  display: inline-flex;
+  gap: 6px;
+  margin: 0 0 16px;
+  padding: 5px;
+  border: 1px solid rgba(126, 181, 255, 0.25);
+  border-radius: 999px;
+  background: rgba(9, 22, 38, 0.36);
+}
+
+.dashboard-ranking-tab {
+  min-height: 34px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: 999px;
+  color: var(--dash-readable-muted, #5b6b82);
+  background: transparent;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.dashboard-ranking-tab.is-active {
+  color: #ffffff;
+  background: #2563eb;
+}
+
+[data-dashboard-player-panel][hidden] {
+  display: none;
+}

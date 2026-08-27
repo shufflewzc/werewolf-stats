@@ -192,6 +192,16 @@
           bindtap="changeTeamSection"
         >{{item.title || item.label}}</view>
       </view>
+      <view class="player-metric-tabs" wx:if="{{activeLeaderboard === 'players'}}">
+        <view
+          class="player-metric-tab {{activePlayerMetric === item.key ? 'is-active' : ''}}"
+          wx:for="{{playerMetricTabs}}"
+          wx:key="key"
+          data-metric="{{item.key}}"
+          hover-class="tap-chip-hover"
+          bindtap="changePlayerMetric"
+        >{{item.label}}</view>
+      </view>
       <view class="stack leaderboard-list" wx:if="{{leaderboardRows.length}}">
         <view class="list-card tap-card" hover-class="tap-card-hover" wx:for="{{leaderboardRows}}" wx:key="key" data-index="{{index}}" bindtap="openLeaderboardRow">
           <text class="rank">{{item.rank}}</text>

@@ -25,6 +25,7 @@ STAGE_OPTIONS = legacy.STAGE_OPTIONS
 build_scoped_path = legacy.build_scoped_path
 build_competition_catalog_rows = legacy.build_competition_catalog_rows
 build_filtered_data = legacy.build_filtered_data
+build_player_average_rows = legacy.build_player_average_rows
 build_player_rows = legacy.build_player_rows
 build_dashboard_promotion_context = legacy.build_dashboard_promotion_context
 build_region_switcher = legacy.build_region_switcher
@@ -1230,6 +1231,7 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
         for row in build_player_rows(stats_data, selected_competition, selected_season)
         if row["games_played"] > 0
     ]
+    player_average_rows = build_player_average_rows(player_rows)
     stage_team_rows = build_stage_team_rows(data, selected_competition, selected_season or "")
     stage_group_team_rows = build_stage_group_team_rows(data, selected_competition, selected_season or "")
     mvp_rows = build_player_mvp_rows(data, selected_competition, selected_season or "")
@@ -1536,6 +1538,16 @@ def build_competitions_api_payload(ctx: RequestContext) -> dict[str, Any]:
                 )
                 for row in player_rows
             ],
+            "players_average": [
+                _serialize_player_ranking_row(
+                    row,
+                    selected_competition,
+                    selected_season,
+                    selected_region,
+                    selected_series_slug,
+                )
+                for row in player_average_rows
+            ],
             "mvp": [
                 {
                     "rank": int(row["rank"]),
@@ -1692,6 +1704,7 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
     }
     team_rows = [row for row in build_team_rows(stats_data, selected_competition, selected_season) if row["matches_represented"] > 0]
     player_rows = [row for row in build_player_rows(stats_data, selected_competition, selected_season) if row["games_played"] > 0]
+    player_average_rows = build_player_average_rows(player_rows)
     stage_team_rows = build_stage_team_rows(data, selected_competition, selected_season or "")
     stage_group_team_rows = build_stage_group_team_rows(data, selected_competition, selected_season or "")
     mvp_rows = build_player_mvp_rows(data, selected_competition, selected_season or "")
@@ -1760,7 +1773,14 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
         grouped_team_sections.append(
             f"""<section class="panel shadow-sm p-3 p-lg-4 mb-3"><div class="d-flex flex-column flex-lg-row justify-content-between align-items-lg-end gap-3 mb-3"><div><h3 class="h5 mb-2">{escape(stage_label_for_season_entry(season_entry, stage_key))}</h3><p class="section-copy mb-0">该赛段内再按比赛实际录入的分组拆分统计战队积分。</p></div></div><div class="row g-3">{''.join(stage_group_blocks)}</div></section>"""
         )
-    player_points_rows = [f"""<tr><td>{row['rank']}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td><td>{escape(row['team_name'])}</td><td>{row['games_played']}</td><td>{escape(row['record'])}</td><td>{row['points_earned_total']:.2f}</td><td>{row['average_points']:.2f}</td><td>{format_pct(row['win_rate'])}</td></tr>""" for row in player_rows]
+    def render_player_points_rows(rows: list[dict[str, Any]]) -> str:
+        return "".join(
+            f"""<tr><td>{row['rank']}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td><td>{escape(row['team_name'])}</td><td>{row['games_played']}</td><td>{escape(row['record'])}</td><td>{row['points_earned_total']:.2f}</td><td>{row['average_points']:.2f}</td><td>{format_pct(row['win_rate'])}</td></tr>"""
+            for row in rows
+        )
+
+    player_total_points_rows = render_player_points_rows(player_rows)
+    player_average_points_rows = render_player_points_rows(player_average_rows)
     mvp_table_rows = "".join(
         f"""<tr><td>{row['rank']}</td><td><a class="link-dark link-underline-opacity-0 link-underline-opacity-75-hover fw-semibold" href="{escape(build_scoped_path('/players/' + row['player_id'], selected_competition, selected_season, selected_region, selected_series_slug))}">{escape(row['display_name'])}</a></td><td>{escape(row['team_name'])}</td><td>{row['mvp_count']}</td><td>{escape(row['latest_awarded_on'] or '待更新')}</td></tr>"""
         for row in mvp_rows
@@ -1801,7 +1821,16 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
           <h3 class="h5 mb-2">个人积分榜</h3>
           <p class="section-copy mb-0">个人积分榜按当前赛事与赛季下全部已录入完成的比赛累计，不再按赛段拆分，方便直接看整个赛季的个人表现。</p>
         </div>
-        <div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>赛季总积分</th><th>场均得分</th><th>胜率</th></tr></thead><tbody>{''.join(player_points_rows) or '<tr><td colspan="8" class="text-secondary">当前赛季还没有选手积分数据。</td></tr>'}</tbody></table></div>
+        <div class="btn-group mb-3" role="group" aria-label="个人积分榜类型">
+          <button class="btn btn-dark" type="button" data-season-player-metric="total">总分榜</button>
+          <button class="btn btn-outline-dark" type="button" data-season-player-metric="average">场均分榜</button>
+        </div>
+        <div data-season-player-panel="total">
+          <div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>赛季总积分</th><th>场均得分</th><th>胜率</th></tr></thead><tbody>{player_total_points_rows or '<tr><td colspan="8" class="text-secondary">当前赛季还没有选手积分数据。</td></tr>'}</tbody></table></div>
+        </div>
+        <div data-season-player-panel="average" hidden>
+          <div class="table-responsive"><table class="table align-middle"><thead><tr><th>排名</th><th>选手</th><th>战队</th><th>出场</th><th>战绩</th><th>赛季总积分</th><th>场均得分</th><th>胜率</th></tr></thead><tbody>{player_average_points_rows or '<tr><td colspan="8" class="text-secondary">当前赛季还没有选手积分数据。</td></tr>'}</tbody></table></div>
+        </div>
       </div>
       <div data-season-leaderboard-panel="mvp" hidden>
         <div class="mb-3">
@@ -1823,6 +1852,22 @@ def get_competitions_page(ctx: RequestContext, alert: str = "") -> str:
           }};
           select.addEventListener("change", syncPanels);
           syncPanels();
+
+          const metricButtons = Array.from(document.querySelectorAll("[data-season-player-metric]"));
+          const metricPanels = Array.from(document.querySelectorAll("[data-season-player-panel]"));
+          metricButtons.forEach((button) => {{
+            button.addEventListener("click", () => {{
+              const metric = button.getAttribute("data-season-player-metric");
+              metricButtons.forEach((item) => {{
+                const active = item.getAttribute("data-season-player-metric") === metric;
+                item.classList.toggle("btn-dark", active);
+                item.classList.toggle("btn-outline-dark", !active);
+              }});
+              metricPanels.forEach((panel) => {{
+                panel.hidden = panel.getAttribute("data-season-player-panel") !== metric;
+              }});
+            }});
+          }});
         }})();
       </script>
     </section>

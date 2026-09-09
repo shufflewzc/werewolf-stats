@@ -55,7 +55,7 @@ const PLAYER_METRIC_TABS = [
   { key: "average", label: "场均分榜" }
 ];
 
-function decorateLeaderboardRows(key, rows, playerMetric = "total") {
+function decorateLeaderboardRows(key, rows, playerMetric = "total", stage = "all") {
   return (rows || []).map((row) => {
     if (key === "teams") {
       const progressStatus = row.progress_status || "";
@@ -81,6 +81,12 @@ function decorateLeaderboardRows(key, rows, playerMetric = "total") {
           ...badge,
           className: `is-${badge.style || "gray"}`
         }));
+      const finalsTitle = stage === "finals"
+        ? ({ 1: "冠军", 2: "亚军", 3: "季军", 4: "殿军" })[row.rank]
+        : "";
+      if (finalsTitle) {
+        badges.unshift({ text: finalsTitle, kind: "finals-placement", className: "is-gold" });
+      }
       return {
         key: `team:${row.team_id}`,
         type: "team",
@@ -427,7 +433,8 @@ Page({
             activeTeamSection,
             activePlayerMetric
           ),
-          activePlayerMetric
+          activePlayerMetric,
+          activeLeaderboardStage
         ),
         matchDays,
         latestDay,
@@ -660,7 +667,8 @@ Page({
           this.data.activeTeamSection,
           this.data.activePlayerMetric
         ),
-        this.data.activePlayerMetric
+        this.data.activePlayerMetric,
+        stage
       )
     });
   },
@@ -680,7 +688,8 @@ Page({
           this.data.activeTeamSection,
           metric
         ),
-        metric
+        metric,
+        this.data.activeLeaderboardStage
       )
     });
   },
@@ -710,7 +719,8 @@ Page({
           activeSection,
           this.data.activePlayerMetric
         ),
-        this.data.activePlayerMetric
+        this.data.activePlayerMetric,
+        stage
       )
     });
   },
@@ -732,7 +742,9 @@ Page({
           this.data.leaderboardsByStage,
           this.data.teamLeaderboardSections,
           tier
-        )
+        ),
+        this.data.activePlayerMetric,
+        this.data.activeLeaderboardStage
       )
     });
   },

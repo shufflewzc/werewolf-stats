@@ -1,0 +1,36 @@
+<view class="report-page">
+  <view class="scope-bar" wx:if="{{selectedScope}}">
+    <view><text class="scope-name">{{selectedScope.competition}}</text><text class="scope-season">{{selectedScope.season}} · 每日 MVP</text></view>
+    <button bindtap="goCompetitions" class="scope-button">切换赛事 ›</button>
+  </view>
+  <view class="state-card" wx:if="{{needsCompetition}}"><text>先选择赛事和赛季</text><button bindtap="goCompetitions">去选择赛事</button></view>
+  <view class="state-card" wx:elif="{{loading}}">正在加载战报…</view>
+  <block wx:else>
+    <view class="day-card" wx:for="{{reports}}" wx:for-item="day" wx:for-index="dayIndex" wx:key="played_on">
+      <view class="day-heading"><text class="day-date">{{day.played_on}}（{{day.weekday}}）</text><text class="day-subtitle">{{selectedScope.competition}} · {{selectedScope.season}}</text></view>
+      <view class="stage-section" wx:for="{{day.sections}}" wx:for-item="section" wx:for-index="sectionIndex" wx:key="stage">
+        <text class="stage-label">{{section.stage_label}}</text>
+        <view class="match-grid">
+          <view class="mvp-tile" wx:for="{{section.matches}}" wx:for-item="match" wx:for-index="matchIndex" wx:key="match_id" data-id="{{match.match_id}}" bindtap="openMatch" hover-class="tile-hover">
+            <text class="winner {{match.winning_camp}}">{{match.winner_label}}</text>
+            <view class="portrait">
+              <image wx:if="{{match.photoUrl}}" class="player-photo" src="{{match.photoUrl}}" mode="aspectFill" binderror="onImageError" data-day="{{dayIndex}}" data-section="{{sectionIndex}}" data-match="{{matchIndex}}" data-id="{{match.match_id}}" data-field="photoUrl" lazy-load="{{true}}" />
+              <view wx:else class="photo-fallback"><view class="avatar-head"></view><view class="avatar-body"></view></view>
+              <text class="mvp-tag">MVP</text>
+              <image wx:if="{{match.guildLogoUrl}}" class="guild-logo" src="{{match.guildLogoUrl}}" mode="aspectFit" binderror="onImageError" data-day="{{dayIndex}}" data-section="{{sectionIndex}}" data-match="{{matchIndex}}" data-id="{{match.match_id}}" data-field="guildLogoUrl" />
+            </view>
+            <text class="player-name">{{match.mvp.name || '暂未设置 MVP'}}</text>
+            <text class="match-number">第{{match.round}}轮 · 第{{match.game_no}}局</text>
+            <text class="table-label" wx:if="{{match.table_label}}">{{match.table_label}}</text>
+          </view>
+        </view>
+      </view>
+      <view class="day-footer" bindtap="openDay" data-day="{{day.played_on}}" hover-class="tile-hover">查看本日战报 ›</view>
+    </view>
+    <view wx:if="{{error}}" class="state-card"><text>{{error}}</text><button wx:if="{{hasReports}}" bindtap="loadMore">重试加载更多</button><button wx:else bindtap="retry">重试</button></view>
+    <view wx:if="{{!error && !hasReports}}" class="state-card"><text>暂无战报</text><text class="empty-copy">比赛录入赛果后，将在这里展示每日 MVP。</text></view>
+    <view wx:if="{{!error && hasReports && loadingMore}}" class="list-end">正在加载更多…</view>
+    <button wx:if="{{!error && hasReports && !loadingMore && hasMore}}" class="more-button" bindtap="loadMore">加载更多</button>
+    <view wx:if="{{!error && hasReports && !loadingMore && !hasMore}}" class="list-end">已展示全部 {{total}} 天战报</view>
+  </block>
+</view>

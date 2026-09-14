@@ -1,0 +1,5 @@
+{
+  "navigationBarTitleText": "战报",
+  "enablePullDownRefresh": true,
+  "onReachBottomDistance": 180
+}

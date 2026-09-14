@@ -5073,7 +5073,7 @@ def handle_match_edit(ctx: RequestContext, start_response, match_id: str):
     matches = []
     for item in data["matches"]:
         if item["match_id"] == match_id:
-            matches.append(updated_match)
+            matches.append(strip_excel_import_helper_fields(updated_match))
         else:
             matches.append(item)
 

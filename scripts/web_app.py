@@ -8713,6 +8713,7 @@ def public_api_requires_scope_validation(path: str) -> bool:
             "/api/teams",
             "/api/predictions",
             "/api/schedule",
+            "/api/battle-reports",
         }
         or path.startswith("/api/players/")
         or path.startswith("/api/teams/")
@@ -20440,6 +20441,9 @@ def app(environ, start_response):
             return handle_web_login_status(ctx, start_response)
         if path == "/api/ops":
             return handle_ops_api(ctx, start_response)
+        if path == "/api/battle-reports":
+            from web.features.battle_reports import handle_api
+            return handle_api(ctx, start_response)
         if path == "/api/dashboard":
             return handle_dashboard_api(ctx, start_response)
         if path == "/api/competitions":

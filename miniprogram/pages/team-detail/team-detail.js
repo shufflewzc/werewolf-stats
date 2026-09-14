@@ -146,7 +146,7 @@ Page({
   },
 
   goTeams() {
-    wx.switchTab({ url: "/pages/guilds/guilds" });
+    wx.navigateTo({ url: "/pages/guilds/guilds" });
   },
 
   goCompetitions() {

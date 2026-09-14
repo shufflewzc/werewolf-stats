@@ -6,7 +6,8 @@
 
 - 首页：读取 `/api/dashboard`
 - 赛事：读取 `/api/competitions?grouped=1`，按城市折叠展示全部赛事
-- 门派：读取 `/api/guilds`
+- 战报：读取 `/api/battle-reports`，当前赛事赛季按日期倒序展示已录入赛果的每局 MVP，每行三局，日期分页（默认每页 10 天）
+- 门派：首页按钮进入，读取 `/api/guilds`
 - 选手：读取 `/api/players`
 
 ## 赛事赛季范围契约
@@ -55,3 +56,5 @@ node scripts/check_miniprogram_release.js
 - 选手与战队战力评价按当前赛事赛季的总积分、积分效率和胜率自动计算，分为 S/A/B/C/D；管理员可在网页端对应详情页人工覆盖，或恢复系统自动评级。
 - 选手详情页可生成黑金战绩卡；当天预测页可一键生成包含12名选手预测总分和小程序码的预测分享图。二维码统一由后端 `/api/miniprogram/share-code` 生成，小程序发布时必须包含 `pages/share-entry/share-entry`，并使用已配置 `WECHAT_MINIPROGRAM_APPID` / `WECHAT_MINIPROGRAM_SECRET` 的正式后端。
 - 预测分享图的小程序码使用 `share_type=prediction_day`，扫码后会恢复赛事、赛季和比赛日期并直达当天预测页；小程序新版本发布前应先部署兼容该参数的后端。
+
+战报版本上线时先部署包含 `/api/battle-reports` 的后端，再上传小程序。该接口只读比赛已保存的 MVP，不自动评选；缺少照片或 MVP 时显示占位。

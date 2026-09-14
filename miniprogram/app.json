@@ -15,7 +15,8 @@
     "pages/share-card/share-card",
     "pages/prediction-share-card/prediction-share-card",
     "pages/predictions/predictions",
-    "pages/day-detail/day-detail"
+    "pages/day-detail/day-detail",
+    "pages/battle-reports/battle-reports"
   ],
   "window": {
     "navigationBarTitleText": "狼人杀赛事",
@@ -46,10 +47,10 @@
         "selectedIconPath": "assets/tab/competitions-active.png"
       },
       {
-        "pagePath": "pages/guilds/guilds",
-        "text": "门派",
-        "iconPath": "assets/tab/guilds-normal.png",
-        "selectedIconPath": "assets/tab/guilds-active.png"
+        "pagePath": "pages/battle-reports/battle-reports",
+        "text": "战报",
+        "iconPath": "assets/tab/reports-normal.png",
+        "selectedIconPath": "assets/tab/reports-active.png"
       },
       {
         "pagePath": "pages/players/players",

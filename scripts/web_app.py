@@ -168,6 +168,7 @@ from sqlite_store import (
 )
 from schema_version import REQUIRED_SCHEMA_VERSION, SCHEMA_VERSION_META_KEY
 from validate_data import (
+    is_scheduled_match,
     validate_guilds,
     validate_matches,
     validate_players,
@@ -1736,7 +1737,7 @@ def get_match_score_model_label(value: str | None) -> str:
 
 
 def is_placeholder_match(match: dict[str, Any]) -> bool:
-    return str(match.get("format") or "").strip() == "待补录"
+    return is_scheduled_match(match)
 
 
 def is_match_counted_as_played(match: dict[str, Any]) -> bool:

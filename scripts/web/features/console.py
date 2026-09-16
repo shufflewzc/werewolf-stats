@@ -295,7 +295,7 @@ def _selected_scope(
 
 
 def _match_status(match: dict[str, Any]) -> str:
-    return "pending" if str(match.get("format") or "").strip() == "待补录" else "recorded"
+    return "pending" if legacy.is_placeholder_match(match) else "recorded"
 
 
 def _match_people_context(

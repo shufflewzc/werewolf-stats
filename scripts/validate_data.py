@@ -27,6 +27,15 @@ MATCH_SCORE_COMPONENT_FIELDS = {
 }
 
 
+def is_scheduled_match(match: dict[str, Any]) -> bool:
+    """Recognize unplayed fixtures, including those with a preassigned format."""
+    return str(match.get("format") or "").strip() == "待补录" or (
+        match.get("players") == []
+        and match.get("winning_camp") == "draw"
+        and match.get("duration_minutes") == 0
+    )
+
+
 def is_number(value: Any) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
@@ -519,7 +528,7 @@ def validate_matches(matches: Any, team_ids: set[str], player_ids: set[str]) -> 
         )
         errors.extend(validate_non_empty_string(match.get("format"), f"{label}.format"))
 
-        is_placeholder_match = str(match.get("format") or "").strip() == "待补录"
+        is_placeholder_match = is_scheduled_match(match)
         winning_camp = match.get("winning_camp")
         valid_winning_camps = (
             VALID_WINNING_CAMPS | {"draw"} if is_placeholder_match else VALID_WINNING_CAMPS

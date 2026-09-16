@@ -1499,7 +1499,7 @@ def build_match_management_panel(
           <td>{escape(str(match.get('group_label') or '未设置'))}</td>
           <td>{escape(str(match.get('table_label') or '未设置'))}</td>
           <td>{escape(match['format'])}</td>
-          <td>{'待补录' if match['format'] == '待补录' else '已录入'}</td>
+          <td>{'待补录' if legacy.is_placeholder_match(match) else '已录入'}</td>
           <td>{'<span class="badge text-bg-warning">抽局</span>' if match.get('exclude_from_team_scores') else '<span class="badge text-bg-light text-dark border">计入战队</span>'}</td>
           <td>
             <div class="d-flex flex-wrap gap-2">
